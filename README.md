@@ -91,9 +91,9 @@ Work on feature branches, open a PR into `main`. Artem reviews PRs that touch `c
 
 | Module | Owner | Inputs (from core) | Outputs (to core) |
 |---|---|---|---|
-| `map_ui` | - | — | `GridNetwork` |
-| `grid_model` | - | `GridNetwork`, `Action` | `Observation`, `SimResult` |
-| `rl_engine` | - | `Observation`, `Reward` | `Action` |
+| `map_ui` | — | — | `GridNetwork` |
+| `grid_model` | — | `GridNetwork`, `Action` | `Observation`, `SimResult` |
+| `rl_engine` | — | `Observation`, `Reward` | `Action` |
 | `dashboard` | — | `SimResult` | — |
 
 ---
