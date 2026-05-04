@@ -1,0 +1,3 @@
+[submodule "vendor/GridCreator"]
+	path = vendor/GridCreator
+	url = https://github.com/INATECH-CIG/GridCreator.git
