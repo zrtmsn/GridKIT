@@ -77,8 +77,12 @@ class GridNetwork(BaseModel):
     buses: list[BusModel] = Field(default_factory=list)
     lines: list[LineModel] = Field(default_factory=list)
     transformers: list[TransformerModel] = Field(default_factory=list)
-    area_name: Optional[str] = None     # e.g. "Karlsruhe-Durlach"
-    n_households: int = 0
+    area_name: Optional[str] = None
+    household_bus_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def n_households(self) -> int:
+        return len(self.household_bus_ids)
  
  
 # ══════════════════════════════════════════════════════════════

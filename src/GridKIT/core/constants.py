@@ -26,7 +26,7 @@ EV_DEPARTURE_HOUR_STD: float = 0.5
 EV_INITIAL_SOC_MEAN: float = 0.30
 EV_INITIAL_SOC_STD: float = 0.10
 EV_TARGET_SOC: float = 0.80           # fixed target for all agents
-EV_BATTERY_CAPACITY_KWH: float = 60.0 # default battery size
+EV_BATTERY_CAPACITY_KWH: float = 77.0 # aligns with GridCreator (main_functions.py:615)
 
 # ── Load / price scenario ────────────────────────────────────
 LOAD_MULTIPLIER_MIN: float = 0.8
