@@ -1,0 +1,21 @@
+{
+    "network_id": "stub_5_households",
+
+    "buses": [
+        {"bus_id": "bus_hv", "v_nom_kv": 20.0},
+        {"bus_id": "bus_lv", "v_nom_kv": 0.4},
+        {"bus_id": "bus_0", "v_nom_kv": 0.4},
+        {"bus_id": "bus_1", "v_nom_kv": 0.4},
+        {"bus_id": "bus_2", "v_nom_kv": 0.4},
+        {"bus_id": "bus_3", "v_nom_kv": 0.4},
+        {"bus_id": "bus_4", "v_nom_kv": 0.4}
+    ],
+
+    "transformers": [
+        {"trafo_id": "trafo_0", "hv_bus": "bus_hv", "lv_bus" : "bus_lv", "s_nom_mva": 0.4, "vn_hv_kv": 20.0, "vn_lv_kv": 0.4}
+    ],
+
+    "lines": [
+        {"line_id": "lv_to_0", "from_bus": "bus_lv", "to_bus": "bus_0", "length_km": 0.05, "r_ohm_per_km": 0.32, "x_ohm_per_km": 0.08, "max_i_ka"}
+    ]
+}
