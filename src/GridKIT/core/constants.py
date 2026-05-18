@@ -29,24 +29,24 @@ EV_TARGET_SOC: float = 0.80           # fixed target for all agents
 EV_BATTERY_CAPACITY_KWH: float = 77.0 # aligns with GridCreator (main_functions.py:615)
 
 # ── Load / price scenario ────────────────────────────────────
-LOAD_MULTIPLIER_MIN: float = 0.8
-LOAD_MULTIPLIER_MAX: float = 1.4
+LOAD_MULTIPLIER_MIN: float = 0.8   # scale factor applied to BDEW H0 base load each episode
+LOAD_MULTIPLIER_MAX: float = 1.4   # sampled from Uniform(MIN, MAX) to vary grid stress across episodes
 
 # ── Reward weights ───────────────────────────────────────────
-REWARD_ELECTRICITY_COST_WEIGHT: float = 0.1
-REWARD_SOC_COMPLETION_BONUS: float = 10.0
-REWARD_SOC_MISS_PENALTY: float = -10.0
+REWARD_ELECTRICITY_COST_WEIGHT: float = 0.1   # small per-timestep penalty: weight * kWh delivered
+REWARD_SOC_COMPLETION_BONUS: float = 10.0     # terminal bonus when SoC ≥ target at departure
+REWARD_SOC_MISS_PENALTY: float = -10.0        # terminal penalty when SoC < target at departure
 
 # ── DQN hyperparameters (defaults) ──────────────────────────
-DQN_HIDDEN_SIZE: int = 64
+DQN_HIDDEN_SIZE: int = 64          # neurons per hidden layer in the Q-network
 DQN_LEARNING_RATE: float = 1e-3
-DQN_GAMMA: float = 0.99
-DQN_EPSILON_START: float = 1.0
-DQN_EPSILON_END: float = 0.05
-DQN_EPSILON_DECAY: float = 0.995
-DQN_TARGET_UPDATE_STEPS: int = 100
-DQN_BATCH_SIZE: int = 64
-DQN_REPLAY_BUFFER_SIZE: int = 10_000
+DQN_GAMMA: float = 0.99            # discount factor — how much future rewards are valued (0=myopic, 1=far-sighted)
+DQN_EPSILON_START: float = 1.0     # initial exploration rate — agent acts randomly at the start
+DQN_EPSILON_END: float = 0.05      # minimum exploration rate — always keeps 5% random actions
+DQN_EPSILON_DECAY: float = 0.995   # multiplicative decay applied to epsilon after each episode
+DQN_TARGET_UPDATE_STEPS: int = 100 # copy main network weights → target network every N steps
+DQN_BATCH_SIZE: int = 64           # number of transitions sampled from replay buffer per learning step
+DQN_REPLAY_BUFFER_SIZE: int = 10_000  # max transitions stored; oldest are overwritten when full
 
 # ── Observation / action dims ────────────────────────────────
 OBS_DIM: int = 5

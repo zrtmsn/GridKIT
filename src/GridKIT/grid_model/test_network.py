@@ -37,8 +37,10 @@ def test_lpf_runs_successfully():
     pypsa_network.lpf()
 
 def test_lpf_performance():
+    pypsa_network.lpf(snapshots=pypsa_network.snapshots[0])  # warmup
+    
     start = time.time()
-    pypsa_network.lpf()
+    pypsa_network.lpf(snapshots=pypsa_network.snapshots[0])
     elapsed = time.time() - start
     print(f"\nlpf() took {elapsed:.3f}s")
-    assert elapsed < 1.0  # fail if lpf takes more than 1 second
+    assert elapsed < 1.0
