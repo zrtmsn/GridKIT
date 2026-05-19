@@ -28,3 +28,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "xarray>=2026.2.0",
 ]
+
+[project.scripts]
+gridkit-app   = "GridKIT.scripts.app:main"
+gridkit-train = "GridKIT.scripts.train:main"
