@@ -50,5 +50,12 @@ def build_pypsa_network(grid_network: GridNetwork) -> pypsa.Network:
                     r = line.r_ohm_per_km * line.length_km,
                     length = line.length_km,
                     s_nom = s_nom)
+        
+    for bus_id in grid_network.household_bus_ids:
+        network.add("Load", f"ev_{bus_id}", bus=bus_id, p_set=0)
+
+    
     return network
+
+    
 
