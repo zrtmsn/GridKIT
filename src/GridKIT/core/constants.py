@@ -48,6 +48,19 @@ DQN_TARGET_UPDATE_STEPS: int = 100 # copy main network weights → target networ
 DQN_BATCH_SIZE: int = 64           # number of transitions sampled from replay buffer per learning step
 DQN_REPLAY_BUFFER_SIZE: int = 10_000  # max transitions stored; oldest are overwritten when full
 
+# ── IPPO hyperparameters (defaults) ─────────────────────────
+IPPO_HIDDEN_SIZE: int = 64         # neurons per hidden layer in actor and critic networks
+IPPO_LEARNING_RATE: float = 3e-4
+IPPO_GAMMA: float = 0.99           # discount factor
+IPPO_GAE_LAMBDA: float = 0.95      # GAE smoothing: 0=pure TD, 1=pure MC
+IPPO_CLIP_EPS: float = 0.2         # PPO clipping range for the probability ratio
+IPPO_N_EPOCHS: int = 10            # gradient update passes over one collected rollout
+IPPO_ROLLOUT_STEPS: int = 96       # steps collected per agent before each update (= 1 episode)
+IPPO_BATCH_SIZE: int = 32          # minibatch size within one PPO update epoch
+IPPO_ENTROPY_COEFF: float = 0.01   # entropy bonus weight — encourages exploration
+IPPO_VALUE_COEFF: float = 0.5      # critic loss weight relative to actor loss
+IPPO_MAX_GRAD_NORM: float = 0.5    # gradient clipping threshold
+
 # ── Observation / action dims ────────────────────────────────
 OBS_DIM: int = 5
 ACTION_DIM: int = 3   # OFF=0, HALF=1, FULL=2

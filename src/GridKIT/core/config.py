@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,6 +22,17 @@ from core.constants import (
     DQN_REPLAY_BUFFER_SIZE,
     DQN_TARGET_UPDATE_STEPS,
     EV_PENETRATION_LEVELS,
+    IPPO_BATCH_SIZE,
+    IPPO_CLIP_EPS,
+    IPPO_ENTROPY_COEFF,
+    IPPO_GAE_LAMBDA,
+    IPPO_GAMMA,
+    IPPO_HIDDEN_SIZE,
+    IPPO_LEARNING_RATE,
+    IPPO_MAX_GRAD_NORM,
+    IPPO_N_EPOCHS,
+    IPPO_ROLLOUT_STEPS,
+    IPPO_VALUE_COEFF,
 )
 
 
@@ -43,6 +55,8 @@ class Settings(BaseSettings):
     project_name: str = "GridKIT"
     debug: bool = False
     random_seed: int = 42
+    # selects which rl_engine backend to use; controls which hyperparameter block is active
+    algorithm: Literal["dqn", "ippo"] = "dqn"
 
     # ── Paths ────────────────────────────────────────────────
     data_dir: Path = Path("data")
@@ -77,6 +91,19 @@ class Settings(BaseSettings):
     dqn_target_update_steps: int = DQN_TARGET_UPDATE_STEPS
     dqn_batch_size: int = DQN_BATCH_SIZE
     dqn_replay_buffer_size: int = DQN_REPLAY_BUFFER_SIZE
+
+    # ── IPPO hyperparameters ─────────────────────────────────
+    ippo_hidden_size: int = IPPO_HIDDEN_SIZE
+    ippo_learning_rate: float = IPPO_LEARNING_RATE
+    ippo_gamma: float = IPPO_GAMMA
+    ippo_gae_lambda: float = IPPO_GAE_LAMBDA
+    ippo_clip_eps: float = IPPO_CLIP_EPS
+    ippo_n_epochs: int = IPPO_N_EPOCHS
+    ippo_rollout_steps: int = IPPO_ROLLOUT_STEPS
+    ippo_batch_size: int = IPPO_BATCH_SIZE
+    ippo_entropy_coeff: float = IPPO_ENTROPY_COEFF
+    ippo_value_coeff: float = IPPO_VALUE_COEFF
+    ippo_max_grad_norm: float = IPPO_MAX_GRAD_NORM
 
     # ── Dashboard ────────────────────────────────────────────
     dashboard_port: int = 8501

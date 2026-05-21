@@ -125,7 +125,7 @@ class Observation(BaseModel):
     outdoor_temperature_c: float # ambient temperature — context for future heat pump phase
  
     def to_array(self) -> list[float]:
-        """Return ordered list matching DQNetwork input."""
+        """Return ordered list matching OBS_DIM (algorithm-agnostic)."""
         return [
             self.soc_progress,
             self.time_urgency,
@@ -170,7 +170,10 @@ class EpisodeMetrics(BaseModel):
     soc_satisfaction_rate: float         # fraction of agents that reached target SoC by departure (0–1)
     curtailment_events: int              # number of timesteps where §14a curtailment was triggered
     transformer_peak_loading_pu: float   # highest transformer load seen during the episode (p.u.)
-    epsilon: float                       # exploration rate at episode end (1.0 = fully random, 0.0 = greedy)
+    # DQN only: exploration rate at episode end (1.0 = fully random, 0.0 = greedy); None for IPPO
+    epsilon: Optional[float] = None
+    # IPPO only: mean policy entropy across all agents at episode end; None for DQN
+    entropy: Optional[float] = None
  
  
 class SimResult(BaseModel):
