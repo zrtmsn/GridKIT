@@ -30,3 +30,7 @@ dependencies = [
 ]
 [tool.pytest.ini_options]
 pythonpath = ["src/GridKIT", "src"]
+
+[project.scripts]
+gridkit-app   = "GridKIT.scripts.app:main"
+gridkit-train = "GridKIT.scripts.train:main"
