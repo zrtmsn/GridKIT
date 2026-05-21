@@ -7,7 +7,15 @@ import core.constants as const
 
 
 class GridEnv(GridEnvProtocol):
-    
+    """
+    Power grid simulation environment implementing GridEnvProtocol from core
+    call reset() once after initiating
+    implementation details:
+        ev arrival and departure set to 0 and 95 for now due to model validator failing
+        every household has an ev and a base load
+        stub network defined in data/stub_network.json
+    """
+
     def __init__(self):
         self._network = StubNetworkBuilder().build()
         self._pypsa_network_template = build_pypsa_network(self.network)
@@ -19,13 +27,13 @@ class GridEnv(GridEnvProtocol):
             agent_id=x,
             bus_id=x,
             soc=const.EV_INITIAL_SOC_MEAN,
+            # TODO: find solution for correct arrival and departure steps
             arrival_step=0,
-            departure_step=95
+            departure_step=const.EPISODE_STEPS - 1
             )
             self._evs[x] = current_ev
             self._pypsa_network_template.add("Load", f"ev_{x}", bus=x, p_set=0)
             self._pypsa_network_template.add("Load", f"base_{x}", bus=x, p_set=0)
-        self.reset()
 
     @property
     def network(self) -> GridNetwork:
@@ -40,6 +48,12 @@ class GridEnv(GridEnvProtocol):
         return self._current_step
     
     def reset(self, *, seed: int | None = None):
+        """
+        resets the network to step 0
+        implementation details:
+            no randomnes yet, all parameters set to mean
+        
+        """
         self._pypsa_network = self._pypsa_network_template.copy()
         self._current_step = 0
         for x in self._evs.values():
@@ -61,6 +75,18 @@ class GridEnv(GridEnvProtocol):
 
 
     def step(self, actions: dict[str, ChargingAction]) -> tuple[dict[str, StepResult], PowerFlowResult]:
+        """
+        advances the network by one step, applying the given strategy
+        implementation details:
+            base loads set to constant 11 kw for now
+            price set to constant 1.0 for now
+            curtailment based on max load of lines and trafo, with multiplier defined in const
+            reward calculation:
+                reward = -electricity_cost * REWARD_ELECTRICITY_COST_WEIGHT
+                reward += REWARD_SOC_COMPLETION_BONUS if soc >= target at departure
+                reward += REWARD_SOC_MISS_PENALTY if departure and soc < target
+
+        """
         snapshot = self._pypsa_network.snapshots[self._current_step]
 
         # 1. Apply charging actions
