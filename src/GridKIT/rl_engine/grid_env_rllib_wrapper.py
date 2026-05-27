@@ -21,14 +21,14 @@ from GridKIT.core.models import (
 )
 
 class GridEnvRLlibWrapper(MultiAgentEnv):
-    """#TODO überarbeiten
+    """
     Multi-Agent Wrapper for GridKIT environments compatible with RLlib v2+.
     
-    Architecture Principle:
-    - Does NOT create the environment itself.
-    - Receives an implemented GridEnvProtocol via Dependency Injection. #TODO überarbeiten
-    - Translates between Core models (Observation, ChargingAction) and 
-      RLlib formats (numpy arrays, dicts).
+    How it works:
+    - You hand over an existing Environment object when creating this wrapper.
+    - The wrapper translates data formats: 
+      Core Models (Observation, ChargingAction) <-> RLlib Formats (numpy arrays, dicts).
+    - It handles the communication loop without knowing the internal logic of the Environment.
     """
 
     metadata = {"render_modes": []}
@@ -36,9 +36,11 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
     def __init__(self, env: GridEnvProtocol, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the wrapper.
+        
         Args:
-            env: A concrete implementation of GridEnvProtocol
-            config: Optional RLlib config dict (unused for initialization logic here).
+            env: An already created Environment object (must implement GridEnvProtocol).
+                 We simply store it as reference and use it for all steps.
+            config: Optional RLlib config dict (not used for setup here).
         """
         super().__init__()
         
@@ -53,13 +55,17 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         self._last_power_flow: Optional[PowerFlowResult] = None
         self._current_step: int = 0
 
-        # Define Spaces for RLlib (Fixed based on our Core constants)
-        # Observation: 5 floats (soc_progress, time_urgency, price, base_load, temp)
+        # Define observation and action spaces using constants from core
+        from GridKIT.core import constants as const
+        
         self.observation_space = gym.spaces.Box(
-            low=0.0, high=1.0, shape=(5,), dtype=np.float32
+            low=0.0, high=1.0, shape=(const.OBS_DIM,), dtype=np.float32
         )
-        # Action: Discrete 3 (OFF, HALF, FULL)
-        self.action_space = gym.spaces.Discrete(3)
+        self.action_space = gym.spaces.Discrete(const.ACTION_DIM)
+        #TODO add option for the user to pass a boolean when initializing the wrapper 
+        # to determine wether to run in discrete or continuous mode
+        #TODO add functinality for continuous mode
+
 
         # For MultiAgentEnv compatibility
         self.possible_agents = self._agent_ids
@@ -73,7 +79,7 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
         """
         Reset the environment and return initial observations.
-        Translates Core Observations to numpy arrays for RLlib.
+        Translates Observations to numpy arrays for RLlib.
         """
         if seed is not None:
             # Pass seed to inner env if supported, otherwise ignore
@@ -94,7 +100,7 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
             for agent_id, obs in obs_dict.items()
         }
 
-        # Info dict (can contain initial metadata) #TODO überarbeiten
+        # Info dict (required by RLlib MultiAgentEnv interface)
         info_dict = {agent_id: {} for agent_id in self._agent_ids}
         info_dict["__all__"] = {}
 
@@ -111,7 +117,7 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
     ]:
         """
         Execute one step in the environment.
-        1. Convert RLlib actions (int) to Core ChargingAction enums.
+        1. Convert RLlib actions (int) to ChargingAction enums.
         2. Call env.step() on the injected environment.
         3. Store results for metrics.
         4. Convert outputs to RLlib format.
@@ -123,7 +129,6 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
             charging_actions[agent_id] = ChargingAction(action_int)
 
         # 2. Call Inner Environment
-        # The magic happens here: We call the interface, unaware of the implementation
         step_results_dict, power_flow_result = self._env.step(charging_actions)
 
         # 3. Store for Metrics/Logging
@@ -169,7 +174,7 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
 
     def _obs_to_numpy(self, obs: Observation) -> np.ndarray:
         """
-        Helper: Convert Core Observation model to normalized numpy array.
+        Helper: Convert Observation model to normalized numpy array.
         Ensures values are clamped to [0, 1] where appropriate for NN stability.
         """
         raw_values = obs.to_array()
@@ -179,7 +184,7 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         # Index 3: base_load_kw 
         # Index 4: temp
         
-        # Converstion relies on core's to_array() structure
+        # This conversion relies on the consistent structure of Observation.to_array().
         return np.array(raw_values, dtype=np.float32)
 
     def get_latest_metrics(self) -> Tuple[Dict[str, StepResult], Optional[PowerFlowResult]]:
@@ -189,27 +194,45 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         """
         return self._last_step_results, self._last_power_flow
 
-    # --- MultiAgentEnv Required Properties ---
+    # ----------------------------------------------------------------------
+    # RLlib v2.x Interface Requirements
+    # ----------------------------------------------------------------------
+    # RLlib strictly expects these specific properties to exist and be queryable.
+    # We implement them as @properties (instead of simple attributes) to:
+    # 1. Maintain control over internal state (e.g., distinguishing between 
+    #    'possible_agents' vs. active 'agents').
+    # 2. Safely intercept external assignments (setters) if RLlib tries to 
+    #    modify the agent list dynamically during execution.
+    # 3. Ensure dynamic calculation if needed, rather than static storage.
+    # ----------------------------------------------------------------------
+
     @property
     def agents(self) -> List[str]:
+        """Returns the list of currently active agents."""
+        # Fallback to all possible agents if no specific active list is set
         return self._agents if hasattr(self, '_agents') else self._agent_ids
     
     @agents.setter
     def agents(self, value: List[str]):
+        """Allows RLlib to update the active agent list safely."""
         self._agents = value
-
+  
     @property
     def possible_agents(self) -> List[str]:
+        """Returns the static list of all potential agent IDs in this environment."""
         return self._agent_ids
     
     @possible_agents.setter
     def possible_agents(self, value: List[str]):
-        pass # Usually static
-
+        """Placeholder setter to prevent errors if RLlib attempts assignment."""
+        pass # Usually static, so we ignore external writes
+  
     @property
     def observation_spaces(self) -> Dict[str, gym.spaces.Space]:
+        """Returns a dict mapping each agent ID to its observation space."""
         return {agent_id: self.observation_space for agent_id in self._agent_ids}
 
     @property
     def action_spaces(self) -> Dict[str, gym.spaces.Space]:
+        """Returns a dict mapping each agent ID to its action space."""
         return {agent_id: self.action_space for agent_id in self._agent_ids}

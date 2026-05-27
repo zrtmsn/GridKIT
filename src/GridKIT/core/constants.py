@@ -48,7 +48,7 @@ DQN_TARGET_UPDATE_STEPS: int = 100 # copy main network weights → target networ
 DQN_BATCH_SIZE: int = 64           # number of transitions sampled from replay buffer per learning step
 DQN_REPLAY_BUFFER_SIZE: int = 10_000  # max transitions stored; oldest are overwritten when full
 
-# ── IPPO hyperparameters (defaults) ─────────────────────────
+# ── IPPO hyperparameters (defaults) ────────IPPO_NUM_ENV_RUNNERS: int = 2      # number of parallel environment workers for data collection─────────────────
 IPPO_HIDDEN_SIZE: int = 64         # neurons per hidden layer in actor and critic networks
 IPPO_LEARNING_RATE: float = 3e-4
 IPPO_GAMMA: float = 0.99           # discount factor
@@ -75,3 +75,17 @@ EV_PENETRATION_LEVELS: tuple[float, ...] = (0.20, 0.40, 0.60)
 
 # ── Action → power mapping ───────────────────────────────
 ACTION_TO_KW: dict[int, float] = {0: EV_POWER_OFF_KW, 1: EV_POWER_HALF_KW, 2: EV_POWER_FULL_KW}
+
+
+#TODO
+# --------------------------------------------------------------------------------------------------------------------
+# added by rl-engine-dev to get rid of magic numbers in rl-engine: (@core-dev please integrate this into the above)
+
+RLLIB_ENV_REGISTRY_NAME: str = "GridEnv-v0"     # Official name for Gymnasium/RLlib registration. Do not change unless updating the registration hook.
+IPPO_EVALUATION_INTERVAL: int = 5               # run evaluation every N training iterations
+IPPO_NUM_ENV_RUNNERS: int = 2                   # number of parallel environment workers for data collection         
+IPPO_NUM_EVALUATION_ENV_RUNNERS: int = 1        # number of parallel environment workers for evaluation
+
+# replace IPPO_BATCH_SIZE with
+IPPO_MINIBATCH_SIZE: int = 64
+IPPO_TRAIN_BATCH_SIZE: int = 512
