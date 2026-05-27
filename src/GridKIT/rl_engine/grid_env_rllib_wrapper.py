@@ -1,3 +1,4 @@
+# rl_engine/grid_env_rllib_wrapper.py
 """
 GridEnv Wrapper for RLlib.
 """
@@ -94,7 +95,7 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         self._last_step_results = {}
         self._last_power_flow = None
 
-        # Convert Core Observation objects to numpy arrays
+        # Convert Observation objects to numpy arrays
         np_obs_dict = {
             agent_id: self._obs_to_numpy(obs) 
             for agent_id, obs in obs_dict.items()
