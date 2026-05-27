@@ -17,8 +17,8 @@ from GridKIT.core.models import (
     StepResult,
     PowerFlowResult,
     ChargingAction,
-    EpisodeMetrics,
-    SimResult
+    EpisodeMetrics, #TODO remove or use
+    SimResult #TODO remove or use
 )
 
 class GridEnvRLlibWrapper(MultiAgentEnv):

@@ -10,13 +10,17 @@ Use factory classes to initialize components.
 # Export only the classes/functions intended for external use.
 
 from .grid_env_rllib_wrapper import GridEnvRLlibWrapper
-
-#TODO Future extensions (e.g., a dedicated trainer wrapper or config helper):
-#TODO from .trainer import IPPOTrainer
+from .trainer import RLTrainer
+from .ippo_config import create_ippo_config
+from .callbacks import TrainingCallback, DefaultCallback, TrainingResult
 
 __all__ = [
     "GridEnvRLlibWrapper",
-    # "IPPOTrainer",
+    "RLTrainer",
+    "create_ippo_config",
+    "TrainingCallback",
+    "DefaultCallback",
+    "TrainingResult",
 ]
 
 
