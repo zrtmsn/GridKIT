@@ -24,7 +24,7 @@ src_dir = script_dir.parent  # src/
 sys.path.insert(0, str(src_dir))
 
 # Changes working directory to project root for relative file access.
-project_root = script_dir.parent.parent  # /home/local/dev/GridKIT
+project_root = script_dir.parent.parent
 os.chdir(project_root)
 
 # Sets PYTHONPATH and working directory for all Ray workers.
@@ -63,7 +63,7 @@ def main():
         )
     print("Ray initialized.")
 
-    # --- 3. BUILD THE ENVIRONMENT (Grid Model Logic) ---
+    # --- 3. BUILD THE ENVIRONMENT ---
     # Creates a StubNetwork environment for Phase 1 training.
     print("Building Network Environment...")
     network_builder = StubNetworkBuilder()
@@ -74,7 +74,7 @@ def main():
     network = env.network
     print(f"   Network loaded with {len(env.agent_ids)} households.")
 
-    # --- 4. WRAP FOR RLLIB (RL Engine Logic) ---
+    # --- 4. WRAP FOR RLLIB ---
     # Injects the environment into the RLlib wrapper.
     print("Wrapping Environment for RLlib...")
     wrapper = GridEnvRLlibWrapper(env=env)
@@ -92,11 +92,11 @@ def main():
     register_env(env_name, env_creator)
     print(f"   Environment '{env_name}' registered.")
 
-    # --- 5. GET CONFIGURATION (RL Engine Logic) ---
+    # --- 5. GET CONFIG ---
     print("Loading IPPO Configuration...")
     config = create_ippo_config(env_name=env_name)
 
-    # --- 6. BUILD ALGORITHM & TRAIN ---
+    # --- 6. BUILD ALGORITHM, THEN TRAIN ---
     print("Building Algorithm...")
     algo = config.build_algo()
 

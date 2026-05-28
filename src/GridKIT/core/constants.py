@@ -89,3 +89,4 @@ IPPO_NUM_EVALUATION_ENV_RUNNERS: int = 1        # number of parallel environment
 # replace IPPO_BATCH_SIZE with
 IPPO_MINIBATCH_SIZE: int = 64
 IPPO_TRAIN_BATCH_SIZE: int = 512
+RLLIB_DEFAULT_NUM_EPISODES: int = 3             # Set this low just for faster test showcasing on consumer grade hardware

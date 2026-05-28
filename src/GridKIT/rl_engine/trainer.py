@@ -10,23 +10,28 @@ import ray
 from ray.tune.registry import register_env
 
 from GridKIT.rl_engine.callbacks import TrainingCallback, DefaultCallback, TrainingResult
+from GridKIT.core import constants as const
 
 
-class RLTrainer:
+class Trainer:
     """
     High-level trainer that wraps Ray/RLlib complexity.
 
     Usage:
-        callback = DefaultCallback(total=10)
-        trainer = RLTrainer(env_factory=my_factory, config_func=my_config)
-        results = trainer.run(num_episodes=10, callback=callback)
+        # Minimal usage (uses DefaultCallback automatically)
+        trainer = Trainer(env_factory=my_factory, config_func=create_ippo_config)
+        results = trainer.run()  # prints progress via DefaultCallback
+
+        # With custom callback
+        trainer = Trainer(env_factory=my_factory, config_func=create_ippo_config)
+        results = trainer.run(callback=my_callback)
     """
 
     def __init__(
         self,
         env_factory: Callable,
         config_func: Callable,
-        env_name: str = "GridEnv-v0"
+        env_name: str = const.RLLIB_ENV_REGISTRY_NAME
     ):
         """
         Initialize the trainer.
@@ -52,7 +57,7 @@ class RLTrainer:
 
     def run(
         self,
-        num_episodes: int = 10,
+        num_episodes: int = const.RLLIB_DEFAULT_NUM_EPISODES,
         callback: Optional[TrainingCallback] = None
     ) -> List[TrainingResult]:
         """

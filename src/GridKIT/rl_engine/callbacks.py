@@ -27,4 +27,4 @@ class DefaultCallback:
         self.total = total
 
     def on_iteration_end(self, iteration: int, reward: float, length: float) -> None:
-        print(f"  Iteration {iteration}/{self.total}: reward={reward:.2f}, len={length:.1f}")
+        print(f"  Iteration {iteration}/{self.total}: mean_reward={reward:.2f}, mean_len={length:.1f}")

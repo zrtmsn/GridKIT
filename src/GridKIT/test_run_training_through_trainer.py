@@ -13,7 +13,7 @@ src_dir = script_dir.parent          # src/
 sys.path.insert(0, str(src_dir))
 
 # Changes working directory to project root for relative file access.
-project_root = script_dir.parent.parent  # /home/local/dev/GridKIT
+project_root = script_dir.parent.parent
 os.chdir(project_root)
 
 # Sets PYTHONPATH for all Ray workers.
@@ -22,7 +22,7 @@ os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"
 
 
 from GridKIT.grid_model.environment import GridEnv
-from GridKIT.rl_engine import GridEnvRLlibWrapper, RLTrainer, create_ippo_config
+from GridKIT.rl_engine import GridEnvRLlibWrapper, Trainer, create_ippo_config
 
 
 def main():
@@ -31,12 +31,12 @@ def main():
         env = GridEnv()
         return GridEnvRLlibWrapper(env=env)
 
-    trainer = RLTrainer(env_factory=my_env_factory, config_func=create_ippo_config)
-    results = trainer.run(num_episodes=2)
-
+    trainer = Trainer(env_factory=my_env_factory, config_func=create_ippo_config)
+    results = trainer.run()                                                  
     print("Training done! Received results for", len(results), "episodes.")
-    # Dashboard can now use results[0].episode_return_mean etc.
 
 
 if __name__ == "__main__":
     main()
+
+    
