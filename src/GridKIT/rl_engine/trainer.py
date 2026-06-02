@@ -10,7 +10,7 @@ import ray
 from ray.tune.registry import register_env
 
 from GridKIT.rl_engine.callbacks import TrainingCallback, DefaultCallback, TrainingResult
-from GridKIT.core import constants as const
+from GridKIT.core.config import settings
 
 
 class Trainer:
@@ -31,7 +31,7 @@ class Trainer:
         self,
         env_factory: Callable,
         config_func: Callable,
-        env_name: str = const.RLLIB_ENV_REGISTRY_NAME
+        env_name: str = settings.rllib_env_registry_name
     ):
         """
         Initialize the trainer.
@@ -57,7 +57,7 @@ class Trainer:
 
     def run(
         self,
-        num_episodes: int = const.RLLIB_DEFAULT_NUM_EPISODES,
+        num_episodes: int = settings.rllib_default_num_episodes,
         callback: Optional[TrainingCallback] = None
     ) -> List[TrainingResult]:
         """
