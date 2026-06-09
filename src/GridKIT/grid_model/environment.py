@@ -1,8 +1,11 @@
 # grid_model/environment.py
+import random as _random
+
 from core.protocols import GridEnvProtocol
 from core.models import ChargingAction, EVState, GridNetwork, Observation, PowerFlowResult, StepResult
 from grid_model.builder import StubNetworkBuilder
 from grid_model.network import build_pypsa_network
+from grid_model.bdew_h0 import get_base_load_kw
 import core.constants as const
 
 
@@ -21,6 +24,7 @@ class GridEnv(GridEnvProtocol):
         self._pypsa_network_template = build_pypsa_network(self.network)
         self._evs: dict[str, EVState] = {} #key = agent_id
         self._current_step = 0
+        self._load_multiplier: float = 1.0  # set per episode in reset()
 
         for x in self.network.household_bus_ids:
             current_ev = EVState(
@@ -51,9 +55,12 @@ class GridEnv(GridEnvProtocol):
         """
         resets the network to step 0
         implementation details:
-            no randomnes yet, all parameters set to mean
-        
+            load multiplier sampled per episode from [LOAD_MULTIPLIER_MIN, LOAD_MULTIPLIER_MAX]
+            EV SoC reset to mean; arrival/departure still fixed at 0/95
         """
+        rng = _random.Random(seed)
+        self._load_multiplier = rng.uniform(const.LOAD_MULTIPLIER_MIN, const.LOAD_MULTIPLIER_MAX)
+
         self._pypsa_network = self._pypsa_network_template.copy()
         self._current_step = 0
         for x in self._evs.values():
@@ -65,11 +72,10 @@ class GridEnv(GridEnvProtocol):
             soc_progress = self._evs[x].soc,
             time_urgency = max(0,  (self._evs[x].departure_step - self._current_step) / const.EPISODE_STEPS),
             electricity_price = 1.0,
-            base_load_kw = const.GRID_CONNECTION_KW, #todo: BWED load profile
+            base_load_kw = get_base_load_kw(0, self._load_multiplier),
             outdoor_temperature_c = 20.0
             )
             observations[x] = current
-
 
         return observations
 
@@ -78,7 +84,7 @@ class GridEnv(GridEnvProtocol):
         """
         advances the network by one step, applying the given strategy
         implementation details:
-            base loads set to constant 11 kw for now
+            base loads from BDEW H0 profile scaled by per-episode load multiplier
             price set to constant 1.0 for now
             curtailment based on max load of lines and trafo, with multiplier defined in const
             reward calculation:
@@ -94,9 +100,10 @@ class GridEnv(GridEnvProtocol):
             power_kw = const.ACTION_TO_KW[action]
             self._pypsa_network.loads.at[f"ev_{agent_id}", "p_set"] = power_kw / 1000  # kW to MW
 
-        # 2. Add base loads
+        # 2. Add base loads (BDEW H0 profile, scaled by per-episode multiplier)
+        base_load_kw = get_base_load_kw(self._current_step, self._load_multiplier)
         for bus_id in self.network.household_bus_ids:
-            self._pypsa_network.loads.at[f"base_{bus_id}", "p_set"] = const.GRID_CONNECTION_KW / 1000  # TODO: BDEW H0 profile
+            self._pypsa_network.loads.at[f"base_{bus_id}", "p_set"] = base_load_kw / 1000  # kW → MW
 
         # 3. Run power flow
         self._pypsa_network.lpf(snapshots=snapshot)
@@ -160,7 +167,7 @@ class GridEnv(GridEnvProtocol):
                 soc_progress=ev.soc / ev.target_soc,
                 time_urgency=max(0, (ev.departure_step - self._current_step) / const.EPISODE_STEPS),
                 electricity_price=1.0,  # TODO: price scenario
-                base_load_kw=const.GRID_CONNECTION_KW,  # TODO: BDEW H0 profile
+                base_load_kw=base_load_kw,
                 outdoor_temperature_c=20.0,
             )
 
