@@ -164,7 +164,7 @@ class PowerFlowResult(BaseModel):
 # ══════════════════════════════════════════════════════════════
  
 class EpisodeMetrics(BaseModel):
-    """Logged at end of each training episode."""
+    """Logged at end of each evaluation episode. Not populated during training."""
     episode: int
     mean_episode_reward: float
     soc_satisfaction_rate: float         # fraction of agents that reached target SoC by departure (0–1)
