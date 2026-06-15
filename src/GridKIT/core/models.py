@@ -188,3 +188,63 @@ class SimResult(BaseModel):
     final_soc_per_agent: dict[str, float] = Field(default_factory=dict)    # agent_id → SoC at departure
     metrics: EpisodeMetrics
  
+
+
+
+#TODO Validate the following models / their description
+
+class IterationMetrics(BaseModel):
+    """
+    Logged at end of each RLlib training iteration (one algo.train() call).
+    
+    Contains RL algorithm metrics that RLlib reports per iteration:
+    - Policy quality (loss, entropy, KL divergence)
+    - Value function performance
+    - Training dynamics (learning rate, gradient norm)
+    - Data collection statistics
+    - Aggregated episode rewards
+
+    """
+    # ─── Basic Info ────────────────────────────────────────────────
+    iteration: int                      # training_iteration from RLlib
+    
+    # ─── Policy Quality ────────────────────────────────────────────
+    policy_loss: float                  # PPO clip-loss of the policy
+    entropy: float                      # Mean policy entropy (exploration level)
+    mean_kl: float                      # KL-divergence to previous policy update
+    
+    # ─── Value Function ────────────────────────────────────────────
+    vf_loss: float                      # Value function loss
+    vf_explained_var: float             # How much variance of returns is explained by VF
+    
+    # ─── Training Dynamics ─────────────────────────────────────────
+    cur_lr: float                       # Current learning rate
+    grad_norm: Optional[float]          # Gradient norm (stability indicator, may be None)
+    
+    # ─── Data Collection ───────────────────────────────────────────
+    timesteps_this_iter: int            # Environment steps in this iteration
+    episodes_this_iter: int             # Complete episodes finished in this iteration
+    total_steps: int                    # Cumulative steps since training start
+    
+    # ─── Episode Rewards (aggregated over this iteration) ──────────
+    episode_reward_mean: float
+    episode_reward_min: float
+    episode_reward_max: float
+    episode_len_mean: float
+    
+    # ─── IPPO Multi-Agent specific (optional) ──────────────────────
+    # Per-agent metrics when using multi-agent setup with multiple policies
+    # Only populated when RLlib reports agent-specific metrics (e.g., "agent_0/entropy")
+    agent_entropies: Optional[dict[str, float]] = None
+    agent_policy_losses: Optional[dict[str, float]] = None
+    
+    # ─── Entropy Coefficient (for tracking schedule) ───────────────
+    curr_entropy_coeff: Optional[float] = None  # Current entropy bonus weight
+
+
+@dataclass
+class AllMetrics:
+    """Container for all metrics from a training run."""
+    episode_metrics: list[EpisodeMetrics]
+    sim_results: list[SimResult]
+    iteration_metrics: list[IterationMetrics]
