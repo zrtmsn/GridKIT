@@ -8,6 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import gymnasium as gym
 from ray.rllib.env import MultiAgentEnv
+import json          
+import tempfile     
+from pathlib import Path  
+import ray           
 
 # Import only from core
 
@@ -51,10 +55,29 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         # Extract agent IDs from the environment once
         self._agent_ids: List[str] = self._env.agent_ids
         
+        # Assign worker ID using Ray's internal worker ID (unique across all workers)
+        try:
+            worker_hex = ray.worker.global_worker.worker_id.hex()[:4]
+            self._worker_id = f"w{worker_hex}"
+        except Exception:
+            # Fallback if Ray worker ID not available
+            import random
+            self._worker_id = f"w{random.randint(1000, 9999)}"
+        
+        # Episode counter for this worker instance
+        self._episode_counter: int = 0
+
         # Buffers to store latest results for metrics extraction later
         self._last_step_results: Dict[str, StepResult] = {}
         self._last_power_flow: Optional[PowerFlowResult] = None
         self._current_step: int = 0
+
+   # File-based logging setup
+        self._log_dir = Path(tempfile.gettempdir()) / "gridkit_rl_logs" #TODO change this path to a path in the Repo
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        self._episode_id: Optional[str] = None
+        self._step_log_file: Optional[Path] = None
+        self._step_data_buffer: List[Dict[str, Any]] = []
 
         # Define observation and action spaces using constants from core
         from GridKIT.core import constants as const
@@ -72,6 +95,27 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         self.possible_agents = self._agent_ids
         self.agents = self._agent_ids
 
+    def _start_new_episode(self):
+        """Initialize file-based logging for a new episode."""
+        self._episode_counter += 1
+        self._episode_id = f"{self._worker_id}_{self._episode_counter:04d}"
+        self._step_log_file = self._log_dir / f"episode_{self._episode_id}.jsonl"
+        self._step_data_buffer = []
+        
+        # Write metadata as first line (Front-Matter) - always overwrite to start fresh
+        with open(self._step_log_file, 'w') as f:
+            f.write(json.dumps({
+                '__metadata__': True,
+                'worker_id': self._worker_id,
+                'episode_num': self._episode_counter,
+            }) + '\n')
+
+    def _write_step_to_file(self, step_data: Dict[str, Any]):
+        """Append step data to the current episode's log file."""
+        if self._step_log_file:
+            with open(self._step_log_file, 'a') as f:
+                f.write(json.dumps(step_data) + '\n')
+        
     def reset(
         self, 
         *, 
@@ -94,6 +138,9 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         self._current_step = 0
         self._last_step_results = {}
         self._last_power_flow = None
+
+        # Start new episode logging
+        self._start_new_episode()
 
         # Convert Observation objects to numpy arrays
         np_obs_dict = {
@@ -135,7 +182,20 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         # 3. Store for Metrics/Logging
         self._last_step_results = step_results_dict
         self._last_power_flow = power_flow_result
-        self._current_step += 1
+
+        # Get the current step from the environment
+        env_current_step = self._env._current_step
+        # Log PowerFlowResult ONCE per timestep (before agent steps)
+        if self._last_power_flow:
+            self._write_step_to_file({
+                '__powerflow__': True,  # Marker to identify power flow entries
+                'timestep': env_current_step,
+                'transformer_loading_pu': self._last_power_flow.transformer_loading_pu,
+                'line_loadings_pu': self._last_power_flow.line_loadings_pu,
+                'bus_voltages_pu': self._last_power_flow.bus_voltages_pu,
+                'curtailment_applied': self._last_power_flow.curtailment_applied,
+                'curtailed_power_kw': self._last_power_flow.curtailed_power_kw,
+            })
 
         # 4. Prepare Return Values for RLlib
         observations = {}
@@ -162,9 +222,27 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
             if result.done:
                 episode_done = True
 
-            # Info: Pass through extra data (like curtailment info)
-            # We also stash the full objects here temporarily if needed for callbacks
-            infos[agent_id] = result.info
+            # Buffer step data for file writing (only real agents, not __all__)
+            self._step_data_buffer.append({
+                'step': env_current_step,
+                'agent_id': agent_id,
+                'reward': result.reward,
+                'done': result.done,
+                'truncated': result.truncated,
+                'observation': result.observation.to_array() if result.observation else None,
+            })
+            
+            # Write step to file (only real agents, not __all__)
+            # Use 0-indexed step count (same as environment.py) for consistency
+            # NOTE: transformer_loading_pu is logged separately via __powerflow__ entry
+            self._write_step_to_file({
+                'step': env_current_step, 
+                'agent_id': agent_id, 
+                'reward': result.reward, 
+                'done': result.done,
+                'curtailed_kw': result.info.get('curtailed_kw', 0.0),
+                'soc_progress': result.observation.soc_progress,  # For SoC satisfaction calculation
+            })
 
         # Global flags required by RLlib v2.x
         terminateds["__all__"] = episode_done
@@ -194,6 +272,16 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         Useful for external loggers or the Dashboard to construct SimResult/EpisodeMetrics.
         """
         return self._last_step_results, self._last_power_flow
+
+    
+    @classmethod
+    def clear_logs(cls):
+        """Remove all episode log files."""
+        log_dir = Path(tempfile.gettempdir()) / "gridkit_rl_logs"
+        if log_dir.exists():
+            for f in log_dir.glob("episode_*.jsonl"):
+                f.unlink()
+
 
     # ----------------------------------------------------------------------
     # RLlib v2.x Interface Requirements
