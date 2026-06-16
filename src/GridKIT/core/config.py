@@ -4,6 +4,8 @@
 # Usage:  from core.config import settings
 # ─────────────────────────────────────────────────────────────
 
+#TODO update constants.py and config.py to versions from feat/core-constants-config-sync.
+
 from __future__ import annotations
 
 from pathlib import Path

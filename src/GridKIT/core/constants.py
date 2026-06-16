@@ -77,19 +77,18 @@ EV_PENETRATION_LEVELS: tuple[float, ...] = (0.20, 0.40, 0.60)
 ACTION_TO_KW: dict[int, float] = {0: EV_POWER_OFF_KW, 1: EV_POWER_HALF_KW, 2: EV_POWER_FULL_KW}
 
 
-#TODO
+#TODO update constants.py and config.py to versions from feat/core-constants-config-sync.
 # --------------------------------------------------------------------------------------------------------------------
-# added by rl-engine-dev to get rid of magic numbers in rl-engine: (@core-dev please integrate this into the above)
 
 RLLIB_ENV_REGISTRY_NAME: str = "GridEnv-v0"     # Official name for Gymnasium/RLlib registration. Do not change unless updating the registration hook.
 IPPO_EVALUATION_INTERVAL: int = 5               # run evaluation every N training iterations
-IPPO_NUM_ENV_RUNNERS: int = 2                   # number of parallel environment workers for data collection         
-IPPO_NUM_EVALUATION_ENV_RUNNERS: int = 1        # number of parallel environment workers for evaluation
+IPPO_NUM_ENV_RUNNERS: int = 4                   # number of parallel environment workers for data collection         
+IPPO_NUM_EVALUATION_ENV_RUNNERS: int = 0        # number of parallel environment workers for evaluation
 
 # replace IPPO_BATCH_SIZE with
 IPPO_MINIBATCH_SIZE: int = 64
 IPPO_TRAIN_BATCH_SIZE: int = 512
-RLLIB_DEFAULT_NUM_EPISODES: int = 3             # Set this low just for faster test showcasing on consumer grade hardware, adjustable as required
+RLLIB_DEFAULT_NUM_EPISODES: int = 3             #TODO !!! Rename to Iterations instead of Episodes!!!
 
 IPPO_NUM_GPUS: int = 0                          # will be updated soon
 IPPO_NUM_CPUS: int = 0                          # will be updated soon

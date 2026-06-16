@@ -1,13 +1,13 @@
 # test_run_training.py
 """
-GridKIT Training Runner.
+Simple, first test script for training functionality. Might not respect most recent architectural choices. #TODO reevaluate
 
 This script orchestrates the training process by bringing together the
 three main modules:
 1. grid_model: Creates the physical environment.
 2. rl_engine: Provides the wrapper and configuration.
 3. core: Defines the shared data models.
-
+M no
 Usage:
     python run_training.py
 """

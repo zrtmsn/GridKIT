@@ -6,7 +6,7 @@
 # ─────────────────────────────────────────────────────────────
  
 from __future__ import annotations
- 
+from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import Optional
 from pydantic import BaseModel, Field, model_validator

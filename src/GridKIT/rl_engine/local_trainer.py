@@ -81,7 +81,7 @@ class LocalTrainer:
         """
         self._init_ray()
         self._register_env()
-        
+        config = self.config_func(env_name=self.env_name)
         self._algo = config.build()
 
 

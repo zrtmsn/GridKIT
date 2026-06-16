@@ -21,8 +21,6 @@ from GridKIT.core.models import (
     StepResult,
     PowerFlowResult,
     ChargingAction,
-    EpisodeMetrics, #TODO remove or use
-    SimResult #TODO remove or use
 )
 
 class GridEnvRLlibWrapper(MultiAgentEnv):
@@ -276,12 +274,15 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
     
     @classmethod
     def clear_logs(cls):
-        """Remove all episode log files."""
+        """
+        Remove ALL log files from the gridkit_rl_logs directory.
+        """
         log_dir = Path(tempfile.gettempdir()) / "gridkit_rl_logs"
         if log_dir.exists():
-            for f in log_dir.glob("episode_*.jsonl"):
-                f.unlink()
-
+            # Delete all files in the log directory
+            for f in log_dir.iterdir():
+                if f.is_file():
+                    f.unlink()
 
     # ----------------------------------------------------------------------
     # RLlib v2.x Interface Requirements
