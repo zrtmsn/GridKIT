@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from collections import defaultdict
 
-from .core.models import EpisodeMetrics, SimResult, PowerFlowResult, IterationMetrics, AllMetrics
+from GridKIT.core.models import EpisodeMetrics, SimResult, PowerFlowResult, IterationMetrics, AllMetrics
 from dataclasses import dataclass
 
 
