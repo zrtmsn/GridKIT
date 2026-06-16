@@ -4,8 +4,6 @@
 # Usage:  from core.config import settings
 # ─────────────────────────────────────────────────────────────
 
-#TODO update constants.py and config.py to versions from feat/core-constants-config-sync.
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,7 +11,7 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from core.constants import (
+from .constants import (
     DQN_BATCH_SIZE,
     DQN_EPSILON_DECAY,
     DQN_EPSILON_END,
@@ -24,17 +22,25 @@ from core.constants import (
     DQN_REPLAY_BUFFER_SIZE,
     DQN_TARGET_UPDATE_STEPS,
     EV_PENETRATION_LEVELS,
-    IPPO_BATCH_SIZE,
     IPPO_CLIP_EPS,
     IPPO_ENTROPY_COEFF,
+    IPPO_EVALUATION_INTERVAL,
     IPPO_GAE_LAMBDA,
     IPPO_GAMMA,
     IPPO_HIDDEN_SIZE,
     IPPO_LEARNING_RATE,
     IPPO_MAX_GRAD_NORM,
+    IPPO_MINIBATCH_SIZE,
     IPPO_N_EPOCHS,
+    IPPO_NUM_CPUS,
+    IPPO_NUM_ENV_RUNNERS,
+    IPPO_NUM_EVALUATION_ENV_RUNNERS,
+    IPPO_NUM_GPUS,
     IPPO_ROLLOUT_STEPS,
+    IPPO_TRAIN_BATCH_SIZE,
     IPPO_VALUE_COEFF,
+    RLLIB_DEFAULT_NUM_ITERATIONS,
+    RLLIB_ENV_REGISTRY_NAME,
 )
 
 
@@ -102,10 +108,20 @@ class Settings(BaseSettings):
     ippo_clip_eps: float = IPPO_CLIP_EPS
     ippo_n_epochs: int = IPPO_N_EPOCHS
     ippo_rollout_steps: int = IPPO_ROLLOUT_STEPS
-    ippo_batch_size: int = IPPO_BATCH_SIZE
+    ippo_minibatch_size: int = IPPO_MINIBATCH_SIZE
+    ippo_train_batch_size: int = IPPO_TRAIN_BATCH_SIZE
     ippo_entropy_coeff: float = IPPO_ENTROPY_COEFF
     ippo_value_coeff: float = IPPO_VALUE_COEFF
     ippo_max_grad_norm: float = IPPO_MAX_GRAD_NORM
+    ippo_num_env_runners: int = IPPO_NUM_ENV_RUNNERS
+    ippo_num_evaluation_env_runners: int = IPPO_NUM_EVALUATION_ENV_RUNNERS
+    ippo_evaluation_interval: int = IPPO_EVALUATION_INTERVAL
+    ippo_num_gpus: int = IPPO_NUM_GPUS
+    ippo_num_cpus: int = IPPO_NUM_CPUS
+
+    # ── RLlib / Ray ───────────────────────────────────────────
+    rllib_env_registry_name: str = RLLIB_ENV_REGISTRY_NAME
+    rllib_default_num_iterations: int = RLLIB_DEFAULT_NUM_ITERATIONS
 
     # ── Dashboard ────────────────────────────────────────────
     dashboard_port: int = 8501

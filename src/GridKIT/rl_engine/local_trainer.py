@@ -15,7 +15,7 @@ from GridKIT.rl_engine.callbacks import (
     DefaultCallback, 
     TrainingResult,
 )
-from GridKIT.core import constants as const
+from GridKIT.core.config import settings
 
 
 class LocalTrainer:
@@ -39,7 +39,7 @@ class LocalTrainer:
         self,
         env_factory: Callable,
         config_func: Callable,
-        env_name: str = const.RLLIB_ENV_REGISTRY_NAME
+        env_name: str = settings.rllib_env_registry_name
     ):
         """
         Initialize the trainer.
@@ -66,7 +66,7 @@ class LocalTrainer:
 
     def run(
         self,
-        num_episodes: int = const.RLLIB_DEFAULT_NUM_EPISODES,
+        num_iterations: int = settings.rllib_default_num_iterations,
         callback: Optional[TrainingCallback] = None
     ) -> List[TrainingResult]:
         """
@@ -89,13 +89,13 @@ class LocalTrainer:
 
         # Use default callback if none provided
         if callback is None:
-            callback = DefaultCallback(total=num_episodes)
+            callback = DefaultCallback(total=num_iterations)
 
         # Collect raw RLlib result dicts during training
         results = []
         raw_rllib_results = []
         
-        for i in range(num_episodes):
+        for i in range(num_iterations):
             result = self._algo.train()
             
             # Store raw RLlib result dict for later saving

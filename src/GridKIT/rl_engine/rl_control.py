@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from GridKIT.core.models import AllMetrics
-from GridKIT.core import constants as const
+from GridKIT.core.config import settings
 
 
 class TrainerType(Enum):
@@ -71,8 +71,8 @@ class RLControl:
         self,
         env_factory: Callable,
         config_func: Callable,
-        num_episodes: int = const.RLLIB_DEFAULT_NUM_EPISODES,
-        env_name: str = const.RLLIB_ENV_REGISTRY_NAME,
+        num_iterations: int = settings.rllib_default_num_iterations,
+        env_name: str = settings.rllib_env_registry_name,
     ) -> AllMetrics:
         """
         Run RL training and return all metrics.
@@ -91,8 +91,8 @@ class RLControl:
         
         # Run training with default callback for console output
         from GridKIT.rl_engine.callbacks import DefaultCallback
-        callback = DefaultCallback(total=num_episodes)
-        self._trainer.run(num_episodes=num_episodes, callback=callback)
+        callback = DefaultCallback(total=num_iterations)
+        self._trainer.run(num_iterations=num_iterations, callback=callback)
         
         # Post-training: Build all metrics
         from GridKIT.rl_engine.metrics_builder import MetricsBuilder
@@ -105,4 +105,3 @@ class RLControl:
         if self._trainer is None:
             return None
         return getattr(self._trainer, 'log_dir', None)
-

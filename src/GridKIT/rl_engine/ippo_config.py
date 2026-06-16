@@ -13,21 +13,21 @@
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
 
-from GridKIT.core import constants as const
+from GridKIT.core.config import settings
 
 
 def create_ippo_config(
-    env_name: str = const.RLLIB_ENV_REGISTRY_NAME,
-    num_env_runners: int = const.IPPO_NUM_ENV_RUNNERS,
-    train_batch_size: int = const.IPPO_TRAIN_BATCH_SIZE,
-    minibatch_size: int = const.IPPO_MINIBATCH_SIZE,      
-    num_epochs: int = const.IPPO_N_EPOCHS,
-    lr: float = const.IPPO_LEARNING_RATE,
-    gamma: float = const.IPPO_GAMMA,
-    lambda_: float = const.IPPO_GAE_LAMBDA,
-    clip_param: float = const.IPPO_CLIP_EPS,
-    entropy_coeff: float = const.IPPO_ENTROPY_COEFF,
-    evaluation_interval: int = const.IPPO_EVALUATION_INTERVAL,
+    env_name: str = settings.rllib_env_registry_name,
+    num_env_runners: int = settings.ippo_num_env_runners,
+    train_batch_size: int = settings.ippo_train_batch_size,
+    minibatch_size: int = settings.ippo_minibatch_size,
+    num_epochs: int = settings.ippo_n_epochs,
+    lr: float = settings.ippo_learning_rate,
+    gamma: float = settings.ippo_gamma,
+    lambda_: float = settings.ippo_gae_lambda,
+    clip_param: float = settings.ippo_clip_eps,
+    entropy_coeff: float = settings.ippo_entropy_coeff,
+    evaluation_interval: int = settings.ippo_evaluation_interval,
 ) -> PPOConfig:
     """
     Creates and returns a configured PPOConfig for IPPO training.
@@ -74,7 +74,7 @@ def create_ippo_config(
             entropy_coeff=entropy_coeff,
         )
         .evaluation(
-            evaluation_num_env_runners=const.IPPO_NUM_EVALUATION_ENV_RUNNERS,
+            evaluation_num_env_runners=settings.ippo_num_evaluation_env_runners,
             evaluation_interval=evaluation_interval,
         )
     )

@@ -78,16 +78,17 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         self._step_data_buffer: List[Dict[str, Any]] = []
 
         # Define observation and action spaces using constants from core
-        from GridKIT.core import constants as const
+        from GridKIT.core.config import settings
+        from GridKIT.core import constants as const 
+        #TODO remark that OBS / ACTION DIM need to be accessible from core/settings, otherwise constants import still required.
         
         self.observation_space = gym.spaces.Box(
             low=0.0, high=1.0, shape=(const.OBS_DIM,), dtype=np.float32
         )
-        self.action_space = gym.spaces.Discrete(const.ACTION_DIM)
+        self.action_space = gym.spaces.Discrete(const.ACTION_DIM)  # OFF=0, HALF=1, FULL=2
         #TODO add option for the user to pass a boolean when initializing the wrapper 
         # to determine wether to run in discrete or continuous mode
         #TODO add functinality for continuous mode
-
 
         # For MultiAgentEnv compatibility
         self.possible_agents = self._agent_ids

@@ -73,7 +73,7 @@ def main():
     all_metrics = control.run_training(
         env_factory=my_env_factory,
         config_func=create_ippo_config,
-        num_episodes=3,  # Short training for testing
+        num_iterations=3,  # Short training for testing
     )
     
     # Get log directory and export metrics to JSON files

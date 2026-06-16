@@ -48,7 +48,7 @@ DQN_TARGET_UPDATE_STEPS: int = 100 # copy main network weights → target networ
 DQN_BATCH_SIZE: int = 64           # number of transitions sampled from replay buffer per learning step
 DQN_REPLAY_BUFFER_SIZE: int = 10_000  # max transitions stored; oldest are overwritten when full
 
-# ── IPPO hyperparameters (defaults) ────────IPPO_NUM_ENV_RUNNERS: int = 2      # number of parallel environment workers for data collection─────────────────
+# ── IPPO hyperparameters (defaults) ─────────────────────────
 IPPO_HIDDEN_SIZE: int = 64         # neurons per hidden layer in actor and critic networks
 IPPO_LEARNING_RATE: float = 3e-4
 IPPO_GAMMA: float = 0.99           # discount factor
@@ -56,10 +56,16 @@ IPPO_GAE_LAMBDA: float = 0.95      # GAE smoothing: 0=pure TD, 1=pure MC
 IPPO_CLIP_EPS: float = 0.2         # PPO clipping range for the probability ratio
 IPPO_N_EPOCHS: int = 10            # gradient update passes over one collected rollout
 IPPO_ROLLOUT_STEPS: int = 96       # steps collected per agent before each update (= 1 episode)
-IPPO_BATCH_SIZE: int = 32          # minibatch size within one PPO update epoch
+IPPO_MINIBATCH_SIZE: int = 64      # minibatch size for SGD updates within one PPO epoch
+IPPO_TRAIN_BATCH_SIZE: int = 512   # total steps collected per update cycle across all workers
 IPPO_ENTROPY_COEFF: float = 0.01   # entropy bonus weight — encourages exploration
 IPPO_VALUE_COEFF: float = 0.5      # critic loss weight relative to actor loss
 IPPO_MAX_GRAD_NORM: float = 0.5    # gradient clipping threshold
+IPPO_NUM_ENV_RUNNERS: int = 4      # number of parallel environment workers for data collection
+IPPO_NUM_EVALUATION_ENV_RUNNERS: int = 0  # number of parallel environment workers for evaluation
+IPPO_EVALUATION_INTERVAL: int = 5  # run evaluation every N training iterations
+IPPO_NUM_GPUS: int = 0             # will be updated soon
+IPPO_NUM_CPUS: int = 0             # will be updated soon
 
 # ── Observation / action dims ────────────────────────────────
 OBS_DIM: int = 5
@@ -73,22 +79,9 @@ LINE_OVERLOAD_THRESHOLD: float = 1.0          # p.u.
 # ── EV penetration levels (experiment axis) ──────────────────
 EV_PENETRATION_LEVELS: tuple[float, ...] = (0.20, 0.40, 0.60)
 
-# ── Action → power mapping ───────────────────────────────
+# ── Action → power mapping ───────────────────────────────────
 ACTION_TO_KW: dict[int, float] = {0: EV_POWER_OFF_KW, 1: EV_POWER_HALF_KW, 2: EV_POWER_FULL_KW}
 
-
-#TODO update constants.py and config.py to versions from feat/core-constants-config-sync.
-# --------------------------------------------------------------------------------------------------------------------
-
-RLLIB_ENV_REGISTRY_NAME: str = "GridEnv-v0"     # Official name for Gymnasium/RLlib registration. Do not change unless updating the registration hook.
-IPPO_EVALUATION_INTERVAL: int = 5               # run evaluation every N training iterations
-IPPO_NUM_ENV_RUNNERS: int = 4                   # number of parallel environment workers for data collection         
-IPPO_NUM_EVALUATION_ENV_RUNNERS: int = 0        # number of parallel environment workers for evaluation
-
-# replace IPPO_BATCH_SIZE with
-IPPO_MINIBATCH_SIZE: int = 64
-IPPO_TRAIN_BATCH_SIZE: int = 512
-RLLIB_DEFAULT_NUM_EPISODES: int = 3             #TODO !!! Rename to Iterations instead of Episodes!!!
-
-IPPO_NUM_GPUS: int = 0                          # will be updated soon
-IPPO_NUM_CPUS: int = 0                          # will be updated soon
+# ── RLlib / Ray ──────────────────────────────────────────────
+RLLIB_ENV_REGISTRY_NAME: str = "GridEnv-v0"    # registered name for Gymnasium/RLlib — do not change without updating the registration hook
+RLLIB_DEFAULT_NUM_ITERATIONS: int = 3          # low default for fast iteration on consumer hardware; increase for real training runs

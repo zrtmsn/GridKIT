@@ -33,11 +33,11 @@ os.environ["PYTHONPATH"] = f"{script_dir}:{src_dir}"
 os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"  # Prevents Ray from changing the working directory
 
 # Imports modules cleanly.
-from GridKIT.grid_model import StubNetworkBuilder
-from GridKIT.grid_model.environment import GridEnv
-from GridKIT.rl_engine import GridEnvRLlibWrapper
-from GridKIT.rl_engine.ippo_config import create_ippo_config
-from GridKIT.core import settings
+from .grid_model import StubNetworkBuilder
+from .grid_model.environment import GridEnv
+from .rl_engine import GridEnvRLlibWrapper
+from .rl_engine.ippo_config import create_ippo_config
+from .core import settings
 
 # Ray & RLlib imports
 import ray
