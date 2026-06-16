@@ -1,0 +1,6 @@
+streamlit>=1.30
+folium>=0.15
+streamlit-folium>=0.18
+requests>=2.31
+pydantic>=2
+pydantic-settings>=2
