@@ -5,7 +5,7 @@ from core.protocols import GridEnvProtocol
 from core.models import ChargingAction, EVState, GridNetwork, Observation, PowerFlowResult, StepResult
 from grid_model.builder import StubNetworkBuilder
 from grid_model.network import build_pypsa_network
-from grid_model.bdew_h0 import get_base_load_kw
+from grid_model.bdew_h0 import build_h0_profile
 import core.constants as const
 
 
@@ -25,6 +25,8 @@ class GridEnv(GridEnvProtocol):
         self._evs: dict[str, EVState] = {} #key = agent_id
         self._current_step = 0
         self._load_multiplier: float = 1.0  # set per episode in reset()
+        # Build H0 profile once — day type and season come from the snapshot dates
+        self._h0_profile_kw = build_h0_profile(self._pypsa_network_template.snapshots)
 
         for x in self.network.household_bus_ids:
             current_ev = EVState(
@@ -72,7 +74,7 @@ class GridEnv(GridEnvProtocol):
             soc_progress = self._evs[x].soc,
             time_urgency = max(0,  (self._evs[x].departure_step - self._current_step) / const.EPISODE_STEPS),
             electricity_price = 1.0,
-            base_load_kw = get_base_load_kw(0, self._load_multiplier),
+            base_load_kw = self._h0_profile_kw.iloc[0] * self._load_multiplier,
             outdoor_temperature_c = 20.0
             )
             observations[x] = current
@@ -101,7 +103,7 @@ class GridEnv(GridEnvProtocol):
             self._pypsa_network.loads.at[f"ev_{agent_id}", "p_set"] = power_kw / 1000  # kW to MW
 
         # 2. Add base loads (BDEW H0 profile, scaled by per-episode multiplier)
-        base_load_kw = get_base_load_kw(self._current_step, self._load_multiplier)
+        base_load_kw = self._h0_profile_kw.iloc[self._current_step] * self._load_multiplier
         for bus_id in self.network.household_bus_ids:
             self._pypsa_network.loads.at[f"base_{bus_id}", "p_set"] = base_load_kw / 1000  # kW → MW
 
