@@ -5,8 +5,9 @@
 # ─────────────────────────────────────────────────────────────
 
 # ── §14a EnWG ────────────────────────────────────────────────
-MAX_CONTROLLED_POWER_KW: float = 4.2      # hard cap per controllable device
-GRID_CONNECTION_KW: float = 11.0          # standard household grid connection
+MIN_GUARANTEED_POWER_KW: float = 4.2      # §14a Mindestleistung — curtailment may not dim below this
+MAX_CONTROLLED_POWER_KW: float = MIN_GUARANTEED_POWER_KW  # backward-compat alias (old name was misleading)
+GRID_CONNECTION_KW: float = 11.0          # standard household grid connection (capacity, NOT consumption)
 
 # ── EV charging levels ───────────────────────────────────────
 EV_POWER_OFF_KW: float = 0.0
@@ -17,6 +18,8 @@ EV_POWER_FULL_KW: float = 7.4
 TIMESTEP_MINUTES: int = 15
 TIMESTEP_HOURS: float = TIMESTEP_MINUTES / 60.0   # 0.25 h
 EPISODE_STEPS: int = 96                            # 24 h / 15 min
+EPISODE_START_HOUR: int = 12                       # episode starts at noon so the overnight
+                                                   # connected window (evening→morning) never wraps
 
 # ── EV scenario distributions (mean, std) ───────────────────
 EV_ARRIVAL_HOUR_MEAN: float = 18.0
@@ -28,9 +31,29 @@ EV_INITIAL_SOC_STD: float = 0.10
 EV_TARGET_SOC: float = 0.80           # fixed target for all agents
 EV_BATTERY_CAPACITY_KWH: float = 77.0 # aligns with GridCreator (main_functions.py:615)
 
-# ── Load / price scenario ────────────────────────────────────
+# Per-agent connection-window sampling bounds (in step indices, episode-local).
+# With EPISODE_START_HOUR=12: arrival ~18:00 → step 24, departure ~07:00 → step 76.
+EV_ARRIVAL_STEP_MIN: int = 1          # earliest sampled arrival
+EV_DEPARTURE_STEP_MAX: int = 95       # latest sampled departure (must stay < EPISODE_STEPS)
+EV_MIN_CONNECTED_STEPS: int = 8       # enforce departure ≥ arrival + this (≥ 2 h plugged in)
+
+# ── Base load (BDEW H0-like) ─────────────────────────────────
+# NOTE: the old code used GRID_CONNECTION_KW (11 kW, the *connection capacity*) as base load,
+# which alone saturates the feeder. These are realistic *consumption* values.
+HOUSEHOLD_BASE_LOAD_MEAN_KW: float = 0.5   # daily-average household draw
+HOUSEHOLD_BASE_LOAD_PEAK_KW: float = 1.5   # evening peak of the H0 shape
 LOAD_MULTIPLIER_MIN: float = 0.8   # scale factor applied to BDEW H0 base load each episode
 LOAD_MULTIPLIER_MAX: float = 1.4   # sampled from Uniform(MIN, MAX) to vary grid stress across episodes
+
+# ── Dynamic price (day-ahead-like) ───────────────────────────
+PRICE_BASE_EUR_KWH: float = 0.30           # mean price level (MEDIUM scenario)
+PRICE_PEAK_AMPLITUDE_EUR_KWH: float = 0.15 # depth of overnight trough / height of evening peak
+PRICE_NOISE_STD_EUR_KWH: float = 0.02      # per-episode i.i.d. noise on the published curve
+PRICE_SCENARIO_MULTIPLIER: dict[str, float] = {"low": 0.7, "medium": 1.0, "high": 1.4}
+
+# ── Scenario 2 (naive price-follow) behaviour ────────────────
+NAIVE_PRICE_JITTER_STEPS_STD: float = 4.0  # σ (in steps, 1 h) of start-time jitter; runner sweeps it
+                                           # σ→0 = automated/app-driven, large σ = manual/human
 
 # ── Reward weights ───────────────────────────────────────────
 REWARD_ELECTRICITY_COST_WEIGHT: float = 0.1   # small per-timestep penalty: weight * kWh delivered
@@ -68,13 +91,23 @@ IPPO_NUM_GPUS: int = 0
 IPPO_NUM_CPUS: int = 0
 
 # ── Observation / action dims ────────────────────────────────
-OBS_DIM: int = 5
+OBS_DIM: int = 7   # [soc_progress, time_urgency, price, base_load, temp, local_voltage, recent_curtailment]
 ACTION_DIM: int = 3   # OFF=0, HALF=1, FULL=2
+
+# ── Observation normalization (raw → [0,1], applied in the RLlib wrapper) ──
+PRICE_NORM_MAX_EUR_KWH: float = 0.60   # price / this
+BASE_LOAD_NORM_MAX_KW: float = 3.0     # base_load_kw / this
+TEMP_MIN_C: float = -10.0              # (temp - MIN) / (MAX - MIN)
+TEMP_MAX_C: float = 40.0
+VOLTAGE_MIN_PU: float = 0.90           # (v - MIN) / (MAX - MIN); LV undervoltage limit ≈ 0.9 pu
+VOLTAGE_MAX_PU: float = 1.10
 
 # ── Grid / network ───────────────────────────────────────────
 NOMINAL_VOLTAGE_KV: float = 0.4        # low-voltage distribution
 TRANSFORMER_OVERLOAD_THRESHOLD: float = 1.0   # p.u. — above = curtailment
 LINE_OVERLOAD_THRESHOLD: float = 1.0          # p.u.
+TRANSFORMER_REACTANCE_PU: float = 0.04        # ~4% short-circuit reactance (needed for a solvable pf)
+TRANSFORMER_RESISTANCE_PU: float = 0.01
 
 # ── EV penetration levels (experiment axis) ──────────────────
 EV_PENETRATION_LEVELS: tuple[float, ...] = (0.20, 0.40, 0.60)

@@ -26,7 +26,11 @@ def build_pypsa_network(grid_network: GridNetwork) -> pypsa.Network:
                     trafo.trafo_id,
                     bus0 = trafo.hv_bus,
                     bus1 = trafo.lv_bus,
-                    s_nom = trafo.s_nom_mva)
+                    s_nom = trafo.s_nom_mva,
+                    # per-unit short-circuit impedance — a zero-impedance trafo makes
+                    # the power flow singular (nan flows). ~4% uk is typical for LV.
+                    x = const.TRANSFORMER_REACTANCE_PU,
+                    r = const.TRANSFORMER_RESISTANCE_PU)
         
     slack_trafo = grid_network.transformers[0]
     network.add(
@@ -51,10 +55,9 @@ def build_pypsa_network(grid_network: GridNetwork) -> pypsa.Network:
                     length = line.length_km,
                     s_nom = s_nom)
         
-    for bus_id in grid_network.household_bus_ids:
-        network.add("Load", f"ev_{bus_id}", bus=bus_id, p_set=0)
+    # NOTE: per-household loads (ev_<bus> and base_<bus>) are added once by
+    # GridEnv.__init__ — not here — to avoid duplicate PyPSA load entries.
 
-    
     return network
 
     

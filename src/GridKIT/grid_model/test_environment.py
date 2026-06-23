@@ -61,12 +61,10 @@ def test_reset_resets_step_to_zero(env):
     env.reset()
     assert env.current_step == 0
 
-def test_reset_resets_ev_soc(env):
+def test_reset_samples_soc_in_range(env):
+    env.reset(seed=3)
     for ev in env._evs.values():
-        ev.soc = 0.9
-    env.reset()
-    for ev in env._evs.values():
-        assert ev.soc == const.EV_INITIAL_SOC_MEAN
+        assert 0.05 <= ev.soc <= 0.95
 
 def test_reset_ev_loads_are_zero(env):
     env.reset()
@@ -74,16 +72,30 @@ def test_reset_ev_loads_are_zero(env):
         assert env._pypsa_network.loads.at[f"ev_{bus_id}", "p_set"] == 0.0
 
 def test_reset_observations_have_correct_soc_progress(env):
-    obs = env.reset()
+    obs = env.reset(seed=5)
     for agent_id, o in obs.items():
-        assert o.soc_progress == const.EV_INITIAL_SOC_MEAN
-        
-# trivially passes until random EV sampling is implemented
+        assert o.soc_progress == env._evs[agent_id].soc / env._evs[agent_id].target_soc
+
 def test_reset_with_seed_is_reproducible(env):
     obs1 = env.reset(seed=42)
     obs2 = env.reset(seed=42)
     for agent_id in env.agent_ids:
         assert obs1[agent_id].soc_progress == obs2[agent_id].soc_progress
+
+def test_reset_samples_heterogeneous_schedules(env):
+    env.reset(seed=11)
+    arrivals = {ev.arrival_step for ev in env._evs.values()}
+    # heterogeneity: not every agent shares one identical arrival step
+    assert len(arrivals) > 1
+    for ev in env._evs.values():
+        assert ev.departure_step > ev.arrival_step
+
+def test_different_seeds_give_different_schedules(env):
+    env.reset(seed=1)
+    a1 = {a: env._evs[a].arrival_step for a in env.agent_ids}
+    env.reset(seed=2)
+    a2 = {a: env._evs[a].arrival_step for a in env.agent_ids}
+    assert a1 != a2
 
 # ── Return types ──────────────────────────────────────────────
 
@@ -137,11 +149,33 @@ def test_step_off_does_not_charge(env, all_off):
     for agent_id in env.agent_ids:
         assert env._evs[agent_id].soc == soc_before[agent_id]
 
-def test_step_full_increases_soc(env, all_full):
-    soc_before = {a: env._evs[a].soc for a in env.agent_ids}
-    env.step(all_full)
-    for agent_id in env.agent_ids:
-        assert env._evs[agent_id].soc > soc_before[agent_id]
+def _advance_until_any_connected(env):
+    """Step (all OFF) until at least one EV is within its connected window."""
+    env.reset(seed=0)
+    off = {a: ChargingAction.OFF for a in env.agent_ids}
+    for _ in range(const.EPISODE_STEPS):
+        connected = [a for a, ev in env._evs.items() if ev.arrival_step <= env.current_step < ev.departure_step]
+        if connected:
+            return connected
+        env.step(off)
+    raise AssertionError("no agent ever became connected")
+
+def test_step_full_increases_soc_when_connected(env):
+    connected = _advance_until_any_connected(env)
+    soc_before = {a: env._evs[a].soc for a in connected}
+    env.step({a: ChargingAction.FULL for a in env.agent_ids})
+    for a in connected:
+        assert env._evs[a].soc > soc_before[a]
+
+def test_disconnected_ev_does_not_charge(env):
+    env.reset(seed=0)
+    # at step 0 nobody has arrived yet (evening arrival, noon start)
+    disconnected = [a for a, ev in env._evs.items() if not (ev.arrival_step <= 0 < ev.departure_step)]
+    assert disconnected, "expected some EVs disconnected at step 0"
+    soc_before = {a: env._evs[a].soc for a in disconnected}
+    env.step({a: ChargingAction.FULL for a in env.agent_ids})
+    for a in disconnected:
+        assert env._evs[a].soc == soc_before[a]
 
 def test_step_soc_does_not_exceed_1(env, all_full):
     for ev in env._evs.values():
@@ -191,9 +225,49 @@ def test_step_observation_soc_progress_updates(env, all_full):
         expected = env._evs[agent_id].soc / env._evs[agent_id].target_soc
         assert abs(result.observation.soc_progress - expected) < 1e-6
 
+# ── Observation shape / interface ─────────────────────────────
+
+def test_observation_has_obs_dim_entries(env):
+    obs = env.reset(seed=0)
+    for o in obs.values():
+        assert len(o.to_array()) == const.OBS_DIM
+
+def test_day_ahead_prices_has_one_value_per_step(env):
+    env.reset(seed=0)
+    assert len(env.day_ahead_prices()) == const.EPISODE_STEPS
+
+
+# ── Curtailment (proportional + §14a floor) ───────────────────
+
+def _force_all_connected_at(env, step, seed=0):
+    env.reset(seed=seed)
+    for ev in env._evs.values():
+        ev.arrival_step, ev.departure_step = 0, const.EPISODE_STEPS - 1
+    off = {a: ChargingAction.OFF for a in env.agent_ids}
+    while env.current_step < step:
+        env.step(off)
+
+def test_synchronized_full_charging_triggers_curtailment(env):
+    _force_all_connected_at(env, 60)
+    _, pf = env.step({a: ChargingAction.FULL for a in env.agent_ids})
+    assert pf.curtailment_applied
+    assert pf.curtailed_power_kw  # someone was dimmed
+
+def test_curtailment_never_below_minimum_guarantee(env):
+    _force_all_connected_at(env, 60)
+    sr, pf = env.step({a: ChargingAction.FULL for a in env.agent_ids})
+    for a in env.agent_ids:
+        assert sr[a].info["delivered_kw"] >= const.MIN_GUARANTEED_POWER_KW - 1e-9
+
+def test_no_duplicate_ev_loads(env):
+    env.reset(seed=0)
+    ev_loads = [idx for idx in env._pypsa_network.loads.index if idx.startswith("ev_")]
+    assert len(ev_loads) == len(set(ev_loads)) == env.network.n_households
+
+
 # ── Benchmark ──────────────────────────────────────────────
 
-def test_step_performance(env, all_full):    
+def test_step_performance(env, all_full):
     start = time.time()
     env.step(all_full)
     elapsed = time.time() - start

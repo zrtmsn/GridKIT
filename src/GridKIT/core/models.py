@@ -114,8 +114,13 @@ class EVState(BaseModel):
  
 class Observation(BaseModel):
     """
-    5-dimensional observation vector for one agent.
-    Indices match DQNetwork input layer (see constants.OBS_DIM).
+    7-dimensional observation vector for one agent (see constants.OBS_DIM).
+    All fields are raw/semantic; the RLlib wrapper normalizes them to [0,1].
+
+    The last two are *lagged* congestion signals a smart meter can plausibly observe
+    (local voltage drop, and whether the device was dimmed). They give a purely
+    self-interested agent a channel to perceive — and thus avoid — grid stress,
+    without any cooperative/grid-protective term being hand-coded into the reward.
     """
     agent_id: str
     soc_progress: float          # current_soc / target_soc — how close the EV is to its goal (0–1)
@@ -123,6 +128,8 @@ class Observation(BaseModel):
     electricity_price: float     # current tariff in €/kWh
     base_load_kw: float          # non-controllable household consumption (BDEW H0 profile)
     outdoor_temperature_c: float # ambient temperature — context for future heat pump phase
+    local_voltage_pu: float = 1.0          # previous-step voltage at this household's bus (p.u.)
+    recent_curtailment_ratio: float = 1.0  # previous-step delivered/requested power (1=unaffected, 0=fully cut)
  
     def to_array(self) -> list[float]:
         """Return ordered list matching OBS_DIM (algorithm-agnostic)."""
@@ -132,6 +139,8 @@ class Observation(BaseModel):
             self.electricity_price,
             self.base_load_kw,
             self.outdoor_temperature_c,
+            self.local_voltage_pu,
+            self.recent_curtailment_ratio,
         ]
  
  
