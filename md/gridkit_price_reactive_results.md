@@ -66,43 +66,56 @@ Turned the prototype into a runnable experiment + dashboard.
 
 ---
 
+## Calibration note (energy need)
+
+The first run used `EV_INITIAL_SOC_MEAN = 0.30` (every car ~empty daily ≈ 200 km/day),
+which forced *every* EV into a ~5 h full charge and made the flat/immediate baseline overload
+all evening (≈30 curtailment events at 60%) — implausibly high for an uncoordinated baseline.
+We recalibrated to realistic daily depletion (`EV_INITIAL_SOC_MEAN = 0.55` ≈ 19 kWh/night
+≈ 110 km/day) and a wider home-arrival spread (`EV_ARRIVAL_HOUR_STD` 1.0 → 1.5 h). The energy
+need — not arrival clustering — was the dominant driver. Numbers below are the recalibrated run.
+
 ## Results
 
 Full run: 3 EV penetrations × 4 behaviours × 12 seeds; scenario 3 trained 60 IPPO
-iterations per penetration (reward converged ~3 → ~105). **Curtailment events** = timesteps
-per 24 h episode where §14a dimming triggered.
+iterations per penetration. **Curtailment events** = timesteps per 24 h episode where §14a
+dimming triggered.
 
 | Penetration | Behaviour | Curtailment events | SoC met |
 |---|---|---:|---:|
 | **20%** | all four | ~0 | grid copes |
-| **40%** | flat / immediate | 19.9 ± 2.8 | 1.00 |
-|         | price-follow manual (σ=8) | **3.8 ± 4.3** | 0.80 |
-|         | price-follow automated (σ=0) | **18.2 ± 4.4** | 0.97 |
-|         | selfish RL | **9.4 ± 5.1** | 1.00 |
-| **60%** | flat / immediate | 29.9 ± 2.5 | 1.00 |
-|         | price-follow manual | 19.8 ± 5.7 | 0.58 |
-|         | price-follow automated | 25.8 ± 1.3 | **0.27** |
-|         | selfish RL | 27.5 ± 4.2 | 0.98 |
+| **40%** | flat / immediate | 6.8 ± 3.7 | 1.00 |
+|         | price-follow manual (σ=8) | **0.0 ± 0.0** | 0.93 |
+|         | price-follow automated (σ=0) | **5.8 ± 3.7** | 1.00 |
+|         | selfish RL | **0.2 ± 0.4** | 0.97 |
+| **60%** | flat / immediate | 13.5 ± 3.6 | 1.00 |
+|         | price-follow manual | 2.7 ± 3.4 | 0.93 |
+|         | price-follow automated | **13.6 ± 2.1** | 0.99 |
+|         | selfish RL | **1.4 ± 1.3** | 1.00 |
 
 ### Interpretation
 
-1. **The synchronization risk is real and automation-driven.** At 40%, moving from manual
-   to automated price-following spikes curtailment **3.8 → 18.2** — same behaviour, just
-   less jitter. Synchronization, not price-reactivity per se, is the failure mode.
+1. **The synchronization risk is real and automation-driven.** At 60%, moving from manual
+   (σ=8) to automated (σ→0) price-following jumps curtailment **2.7 → 13.6** — same behaviour,
+   just less jitter. Synchronization, not price-reactivity per se, is the failure mode.
 
-2. **Smarter selfish behaviour helps — when avoiding congestion also serves the agent.**
-   At 40% the RL agent cuts curtailment vs naive automated (**18.2 → 9.4**) *while* keeping
-   everyone charged (SoC 1.00 vs 0.97). Grid-protective behaviour emerged as a side effect
-   of pure self-interest.
+2. **Where charging lands matters as much as how much.** Naive *immediate* charging stacks on
+   the evening base-load peak (flat/immediate ≈ 6.8 / 13.5), whereas price-following shifts
+   load into the overnight base-load trough — so even synchronized automated price-following
+   is no worse than naive immediate, and *spread* price-following is far gentler.
 
-3. **Under heavy load, self-interest stops protecting the grid.** At 60% the RL agent's
-   curtailment climbs to 27.5 — nearly as high as flat/immediate — because the §14a 4.2 kW
-   floor guarantees it enough power that charging *through* congestion (SoC 0.98) beats
-   missing its deadline. Meanwhile naive automated collapses to 27% SoC satisfaction.
+3. **Congestion-aware self-interest nearly eliminates curtailment.** The selfish RL agent —
+   never rewarded for protecting the grid, only able to *sense* local voltage / past dimming —
+   drives curtailment to **0.2 (40%) / 1.4 (60%)** while still charging everyone (SoC ~1.0).
+   With realistic energy needs there is enough slack to both dodge congestion and meet the
+   deadline, and pure self-interest discovers it.
 
-**Takeaway:** grid-friendliness emerges from self-interest only at moderate stress; under
-heavy load it does not. §14a remains necessary as a backstop, and the curtailment-vs-SoC
-trade-off is exactly what a regulator weighs.
+**Takeaway:** automated price-following is the genuine new risk §14a must withstand; a
+self-interested agent that can perceive local congestion resolves it without any
+grid-protective reward — *provided there is charging slack*. (An earlier tight-energy
+calibration showed the opposite regime: when every car must charge ~5 h, self-interest charges
+through congestion and §14a stays the binding backstop.) Both regimes argue the same thing —
+the §14a curtailment mechanism is what makes either outcome safe.
 
 ### Scope / caveats
 

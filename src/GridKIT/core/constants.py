@@ -23,10 +23,13 @@ EPISODE_START_HOUR: int = 12                       # episode starts at noon so t
 
 # ── EV scenario distributions (mean, std) ───────────────────
 EV_ARRIVAL_HOUR_MEAN: float = 18.0
-EV_ARRIVAL_HOUR_STD: float = 1.0
+EV_ARRIVAL_HOUR_STD: float = 1.5    # commuter home-arrival spread (~15:00–21:00)
 EV_DEPARTURE_HOUR_MEAN: float = 7.0
 EV_DEPARTURE_HOUR_STD: float = 0.5
-EV_INITIAL_SOC_MEAN: float = 0.30
+# realistic daily depletion: ~0.25 SoC ≈ 19 kWh ≈ 110 km/day on a 77 kWh battery.
+# (The old 0.30 implied ~38 kWh/night ≈ 200 km/day, which forced every car into a
+#  ~5 h full charge and made the flat/immediate baseline overload all evening.)
+EV_INITIAL_SOC_MEAN: float = 0.55
 EV_INITIAL_SOC_STD: float = 0.10
 EV_TARGET_SOC: float = 0.80           # fixed target for all agents
 EV_BATTERY_CAPACITY_KWH: float = 77.0 # aligns with GridCreator (main_functions.py:615)
