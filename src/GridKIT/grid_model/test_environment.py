@@ -265,6 +265,29 @@ def test_no_duplicate_ev_loads(env):
     assert len(ev_loads) == len(set(ev_loads)) == env.network.n_households
 
 
+# ── EV penetration ────────────────────────────────────────────
+
+def test_penetration_limits_agent_count():
+    from grid_model.environment import GridEnv
+    env = GridEnv(ev_penetration=0.4)   # round(5 * 0.4) = 2
+    env.reset(seed=0)
+    assert len(env.agent_ids) == 2
+    assert len(env._evs) == 2
+
+def test_penetration_full_keeps_all_agents():
+    from grid_model.environment import GridEnv
+    env = GridEnv(ev_penetration=1.0)
+    env.reset(seed=0)
+    assert set(env.agent_ids) == set(env.network.household_bus_ids)
+
+def test_non_ev_buses_still_carry_base_load():
+    from grid_model.environment import GridEnv
+    env = GridEnv(ev_penetration=0.2)   # only 1 EV, but 5 households draw base load
+    env.reset(seed=0)
+    _, pf = env.step({a: ChargingAction.OFF for a in env.agent_ids})
+    assert pf.transformer_loading_pu > 0.0
+
+
 # ── Benchmark ──────────────────────────────────────────────
 
 def test_step_performance(env, all_full):

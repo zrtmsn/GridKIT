@@ -174,30 +174,9 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         return observations, rewards, terminateds, truncateds, infos
 
     def _obs_to_numpy(self, obs: Observation) -> np.ndarray:
-        """
-        Convert an Observation to a normalized [0,1] numpy array for the policy network.
-
-        Observation fields are raw/semantic (so non-RL policies see real units); the
-        observation_space is Box(0,1), so each field is mapped into [0,1] here.
-        Order must match Observation.to_array() / OBS_DIM.
-        """
-        from GridKIT.core import constants as const
-
-        (soc, urgency, price, base_load, temp, voltage, curtail) = obs.to_array()
-
-        def unit(x: float, lo: float, hi: float) -> float:
-            return (x - lo) / (hi - lo)
-
-        normalized = [
-            soc,                                                          # already ~[0,1]
-            urgency,                                                      # already [0,1]
-            price / const.PRICE_NORM_MAX_EUR_KWH,
-            base_load / const.BASE_LOAD_NORM_MAX_KW,
-            unit(temp, const.TEMP_MIN_C, const.TEMP_MAX_C),
-            unit(voltage, const.VOLTAGE_MIN_PU, const.VOLTAGE_MAX_PU),
-            curtail,                                                      # already [0,1]
-        ]
-        return np.clip(np.array(normalized, dtype=np.float32), 0.0, 1.0)
+        """Convert an Observation to the normalized [0,1] policy input (shared helper)."""
+        from GridKIT.rl_engine.obs_norm import normalize_observation
+        return normalize_observation(obs)
 
     def get_latest_metrics(self) -> Tuple[Dict[str, StepResult], Optional[PowerFlowResult]]:
         """

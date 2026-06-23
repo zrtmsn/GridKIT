@@ -13,6 +13,8 @@ from .grid_env_rllib_wrapper import GridEnvRLlibWrapper
 from .trainer import Trainer
 from .ippo_config import create_ippo_config
 from .callbacks import TrainingCallback, DefaultCallback, TrainingResult
+from .rl_policy import RLlibPolicyAdapter
+from .obs_norm import normalize_observation
 
 __all__ = [
     "GridEnvRLlibWrapper",
@@ -21,6 +23,8 @@ __all__ = [
     "TrainingCallback",
     "DefaultCallback",
     "TrainingResult",
+    "RLlibPolicyAdapter",
+    "normalize_observation",
 ]
 
 
