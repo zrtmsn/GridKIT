@@ -1,8 +1,12 @@
 # grid_model/environment.py
+import random as _random
+
 from core.protocols import GridEnvProtocol
 from core.models import ChargingAction, EVState, GridNetwork, Observation, PowerFlowResult, StepResult
 from grid_model.builder import StubNetworkBuilder
 from grid_model.network import build_pypsa_network
+from grid_model.surrogate import RadialPowerFlow
+from grid_model.bdew_h0 import build_h0_profile
 import core.constants as const
 
 
@@ -16,11 +20,16 @@ class GridEnv(GridEnvProtocol):
         stub network defined in data/stub_network.json
     """
 
-    def __init__(self):
+    def __init__(self, use_surrogate: bool = True):
+        self._use_surrogate = use_surrogate
         self._network = StubNetworkBuilder().build()
+        self._surrogate = RadialPowerFlow(self._network)
         self._pypsa_network_template = build_pypsa_network(self.network)
         self._evs: dict[str, EVState] = {} #key = agent_id
         self._current_step = 0
+        self._load_multiplier: float = 1.0  # set per episode in reset()
+        # Build H0 profile once — day type and season come from the snapshot dates
+        self._h0_profile_kw = build_h0_profile(self._pypsa_network_template.snapshots)
 
         for x in self.network.household_bus_ids:
             current_ev = EVState(
@@ -51,9 +60,12 @@ class GridEnv(GridEnvProtocol):
         """
         resets the network to step 0
         implementation details:
-            no randomnes yet, all parameters set to mean
-        
+            load multiplier sampled per episode from [LOAD_MULTIPLIER_MIN, LOAD_MULTIPLIER_MAX]
+            EV SoC reset to mean; arrival/departure still fixed at 0/95
         """
+        rng = _random.Random(seed)
+        self._load_multiplier = rng.uniform(const.LOAD_MULTIPLIER_MIN, const.LOAD_MULTIPLIER_MAX)
+
         self._pypsa_network = self._pypsa_network_template.copy()
         self._current_step = 0
         for x in self._evs.values():
@@ -65,11 +77,10 @@ class GridEnv(GridEnvProtocol):
             soc_progress = self._evs[x].soc,
             time_urgency = max(0,  (self._evs[x].departure_step - self._current_step) / const.EPISODE_STEPS),
             electricity_price = 1.0,
-            base_load_kw = const.GRID_CONNECTION_KW, #todo: BWED load profile
+            base_load_kw = self._h0_profile_kw.iloc[0] * self._load_multiplier,
             outdoor_temperature_c = 20.0
             )
             observations[x] = current
-
 
         return observations
 
@@ -78,7 +89,7 @@ class GridEnv(GridEnvProtocol):
         """
         advances the network by one step, applying the given strategy
         implementation details:
-            base loads set to constant 11 kw for now
+            base loads from BDEW H0 profile scaled by per-episode load multiplier
             price set to constant 1.0 for now
             curtailment based on max load of lines and trafo, with multiplier defined in const
             reward calculation:
@@ -87,33 +98,24 @@ class GridEnv(GridEnvProtocol):
                 reward += REWARD_SOC_MISS_PENALTY if departure and soc < target
 
         """
-        snapshot = self._pypsa_network.snapshots[self._current_step]
+        # 1. Collect requested EV power and base load
+        base_load_kw = self._h0_profile_kw.iloc[self._current_step] * self._load_multiplier
+        ev_kw: dict[str, float] = {
+            agent_id: const.ACTION_TO_KW[actions.get(agent_id, ChargingAction.OFF)]
+            for agent_id in self._evs
+        }
 
-        # 1. Apply charging actions
-        for agent_id, action in actions.items():
-            power_kw = const.ACTION_TO_KW[action]
-            self._pypsa_network.loads.at[f"ev_{agent_id}", "p_set"] = power_kw / 1000  # kW to MW
+        # 2. Power flow with requested loads
+        bus_load_mw = {
+            bus_id: (base_load_kw + ev_kw.get(bus_id, 0.0)) / 1000.0
+            for bus_id in self.network.household_bus_ids
+        }
+        trafo_loading, line_loadings, bus_voltages = self._solve(bus_load_mw)
 
-        # 2. Add base loads
-        for bus_id in self.network.household_bus_ids:
-            self._pypsa_network.loads.at[f"base_{bus_id}", "p_set"] = const.GRID_CONNECTION_KW / 1000  # TODO: BDEW H0 profile
-
-        # 3. Run power flow
-        self._pypsa_network.lpf(snapshots=snapshot)
-
-        # 4. Check for overloads and apply §14a curtailment
-        trafo = self._pypsa_network.transformers.index[0]
-        trafo_loading = abs(self._pypsa_network.transformers_t.p0.at[snapshot, trafo]) / \
-                        self._pypsa_network.transformers.at[trafo, "s_nom"]
-
-        line_loadings = {}
-        for line_id in self._pypsa_network.lines.index:
-            s_nom = self._pypsa_network.lines.at[line_id, "s_nom"]
-            p0 = abs(self._pypsa_network.lines_t.p0.at[snapshot, line_id])
-            line_loadings[line_id] = p0 / s_nom
-
+        # 3. §14a curtailment
         curtailment_applied = False
         curtailed_power_kw: dict[str, float] = {}
+        delivered_kw = dict(ev_kw)
 
         overloaded = (
             trafo_loading > const.TRANSFORMER_OVERLOAD_THRESHOLD or
@@ -123,28 +125,29 @@ class GridEnv(GridEnvProtocol):
         if overloaded:
             curtailment_applied = True
             for agent_id in self._evs:
-                original_kw = const.ACTION_TO_KW[actions.get(agent_id, ChargingAction.OFF)]
+                original_kw = ev_kw[agent_id]
                 capped_kw = min(original_kw, const.MAX_CONTROLLED_POWER_KW)
                 curtailed_kw = original_kw - capped_kw
                 if curtailed_kw > 0:
                     curtailed_power_kw[agent_id] = curtailed_kw
-                self._pypsa_network.loads.at[f"ev_{agent_id}", "p_set"] = capped_kw / 1000
-            # re-run power flow with curtailed loads
-            self._pypsa_network.lpf(snapshots=snapshot)
+                delivered_kw[agent_id] = capped_kw
+            bus_load_mw = {
+                bus_id: (base_load_kw + delivered_kw.get(bus_id, 0.0)) / 1000.0
+                for bus_id in self.network.household_bus_ids
+            }
+            trafo_loading, line_loadings, bus_voltages = self._solve(bus_load_mw)
 
-        # 5. Update EV SoC
         for agent_id in self._evs:
-            actual_kw = self._pypsa_network.loads.at[f"ev_{agent_id}", "p_set"] * 1000
-            energy_kwh = actual_kw * const.TIMESTEP_HOURS
+            energy_kwh = delivered_kw[agent_id] * const.TIMESTEP_HOURS
             self._evs[agent_id].soc = min(
                 1.0,
                 self._evs[agent_id].soc + energy_kwh / const.EV_BATTERY_CAPACITY_KWH
             )
 
-        # 6. Compute rewards and build results
+        # 5. Compute rewards and build results
         step_results: dict[str, StepResult] = {}
         for agent_id, ev in self._evs.items():
-            actual_kw = self._pypsa_network.loads.at[f"ev_{agent_id}", "p_set"] * 1000
+            actual_kw = delivered_kw[agent_id]
             electricity_cost = actual_kw * const.TIMESTEP_HOURS * 1.0  # price placeholder
             reward = -electricity_cost * const.REWARD_ELECTRICITY_COST_WEIGHT
 
@@ -160,7 +163,7 @@ class GridEnv(GridEnvProtocol):
                 soc_progress=ev.soc / ev.target_soc,
                 time_urgency=max(0, (ev.departure_step - self._current_step) / const.EPISODE_STEPS),
                 electricity_price=1.0,  # TODO: price scenario
-                base_load_kw=const.GRID_CONNECTION_KW,  # TODO: BDEW H0 profile
+                base_load_kw=base_load_kw,
                 outdoor_temperature_c=20.0,
             )
 
@@ -172,12 +175,6 @@ class GridEnv(GridEnvProtocol):
                 truncated=False,
                 info={"curtailed_kw": curtailed_power_kw.get(agent_id, 0.0)}
             )
-
-        # 7. Build PowerFlowResult
-        bus_voltages = {
-            bus_id: self._pypsa_network.buses_t.v_mag_pu.at[snapshot, bus_id]
-            for bus_id in self._pypsa_network.buses.index
-        }
 
         power_flow_result = PowerFlowResult(
             timestep=self._current_step,
@@ -191,4 +188,26 @@ class GridEnv(GridEnvProtocol):
         self._current_step += 1
         return step_results, power_flow_result
 
-
+    # ── Physics backend ──────────────────────────────────────
+    def _solve(self, bus_load_mw: dict[str, float]):
+        """Return (trafo_loading_pu, {line: loading_pu}, {bus: voltage_pu})."""
+        if self._use_surrogate:
+            return self._surrogate.solve(bus_load_mw)
+        # Slow PyPSA LPF path — for validation only
+        snapshot = self._pypsa_network.snapshots[self._current_step]
+        for bus_id, mw in bus_load_mw.items():
+            self._pypsa_network.loads.at[f"base_{bus_id}", "p_set"] = mw
+        self._pypsa_network.lpf(snapshots=snapshot)
+        trafo = self._pypsa_network.transformers.index[0]
+        trafo_loading = abs(self._pypsa_network.transformers_t.p0.at[snapshot, trafo]) / \
+            self._pypsa_network.transformers.at[trafo, "s_nom"]
+        line_loadings = {
+            line_id: abs(self._pypsa_network.lines_t.p0.at[snapshot, line_id]) /
+            self._pypsa_network.lines.at[line_id, "s_nom"]
+            for line_id in self._pypsa_network.lines.index
+        }
+        voltages = {
+            b: float(self._pypsa_network.buses_t.v_mag_pu.at[snapshot, b])
+            for b in self._pypsa_network.buses.index
+        }
+        return float(trafo_loading), {k: float(v) for k, v in line_loadings.items()}, voltages
