@@ -79,6 +79,11 @@ class GridNetwork(BaseModel):
     transformers: list[TransformerModel] = Field(default_factory=list)
     area_name: Optional[str] = None
     household_bus_ids: list[str] = Field(default_factory=list)  # bus IDs that are residential connection points (from GridCreator buses_df)
+    # Optional real data from GridCreator, one representative day at 15-min resolution
+    # (length == EPISODE_STEPS). Absent/empty for stub networks — grid_model falls
+    # back to the synthetic BDEW H0 profile and always-connected EVs in that case.
+    household_load_profile_kw: dict[str, list[float]] = Field(default_factory=dict)
+    ev_availability: dict[str, list[bool]] = Field(default_factory=dict)  # household_bus_id -> plugged-in per step
 
     @property
     def n_households(self) -> int:

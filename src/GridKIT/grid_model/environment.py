@@ -10,39 +10,83 @@ from grid_model.bdew_h0 import build_h0_profile
 import core.constants as const
 
 
+def _infer_arrival_departure(availability: list[bool]) -> tuple[int, int]:
+    """
+    Reduce a per-step plugged-in/away series to a single (arrival, departure)
+    window — the longest contiguous available run (typically "home overnight")
+    — since EVState/the reward model only track one charging opportunity per
+    episode. Per-step gating still uses the full array separately.
+    """
+    best_start = best_end = 0
+    best_len = 0
+    run_start: int | None = None
+    for i, available in enumerate(availability):
+        if available and run_start is None:
+            run_start = i
+        elif not available and run_start is not None:
+            if i - run_start > best_len:
+                best_start, best_end, best_len = run_start, i - 1, i - run_start
+            run_start = None
+    if run_start is not None and len(availability) - run_start > best_len:
+        best_start, best_end = run_start, len(availability) - 1
+    if best_end <= best_start:
+        best_end = min(best_start + 1, len(availability) - 1)
+    return best_start, best_end
+
+
 class GridEnv(GridEnvProtocol):
     """
     Power grid simulation environment implementing GridEnvProtocol from core
     call reset() once after initiating
     implementation details:
-        ev arrival and departure set to 0 and 95 for now due to model validator failing
+        ev arrival/departure default to 0/95 (always connected) unless the
+        network provides real GridCreator availability data (household_bus_ids
+        with an entry in network.ev_availability get a real window instead)
         every household has an ev and a base load
-        stub network defined in data/stub_network.json
+        stub network defined in data/stub_network.json (no profile/availability
+        data — falls back to the synthetic BDEW H0 profile and always-connected EVs)
     """
 
-    def __init__(self, use_surrogate: bool = True):
+    def __init__(self, use_surrogate: bool = True, network: GridNetwork | None = None):
         self._use_surrogate = use_surrogate
-        self._network = StubNetworkBuilder().build()
+        self._network = network or StubNetworkBuilder().build()
         self._surrogate = RadialPowerFlow(self._network)
         self._pypsa_network_template = build_pypsa_network(self.network)
         self._evs: dict[str, EVState] = {} #key = agent_id
+        self._ev_availability: dict[str, list[bool]] = {}  # agent_id -> per-step plugged-in, from GridCreator
         self._current_step = 0
         self._load_multiplier: float = 1.0  # set per episode in reset()
-        # Build H0 profile once — day type and season come from the snapshot dates
+        # Build H0 profile once — fallback base load for buses without a real profile
         self._h0_profile_kw = build_h0_profile(self._pypsa_network_template.snapshots)
 
         for x in self.network.household_bus_ids:
+            availability = self.network.ev_availability.get(x)
+            if availability:
+                self._ev_availability[x] = availability
+                arrival_step, departure_step = _infer_arrival_departure(availability)
+            else:
+                arrival_step, departure_step = 0, const.EPISODE_STEPS - 1
+
             current_ev = EVState(
             agent_id=x,
             bus_id=x,
             soc=const.EV_INITIAL_SOC_MEAN,
-            # TODO: find solution for correct arrival and departure steps
-            arrival_step=0,
-            departure_step=const.EPISODE_STEPS - 1
+            arrival_step=arrival_step,
+            departure_step=departure_step,
             )
             self._evs[x] = current_ev
             self._pypsa_network_template.add("Load", f"ev_{x}", bus=x, p_set=0)
             self._pypsa_network_template.add("Load", f"base_{x}", bus=x, p_set=0)
+
+    def _base_load_kw(self, bus_id: str, step: int) -> float:
+        profile = self.network.household_load_profile_kw.get(bus_id)
+        if profile is not None:
+            return profile[step]
+        return self._h0_profile_kw.iloc[step] * self._load_multiplier
+
+    def _is_connected(self, agent_id: str, step: int) -> bool:
+        availability = self._ev_availability.get(agent_id)
+        return availability[step] if availability is not None else True
 
     @property
     def network(self) -> GridNetwork:
@@ -61,7 +105,8 @@ class GridEnv(GridEnvProtocol):
         resets the network to step 0
         implementation details:
             load multiplier sampled per episode from [LOAD_MULTIPLIER_MIN, LOAD_MULTIPLIER_MAX]
-            EV SoC reset to mean; arrival/departure still fixed at 0/95
+            (only affects buses without a real GridCreator profile)
+            EV SoC reset to mean; arrival/departure fixed for the episode (see __init__)
         """
         rng = _random.Random(seed)
         self._load_multiplier = rng.uniform(const.LOAD_MULTIPLIER_MIN, const.LOAD_MULTIPLIER_MAX)
@@ -72,12 +117,14 @@ class GridEnv(GridEnvProtocol):
             x.soc = const.EV_INITIAL_SOC_MEAN
         observations: dict[str, Observation] = {}
         for x in self.network.household_bus_ids:
+            ev = self._evs[x]
+            ev.is_connected = self._is_connected(x, self._current_step)
             current = Observation(
             agent_id = x,
-            soc_progress = self._evs[x].soc,
-            time_urgency = max(0,  (self._evs[x].departure_step - self._current_step) / const.EPISODE_STEPS),
+            soc_progress = ev.soc,
+            time_urgency = max(0,  (ev.departure_step - self._current_step) / const.EPISODE_STEPS),
             electricity_price = 1.0,
-            base_load_kw = self._h0_profile_kw.iloc[0] * self._load_multiplier,
+            base_load_kw = self._base_load_kw(x, self._current_step),
             outdoor_temperature_c = 20.0
             )
             observations[x] = current
@@ -89,7 +136,10 @@ class GridEnv(GridEnvProtocol):
         """
         advances the network by one step, applying the given strategy
         implementation details:
-            base loads from BDEW H0 profile scaled by per-episode load multiplier
+            base loads from a real GridCreator profile where the network provides
+            one, else the BDEW H0 profile scaled by per-episode load multiplier
+            EV charging requests are forced to 0 kW while the EV isn't connected
+            (real GridCreator availability where present, else always connected)
             price set to constant 1.0 for now
             curtailment based on max load of lines and trafo, with multiplier defined in const
             reward calculation:
@@ -99,15 +149,19 @@ class GridEnv(GridEnvProtocol):
 
         """
         # 1. Collect requested EV power and base load
-        base_load_kw = self._h0_profile_kw.iloc[self._current_step] * self._load_multiplier
+        base_load_kw = {
+            bus_id: self._base_load_kw(bus_id, self._current_step)
+            for bus_id in self.network.household_bus_ids
+        }
         ev_kw: dict[str, float] = {
             agent_id: const.ACTION_TO_KW[actions.get(agent_id, ChargingAction.OFF)]
+                if self._is_connected(agent_id, self._current_step) else 0.0
             for agent_id in self._evs
         }
 
         # 2. Power flow with requested loads
         bus_load_mw = {
-            bus_id: (base_load_kw + ev_kw.get(bus_id, 0.0)) / 1000.0
+            bus_id: (base_load_kw[bus_id] + ev_kw.get(bus_id, 0.0)) / 1000.0
             for bus_id in self.network.household_bus_ids
         }
         trafo_loading, line_loadings, bus_voltages = self._solve(bus_load_mw)
@@ -132,7 +186,7 @@ class GridEnv(GridEnvProtocol):
                     curtailed_power_kw[agent_id] = curtailed_kw
                 delivered_kw[agent_id] = capped_kw
             bus_load_mw = {
-                bus_id: (base_load_kw + delivered_kw.get(bus_id, 0.0)) / 1000.0
+                bus_id: (base_load_kw[bus_id] + delivered_kw.get(bus_id, 0.0)) / 1000.0
                 for bus_id in self.network.household_bus_ids
             }
             trafo_loading, line_loadings, bus_voltages = self._solve(bus_load_mw)
@@ -147,6 +201,7 @@ class GridEnv(GridEnvProtocol):
         # 5. Compute rewards and build results
         step_results: dict[str, StepResult] = {}
         for agent_id, ev in self._evs.items():
+            ev.is_connected = self._is_connected(agent_id, self._current_step)
             actual_kw = delivered_kw[agent_id]
             electricity_cost = actual_kw * const.TIMESTEP_HOURS * 1.0  # price placeholder
             reward = -electricity_cost * const.REWARD_ELECTRICITY_COST_WEIGHT
@@ -163,7 +218,7 @@ class GridEnv(GridEnvProtocol):
                 soc_progress=ev.soc / ev.target_soc,
                 time_urgency=max(0, (ev.departure_step - self._current_step) / const.EPISODE_STEPS),
                 electricity_price=1.0,  # TODO: price scenario
-                base_load_kw=base_load_kw,
+                base_load_kw=base_load_kw[agent_id],
                 outdoor_temperature_c=20.0,
             )
 

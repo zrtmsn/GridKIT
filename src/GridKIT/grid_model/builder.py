@@ -7,8 +7,27 @@ from pathlib import Path
 import pandas as pd
 import pypsa
 
+import core.constants as const
 from core import BusModel, GridNetwork, LineModel, TransformerModel, settings
 from core.protocols import NetworkBuilderProtocol
+
+EV_BUS_SUFFIX = "_E_Car"
+
+
+def _resample_to_episode_steps(series: pd.Series) -> list[float]:
+    """
+    GridCreator's own snapshots are hourly (a full year); GridKIT episodes are
+    one representative day at 15-min resolution (EPISODE_STEPS steps). Take
+    the first day of the series and forward-fill it onto GridKIT's grid, so
+    each source value covers all the finer-grained steps within it.
+    """
+    source_minutes = (series.index[1] - series.index[0]).total_seconds() / 60.0
+    steps_per_day = int(round(24 * 60 / source_minutes))
+    day = series.iloc[:steps_per_day]
+    target_index = pd.date_range(
+        day.index[0], periods=const.EPISODE_STEPS, freq=f"{const.TIMESTEP_MINUTES}min"
+    )
+    return day.reindex(target_index, method="ffill").tolist()
 
 class StubNetworkBuilder(NetworkBuilderProtocol):
 
@@ -160,6 +179,26 @@ ding0_grid_generator.save_output_data(
             buses_df.index[buses_df["Haushalte"] > 0].astype(str).tolist()
         )
 
+        has_profile = set(grid.loads_t.p_set.columns)
+        household_load_profile_kw: dict[str, list[float]] = {}
+        for bus in household_bus_ids:
+            # A bus can host several households (several "{bus}_load_N"
+            # entries) — sum them into one household-bus-level demand curve.
+            load_names = [
+                name for name, row in grid.loads.iterrows()
+                if row["bus"] == bus and name in has_profile
+            ]
+            if load_names:
+                total_mw = grid.loads_t.p_set[load_names].sum(axis=1)
+                household_load_profile_kw[bus] = _resample_to_episode_steps(total_mw * 1000.0)
+
+        ev_availability: dict[str, list[bool]] = {}
+        for bus in household_bus_ids:
+            charge_link = f"{bus}{EV_BUS_SUFFIX}_Connector_charge"
+            if charge_link in grid.links_t.p_max_pu.columns:
+                availability = _resample_to_episode_steps(grid.links_t.p_max_pu[charge_link])
+                ev_availability[bus] = [bool(round(v)) for v in availability]
+
         return GridNetwork(
             network_id=self.scenario,
             buses=buses,
@@ -167,4 +206,6 @@ ding0_grid_generator.save_output_data(
             transformers=transformers,
             area_name=self.scenario,
             household_bus_ids=household_bus_ids,
+            household_load_profile_kw=household_load_profile_kw,
+            ev_availability=ev_availability,
         )
