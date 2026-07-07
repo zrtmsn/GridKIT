@@ -2,13 +2,13 @@
     "network_id": "stub_5_households",
 
     "buses": [
-        {"bus_id": "bus_hv", "v_nom_kv": 20.0},
-        {"bus_id": "bus_lv", "v_nom_kv": 0.4},
-        {"bus_id": "bus_0", "v_nom_kv": 0.4},
-        {"bus_id": "bus_1", "v_nom_kv": 0.4},
-        {"bus_id": "bus_2", "v_nom_kv": 0.4},
-        {"bus_id": "bus_3", "v_nom_kv": 0.4},
-        {"bus_id": "bus_4", "v_nom_kv": 0.4}
+        {"bus_id": "bus_hv", "v_nom_kv": 20.0, "x_coord": 0.0, "y_coord": 1.0},
+        {"bus_id": "bus_lv", "v_nom_kv": 0.4, "x_coord": 0.0, "y_coord": 0.0},
+        {"bus_id": "bus_0", "v_nom_kv": 0.4, "x_coord": 1.0, "y_coord": 0.0},
+        {"bus_id": "bus_1", "v_nom_kv": 0.4, "x_coord": 2.0, "y_coord": 0.0},
+        {"bus_id": "bus_2", "v_nom_kv": 0.4, "x_coord": 3.0, "y_coord": 0.0},
+        {"bus_id": "bus_3", "v_nom_kv": 0.4, "x_coord": 4.0, "y_coord": 0.0},
+        {"bus_id": "bus_4", "v_nom_kv": 0.4, "x_coord": 5.0, "y_coord": 0.0}
     ],
 
     "transformers": [

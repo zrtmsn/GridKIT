@@ -2,6 +2,7 @@
 import pytest
 import time
 from grid_model.environment import GridEnv
+from grid_model.builder import StubNetworkBuilder
 from core.models import GridNetwork, Observation, EVState, ChargingAction, StepResult, PowerFlowResult
 import core.constants as const
 import pytest
@@ -11,7 +12,15 @@ import pytest
 
 @pytest.fixture
 def env():
+    # EV availability now defaults to a synthetic, occupancy-based profile
+    # (see grid_model.ev_availability) rather than always-connected, so it's
+    # not guaranteed any given agent is home at step 0. Most tests below are
+    # about charging/curtailment/reward math, not availability itself, so
+    # force every agent connected for the whole episode here; availability
+    # gating gets its own dedicated tests further down.
     env = GridEnv()
+    for ev_state in env._evs.values():
+        ev_state.availability = [True] * const.EPISODE_STEPS
     env.reset()
     return env
 
@@ -47,6 +56,38 @@ def test_env_pypsa_network_has_ev_loads(env):
 def test_env_pypsa_network_has_base_loads(env):
     for bus_id in env.network.household_bus_ids:
         assert f"base_{bus_id}" in env._pypsa_network.loads.index
+
+
+# ── EV availability defaults ─────────────────────────────────
+# Networks without real GridCreator data (including the stub network) get a
+# synthetic, occupancy-based availability profile instead of a flat
+# always-connected default (grid_model.ev_availability). These tests use
+# fresh GridEnv() instances rather than the `env` fixture, since that fixture
+# deliberately overrides availability to isolate the other tests from it.
+
+def test_default_availability_is_deterministic_per_bus():
+    env_a = GridEnv()
+    env_b = GridEnv()
+    for agent_id in env_a.agent_ids:
+        assert env_a._evs[agent_id].availability == env_b._evs[agent_id].availability
+
+def test_default_availability_has_correct_shape():
+    env = GridEnv()
+    for ev_state in env._evs.values():
+        assert len(ev_state.availability) == const.EPISODE_STEPS
+        assert all(isinstance(v, bool) for v in ev_state.availability)
+
+def test_real_availability_data_overrides_synthetic_default():
+    base_network = StubNetworkBuilder().build()
+    custom_availability = [False] * const.EPISODE_STEPS
+    custom_availability[10] = True
+    network = base_network.model_copy(
+        update={"ev_availability": {"bus_0": custom_availability}}
+    )
+    env = GridEnv(network=network)
+    assert env._evs["bus_0"].availability == custom_availability
+    # bus_1 has no explicit override -> still falls back to a synthetic profile
+    assert len(env._evs["bus_1"].availability) == const.EPISODE_STEPS
 
 
 # ── Reset tests ───────────────────────────────────────────────

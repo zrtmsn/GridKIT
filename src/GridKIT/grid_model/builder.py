@@ -14,20 +14,13 @@ from core.protocols import NetworkBuilderProtocol
 EV_BUS_SUFFIX = "_E_Car"
 
 
-def _resample_to_episode_steps(series: pd.Series) -> list[float]:
+def _first_episode_day(series: pd.Series) -> list[float]:
     """
     GridCreator's own snapshots are hourly (a full year); GridKIT episodes are
-    one representative day at 15-min resolution (EPISODE_STEPS steps). Take
-    the first day of the series and forward-fill it onto GridKIT's grid, so
-    each source value covers all the finer-grained steps within it.
+    one representative day, also at 1-hour resolution (EPISODE_STEPS steps) —
+    so this is a direct slice, no resampling needed.
     """
-    source_minutes = (series.index[1] - series.index[0]).total_seconds() / 60.0
-    steps_per_day = int(round(24 * 60 / source_minutes))
-    day = series.iloc[:steps_per_day]
-    target_index = pd.date_range(
-        day.index[0], periods=const.EPISODE_STEPS, freq=f"{const.TIMESTEP_MINUTES}min"
-    )
-    return day.reindex(target_index, method="ffill").tolist()
+    return series.iloc[: const.EPISODE_STEPS].tolist()
 
 class StubNetworkBuilder(NetworkBuilderProtocol):
 
@@ -81,6 +74,96 @@ class OSMNetworkBuilder(NetworkBuilderProtocol):
         self._run_gridcreator()
         grid, buses_df = self._load_output()
         return self._to_grid_network(grid, buses_df)
+
+    def build_single_feeder(self, max_households: int | None = None, network: GridNetwork | None = None) -> GridNetwork:
+        """
+        Build the full (possibly multi-transformer) GridCreator network, then
+        extract just one transformer's radial feeder. Pass an already-built
+        `network` (e.g. from a prior build() call) to avoid re-running
+        GridCreator just to pick a feeder from the same network.
+
+        RadialPowerFlow (grid_model.surrogate) and build_pypsa_network's slack
+        generator both only ever look at transformers[0] — they assume a
+        single-transformer network. ding0 LV feeders under different
+        transformers are physically disjoint radial trees (no lines between
+        them), so rather than silently mis-modelling the other feeders, this
+        picks exactly one and returns just its subnet.
+
+        Picks the feeder with the most households at or below
+        max_households; if none qualify, falls back to the smallest feeder
+        overall. With max_households=None, picks the largest feeder.
+        """
+        network = network or self.build()
+        counts = self.feeder_household_counts(network)
+
+        if max_households is None:
+            chosen_trafo = max(counts, key=counts.get)
+        else:
+            eligible = {t: n for t, n in counts.items() if n <= max_households}
+            chosen_trafo = max(eligible, key=eligible.get) if eligible else min(counts, key=counts.get)
+
+        return self.extract_feeder(network, chosen_trafo)
+
+    def feeder_household_counts(self, network: GridNetwork) -> dict[str, int]:
+        """Number of household buses reachable from each transformer's LV bus, following only Lines."""
+        adjacency: dict[str, list[str]] = {b.bus_id: [] for b in network.buses}
+        for ln in network.lines:
+            adjacency[ln.from_bus].append(ln.to_bus)
+            adjacency[ln.to_bus].append(ln.from_bus)
+
+        household_ids = set(network.household_bus_ids)
+        counts: dict[str, int] = {}
+        for trafo in network.transformers:
+            reached = self._reachable_buses(trafo.lv_bus, adjacency)
+            counts[trafo.trafo_id] = len(reached & household_ids)
+        return counts
+
+    def extract_feeder(self, network: GridNetwork, trafo_id: str) -> GridNetwork:
+        """Return a GridNetwork containing only the single-transformer radial feeder for trafo_id."""
+        trafo = next(t for t in network.transformers if t.trafo_id == trafo_id)
+
+        adjacency: dict[str, list[tuple[str, str]]] = {b.bus_id: [] for b in network.buses}
+        for ln in network.lines:
+            adjacency[ln.from_bus].append((ln.to_bus, ln.line_id))
+            adjacency[ln.to_bus].append((ln.from_bus, ln.line_id))
+
+        reached = {trafo.lv_bus, trafo.hv_bus}
+        queue = [trafo.lv_bus]
+        line_ids: set[str] = set()
+        while queue:
+            bus = queue.pop()
+            for nbr, line_id in adjacency[bus]:
+                line_ids.add(line_id)
+                if nbr not in reached:
+                    reached.add(nbr)
+                    queue.append(nbr)
+
+        return GridNetwork(
+            network_id=f"{network.network_id}_{trafo_id}",
+            buses=[b for b in network.buses if b.bus_id in reached],
+            lines=[ln for ln in network.lines if ln.line_id in line_ids],
+            transformers=[trafo],
+            area_name=network.area_name,
+            household_bus_ids=[b for b in network.household_bus_ids if b in reached],
+            household_load_profile_kw={
+                b: p for b, p in network.household_load_profile_kw.items() if b in reached
+            },
+            ev_availability={
+                b: a for b, a in network.ev_availability.items() if b in reached
+            },
+        )
+
+    @staticmethod
+    def _reachable_buses(root: str, adjacency: dict[str, list[str]]) -> set[str]:
+        reached = {root}
+        queue = [root]
+        while queue:
+            bus = queue.pop()
+            for nbr in adjacency[bus]:
+                if nbr not in reached:
+                    reached.add(nbr)
+                    queue.append(nbr)
+        return reached
 
     def _run_gridcreator(self) -> None:
         # Mirrors GridCreator(steps=[1,2,3,4,5]) in vendor/GridCreator/main.py
@@ -190,13 +273,13 @@ ding0_grid_generator.save_output_data(
             ]
             if load_names:
                 total_mw = grid.loads_t.p_set[load_names].sum(axis=1)
-                household_load_profile_kw[bus] = _resample_to_episode_steps(total_mw * 1000.0)
+                household_load_profile_kw[bus] = _first_episode_day(total_mw * 1000.0)
 
         ev_availability: dict[str, list[bool]] = {}
         for bus in household_bus_ids:
             charge_link = f"{bus}{EV_BUS_SUFFIX}_Connector_charge"
             if charge_link in grid.links_t.p_max_pu.columns:
-                availability = _resample_to_episode_steps(grid.links_t.p_max_pu[charge_link])
+                availability = _first_episode_day(grid.links_t.p_max_pu[charge_link])
                 ev_availability[bus] = [bool(round(v)) for v in availability]
 
         return GridNetwork(
