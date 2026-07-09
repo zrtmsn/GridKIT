@@ -89,8 +89,20 @@ class GridNetwork(BaseModel):
     @property
     def n_households(self) -> int:
         return len(self.household_bus_ids)
- 
- 
+
+
+class FeederSummary(BaseModel):
+    """
+    One transformer's radial feeder within a (possibly multi-transformer)
+    GridNetwork — enough for a UI to list/highlight feeder options on a map
+    without re-deriving the bus membership itself.
+    Produced by grid_model.builder.OSMNetworkBuilder.list_feeders().
+    """
+    trafo_id: str
+    household_count: int
+    bus_ids: list[str]  # every bus (household or not) reachable from this transformer
+
+
 # ══════════════════════════════════════════════════════════════
 # Household / EV state
 # ══════════════════════════════════════════════════════════════

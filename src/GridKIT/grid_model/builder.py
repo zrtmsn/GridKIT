@@ -8,7 +8,7 @@ import pandas as pd
 import pypsa
 
 import core.constants as const
-from core import BusModel, GridNetwork, LineModel, TransformerModel, settings
+from core import BusModel, FeederSummary, GridNetwork, LineModel, TransformerModel, settings
 from core.protocols import NetworkBuilderProtocol
 
 EV_BUS_SUFFIX = "_E_Car"
@@ -104,24 +104,50 @@ class OSMNetworkBuilder(NetworkBuilderProtocol):
 
         return self.extract_feeder(network, chosen_trafo)
 
+    def list_feeders(self, network: GridNetwork) -> list[FeederSummary]:
+        """
+        One FeederSummary per transformer — bus membership included so a UI
+        can highlight each feeder (e.g. via BusModel.x_coord/y_coord on the
+        listed bus_ids) without re-deriving the traversal itself.
+        """
+        household_ids = set(network.household_bus_ids)
+        summaries = []
+        for trafo in network.transformers:
+            bus_ids, _ = self._feeder_traversal(network, trafo)
+            summaries.append(FeederSummary(
+                trafo_id=trafo.trafo_id,
+                household_count=len(bus_ids & household_ids),
+                bus_ids=sorted(bus_ids),
+            ))
+        return summaries
+
     def feeder_household_counts(self, network: GridNetwork) -> dict[str, int]:
         """Number of household buses reachable from each transformer's LV bus, following only Lines."""
-        adjacency: dict[str, list[str]] = {b.bus_id: [] for b in network.buses}
-        for ln in network.lines:
-            adjacency[ln.from_bus].append(ln.to_bus)
-            adjacency[ln.to_bus].append(ln.from_bus)
-
-        household_ids = set(network.household_bus_ids)
-        counts: dict[str, int] = {}
-        for trafo in network.transformers:
-            reached = self._reachable_buses(trafo.lv_bus, adjacency)
-            counts[trafo.trafo_id] = len(reached & household_ids)
-        return counts
+        return {f.trafo_id: f.household_count for f in self.list_feeders(network)}
 
     def extract_feeder(self, network: GridNetwork, trafo_id: str) -> GridNetwork:
         """Return a GridNetwork containing only the single-transformer radial feeder for trafo_id."""
         trafo = next(t for t in network.transformers if t.trafo_id == trafo_id)
+        bus_ids, line_ids = self._feeder_traversal(network, trafo)
 
+        return GridNetwork(
+            network_id=f"{network.network_id}_{trafo_id}",
+            buses=[b for b in network.buses if b.bus_id in bus_ids],
+            lines=[ln for ln in network.lines if ln.line_id in line_ids],
+            transformers=[trafo],
+            area_name=network.area_name,
+            household_bus_ids=[b for b in network.household_bus_ids if b in bus_ids],
+            household_load_profile_kw={
+                b: p for b, p in network.household_load_profile_kw.items() if b in bus_ids
+            },
+            ev_availability={
+                b: a for b, a in network.ev_availability.items() if b in bus_ids
+            },
+        )
+
+    @staticmethod
+    def _feeder_traversal(network: GridNetwork, trafo: TransformerModel) -> tuple[set[str], set[str]]:
+        """BFS from a transformer's LV bus along Lines. Returns (bus_ids, line_ids) reachable."""
         adjacency: dict[str, list[tuple[str, str]]] = {b.bus_id: [] for b in network.buses}
         for ln in network.lines:
             adjacency[ln.from_bus].append((ln.to_bus, ln.line_id))
@@ -137,33 +163,7 @@ class OSMNetworkBuilder(NetworkBuilderProtocol):
                 if nbr not in reached:
                     reached.add(nbr)
                     queue.append(nbr)
-
-        return GridNetwork(
-            network_id=f"{network.network_id}_{trafo_id}",
-            buses=[b for b in network.buses if b.bus_id in reached],
-            lines=[ln for ln in network.lines if ln.line_id in line_ids],
-            transformers=[trafo],
-            area_name=network.area_name,
-            household_bus_ids=[b for b in network.household_bus_ids if b in reached],
-            household_load_profile_kw={
-                b: p for b, p in network.household_load_profile_kw.items() if b in reached
-            },
-            ev_availability={
-                b: a for b, a in network.ev_availability.items() if b in reached
-            },
-        )
-
-    @staticmethod
-    def _reachable_buses(root: str, adjacency: dict[str, list[str]]) -> set[str]:
-        reached = {root}
-        queue = [root]
-        while queue:
-            bus = queue.pop()
-            for nbr in adjacency[bus]:
-                if nbr not in reached:
-                    reached.add(nbr)
-                    queue.append(nbr)
-        return reached
+        return reached, line_ids
 
     def _run_gridcreator(self) -> None:
         # Mirrors GridCreator(steps=[1,2,3,4,5]) in vendor/GridCreator/main.py
