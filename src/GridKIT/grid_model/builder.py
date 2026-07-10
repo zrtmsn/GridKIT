@@ -171,7 +171,6 @@ class OSMNetworkBuilder(NetworkBuilderProtocol):
         driver = f"""
 import os
 import main_functions as mf
-import ding0_grid_generator
 import input_data as data
 
 data.save_data()
@@ -192,10 +191,16 @@ buses_df = mf.gcp_fill(buses_df, gcp, factor_bbox, input_path)
 grid = mf.loads_assignment(grid, buses_df, bbox, input_path, {self.load_method!r})
 grid = mf.pypsa_preparation(grid)
 
-ding0_grid_generator.save_output_data(
-    grid, buses_df, bbox, area, features,
-    scenario={self.scenario!r}, steps=[1, 2, 3, 4, 5], path='output',
-)
+# Only write what OSMNetworkBuilder._load_output() actually reads (the pypsa
+# CSV export and buses_df) rather than calling ding0_grid_generator.save_output_data(),
+# which also writes area.gpkg/features.gpkg — geopandas/pyogrio exports of raw
+# OSM tag data we never use, and which can fail on arbitrary OSM tag values
+# (e.g. a literal 'FIXME' tag) unrelated to anything we need.
+output_dir = os.path.join('output', {self.scenario!r}, 'step_5')
+os.makedirs(output_dir, exist_ok=True)
+if not grid.buses.empty:
+    grid.export_to_csv_folder(os.path.join(output_dir, 'grid'))
+buses_df.to_csv(os.path.join(output_dir, 'buses.csv'))
 """
         result = subprocess.run(
             ["conda", "run", "-n", self.conda_env, "python", "-c", driver],
