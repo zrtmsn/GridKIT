@@ -1,26 +1,26 @@
 # GridKIT — Core Models Reference
 
-> Who produces each model, who consumes it, and what it represents. Last updated: May 2026.
+> Who produces each model, who consumes it, and what it represents. Last updated: June 2026.
 
 ---
 
 ## Enums
 
 ### `ChargingAction`
-The three decisions an agent can make: OFF / HALF / FULL. rl_engine produces one per agent per timestep and passes the dict to `env.step()`. grid_model receives it, looks up the kW value via `ACTION_TO_KW`, and applies it to the power flow.
+The three decisions an agent can make: OFF / HALF / FULL. rl_engine (the shared IPPO policy, via `GridEnvRLlibWrapper`) produces one per agent per timestep and passes the dict to `env.step()`. grid_model receives it, looks up the kW value via `ACTION_TO_KW`, and applies it to the power flow.
 
 ### `PriceScenario`
-LOW / MEDIUM / HIGH. Not used in Phase 1 — placeholder for when grid_model starts sampling synthetic price regimes at `reset()`.
+LOW / MEDIUM / HIGH. Defined but **not yet wired in** — placeholder for when grid_model starts sampling price regimes at `reset()`. Currently price is a flat hardcoded constant in `environment.py`.
 
 ---
 
 ## Topology
 
 ### `BusModel`, `LineModel`, `TransformerModel`
-Building blocks of `GridNetwork`. Only assembled by grid_model's network builder — nobody instantiates them directly elsewhere.
+Building blocks of `GridNetwork`. Only assembled by network builders — nobody instantiates them directly elsewhere.
 
 ### `GridNetwork`
-The assembled network topology. Produced once by grid_model's network builder (Phase 1: `StubNetworkBuilder` loads from stub JSON; Phase 2: `OSMNetworkBuilder` runs GridCreator). Lives for the entire run — never changes after construction.
+The assembled network topology. Two builders currently exist: `grid_model.StubNetworkBuilder` (loads a fixed stub JSON, used by `GridEnv` today) and `map_ui.build_grid_network_from_bounds()` (real OSM topology via Overpass, implemented but **not yet connected to `GridEnv`**). Lives for the entire run — never changes after construction.
 
 | Consumer | What it reads |
 |---|---|
@@ -40,10 +40,10 @@ The assembled network topology. Produced once by grid_model's network builder (P
 ## RL Interface
 
 ### `Observation`
-The 5-dimensional vector the agent learns from. grid_model builds one per agent inside `step()` by reading the current `EVState` and episode data. rl_engine's `HouseholdAgent` calls `obs.to_array()` to get a numpy-ready list, feeds it into the DQN, and stores it in the replay buffer.
+The 5-dimensional vector the agent learns from. grid_model builds one per agent inside `step()` by reading the current `EVState` and episode data. `GridEnvRLlibWrapper` calls `obs.to_array()` to convert it into RLlib's numpy/dict format for the shared `household_policy` (IPPO via Ray RLlib). Note: `electricity_price` is currently a raw, unnormalised value — see open issue in `gridkit_rl_decisions.md` §4.
 
 ### `StepResult`
-Wraps everything grid_model returns for one agent from one timestep: the next `Observation`, the `reward`, and the `done` flag. rl_engine's Trainer unpacks it — passes `observation` back into the agent for the next step, passes `reward` and `done` to `store_transition()`.
+Wraps everything grid_model returns for one agent from one timestep: the next `Observation`, the `reward`, and the `done` flag. `GridEnvRLlibWrapper` unpacks it into the RLlib step-return format Ray expects.
 
 These two are the core handshake between grid_model and rl_engine. Everything else is either setup or logging.
 
@@ -52,31 +52,31 @@ These two are the core handshake between grid_model and rl_engine. Everything el
 ## Power Flow
 
 ### `PowerFlowResult`
-Produced by grid_model once per timestep — one object shared across all agents (network-level result, not per-agent). Returned from `step()` as the second element of the tuple alongside the per-agent `StepResult` dict.
+Produced by grid_model once per timestep — one object shared across all agents (network-level result, not per-agent). Returned from `step()` as part of the info/result the wrapper passes through.
 
-rl_engine's Trainer collects one per timestep and appends it to a list. At episode end it uses that list to build `SimResult.timestep_results`. grid_model also uses it internally to decide curtailment before returning.
+grid_model uses it internally to decide curtailment before returning. **Not yet collected/aggregated anywhere** — there's no episode-level accumulation into `SimResult` yet.
 
 ---
 
-## Episode Results
+## Episode Results — not yet implemented
 
 ### `EpisodeMetrics`
-Computed by rl_engine's Trainer at the end of each episode. Aggregates: mean reward, fraction of agents that hit their SoC target, curtailment event count, peak transformer load, and current epsilon. Consumed by dashboard for training progress charts.
+Defined in `core/models.py` (mean reward, SoC target hit rate, curtailment event count, peak transformer load). **Nothing in rl_engine currently populates this** — `rl_engine/metrics.py` is a stub. This is the model that a baseline-vs-RL comparison would need to fill in (see `gridkit_rl_decisions.md` §11).
 
 ### `SimResult`
-Full episode record, assembled by Trainer. Combines the `list[PowerFlowResult]` collected during the episode, `final_soc_per_agent` (SoC of each agent at departure), and `EpisodeMetrics`. dashboard reads `SimResult` to render network loading over time, per-agent SoC outcomes, and curtailment heatmaps.
+Defined in `core/models.py` (per-timestep `PowerFlowResult` list, final SoC per agent, `EpisodeMetrics`). **Not yet assembled by anything.** `dashboard` is an empty package, so there's currently no consumer either.
 
 ---
 
 ## Summary
 
-| Model | Produced by | Consumed by |
-|---|---|---|
-| `ChargingAction` | rl_engine | grid_model |
-| `GridNetwork` | grid_model (builder) | grid_model, rl_engine, dashboard |
-| `EVState` | grid_model | grid_model only |
-| `Observation` | grid_model | rl_engine |
-| `StepResult` | grid_model | rl_engine |
-| `PowerFlowResult` | grid_model | rl_engine (→ SimResult), dashboard |
-| `EpisodeMetrics` | rl_engine | dashboard |
-| `SimResult` | rl_engine (Trainer) | dashboard |
+| Model | Produced by | Consumed by | Status |
+|---|---|---|---|
+| `ChargingAction` | rl_engine (shared IPPO policy) | grid_model | implemented |
+| `GridNetwork` | grid_model (`StubNetworkBuilder`) or map_ui (`build_grid_network_from_bounds`) | grid_model, rl_engine | implemented; map_ui path not yet connected to `GridEnv` |
+| `EVState` | grid_model | grid_model only | implemented |
+| `Observation` | grid_model | rl_engine | implemented; price field unnormalised |
+| `StepResult` | grid_model | rl_engine | implemented |
+| `PowerFlowResult` | grid_model | (internal only currently) | implemented, not yet aggregated |
+| `EpisodeMetrics` | — | — | **not implemented** |
+| `SimResult` | — | — | **not implemented** |
