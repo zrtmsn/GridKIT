@@ -12,6 +12,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, model_validator
  
 from core.constants import (
+    EPISODE_STEPS,
     EV_BATTERY_CAPACITY_KWH,
     EV_TARGET_SOC,
 )
@@ -79,12 +80,29 @@ class GridNetwork(BaseModel):
     transformers: list[TransformerModel] = Field(default_factory=list)
     area_name: Optional[str] = None
     household_bus_ids: list[str] = Field(default_factory=list)  # bus IDs that are residential connection points (from GridCreator buses_df)
+    # Optional real data from GridCreator, one representative day at 15-min resolution
+    # (length == EPISODE_STEPS). Absent/empty for stub networks — grid_model falls
+    # back to the synthetic BDEW H0 profile and always-connected EVs in that case.
+    household_load_profile_kw: dict[str, list[float]] = Field(default_factory=dict)
+    ev_availability: dict[str, list[bool]] = Field(default_factory=dict)  # household_bus_id -> plugged-in per step
 
     @property
     def n_households(self) -> int:
         return len(self.household_bus_ids)
- 
- 
+
+
+class FeederSummary(BaseModel):
+    """
+    One transformer's radial feeder within a (possibly multi-transformer)
+    GridNetwork — enough for a UI to list/highlight feeder options on a map
+    without re-deriving the bus membership itself.
+    Produced by grid_model.builder.OSMNetworkBuilder.list_feeders().
+    """
+    trafo_id: str
+    household_count: int
+    bus_ids: list[str]  # every bus (household or not) reachable from this transformer
+
+
 # ══════════════════════════════════════════════════════════════
 # Household / EV state
 # ══════════════════════════════════════════════════════════════
@@ -94,17 +112,21 @@ class EVState(BaseModel):
     agent_id: str
     bus_id: str                          # which bus this EV is connected to
     soc: float = Field(ge=0.0, le=1.0)  # state of charge: 0.0 = empty, 1.0 = full
-    target_soc: float = EV_TARGET_SOC   # SoC the agent must reach by departure
+    target_soc: float = EV_TARGET_SOC   # SoC the agent must reach by the end of the episode
     battery_capacity_kwh: float = EV_BATTERY_CAPACITY_KWH
-    arrival_step: int  = 0              # timestep index (0–95) when EV arrives home
-    departure_step: int = 95            # timestep index (0–95) when EV must leave
-    is_connected: bool = True           # False when EV is away (before arrival / after departure)
- 
+    # Plugged-in/away per episode step — same structure as GridCreator's own
+    # Link.p_max_pu availability series (core/protocols.py / grid_model.builder).
+    # Defaults to "always connected" for networks without real availability data.
+    availability: list[bool] = Field(default_factory=lambda: [True] * EPISODE_STEPS)
+
     @model_validator(mode="after")
-    def departure_after_arrival(self) -> "EVState":
-        if self.departure_step <= self.arrival_step:
-            raise ValueError("departure_step must be > arrival_step")
+    def availability_matches_episode_length(self) -> "EVState":
+        if len(self.availability) != EPISODE_STEPS:
+            raise ValueError(f"availability must have exactly {EPISODE_STEPS} entries, got {len(self.availability)}")
         return self
+
+    def is_connected_at(self, step: int) -> bool:
+        return self.availability[step]
  
  
 
@@ -155,6 +177,7 @@ class PowerFlowResult(BaseModel):
     transformer_loading_pu: float        # transformer load as fraction of rated capacity — 1.0 = fully loaded, >1.0 = overload
     line_loadings_pu: dict[str, float]   # line_id → load fraction of rated capacity (p.u. = per unit)
     bus_voltages_pu: dict[str, float]    # bus_id → voltage as fraction of nominal (1.0 = 0.4 kV)
+    bus_load_mw: dict[str, float] = Field(default_factory=dict)  # household bus_id → actual (post-curtailment) load in MW
     curtailment_applied: bool            # True if §14a power reduction was triggered this timestep
     curtailed_power_kw: dict[str, float] = Field(default_factory=dict)  # agent_id → kW that was cut
  

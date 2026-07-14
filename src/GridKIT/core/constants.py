@@ -14,9 +14,9 @@ EV_POWER_HALF_KW: float = 3.7
 EV_POWER_FULL_KW: float = 7.4
 
 # ── Episode / time ───────────────────────────────────────────
-TIMESTEP_MINUTES: int = 15
-TIMESTEP_HOURS: float = TIMESTEP_MINUTES / 60.0   # 0.25 h
-EPISODE_STEPS: int = 96                            # 24 h / 15 min
+TIMESTEP_MINUTES: int = 60
+TIMESTEP_HOURS: float = TIMESTEP_MINUTES / 60.0   # 1.0 h
+EPISODE_STEPS: int = 24                            # 24 h / 1 hour — matches GridCreator's native hourly resolution
 
 # ── EV scenario distributions (mean, std) ───────────────────
 EV_ARRIVAL_HOUR_MEAN: float = 18.0
@@ -27,6 +27,7 @@ EV_INITIAL_SOC_MEAN: float = 0.30
 EV_INITIAL_SOC_STD: float = 0.10
 EV_TARGET_SOC: float = 0.80           # fixed target for all agents
 EV_BATTERY_CAPACITY_KWH: float = 77.0 # aligns with GridCreator (main_functions.py:615)
+SYNTHETIC_EV_HOUSEHOLD_SIZE: int = 3   # assumed occupants for synthetic availability when no real GridCreator data exists
 
 # ── Load / price scenario ────────────────────────────────────
 LOAD_MULTIPLIER_MIN: float = 0.8   # scale factor applied to BDEW H0 base load each episode
@@ -55,7 +56,7 @@ IPPO_GAMMA: float = 0.99           # discount factor
 IPPO_GAE_LAMBDA: float = 0.95      # GAE smoothing: 0=pure TD, 1=pure MC
 IPPO_CLIP_EPS: float = 0.2         # PPO clipping range for the probability ratio
 IPPO_N_EPOCHS: int = 10            # gradient update passes over one collected rollout
-IPPO_ROLLOUT_STEPS: int = 96       # steps collected per agent before each update (= 1 episode)
+IPPO_ROLLOUT_STEPS: int = 24       # steps collected per agent before each update (= 1 episode)
 IPPO_MINIBATCH_SIZE: int = 64      # minibatch size for SGD updates within one PPO epoch
 IPPO_TRAIN_BATCH_SIZE: int = 512   # total steps collected per update cycle across all workers
 IPPO_ENTROPY_COEFF: float = 0.01   # entropy bonus weight — encourages exploration
