@@ -7,6 +7,7 @@ Public API:
 
 from map_ui.osm_fetcher import (
     AreaBounds,
+    GridNetworkBuildError,
     MapUiBuildResult,
     OsmFetchConfig,
     build_grid_network_from_bounds,
@@ -15,6 +16,7 @@ from map_ui.osm_fetcher import (
 
 __all__ = [
     "AreaBounds",
+    "GridNetworkBuildError",
     "MapUiBuildResult",
     "OsmFetchConfig",
     "build_grid_network_from_bounds",
