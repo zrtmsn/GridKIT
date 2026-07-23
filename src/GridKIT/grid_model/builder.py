@@ -1,7 +1,9 @@
 #grid_model/builder.py
 import json
 import math
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -202,15 +204,33 @@ if not grid.buses.empty:
     grid.export_to_csv_folder(os.path.join(output_dir, 'grid'))
 buses_df.to_csv(os.path.join(output_dir, 'buses.csv'))
 """
-        result = subprocess.run(
-            ["conda", "run", "-n", self.conda_env, "python", "-c", driver],
-            cwd=self.gridcreator_dir,
-            capture_output=True,
-            text=True,
+        # `conda run -n ENV python -c "<multiline>"` fails on Windows with
+        # NotImplementedError: Support for scripts where arguments contain
+        # newlines not implemented — conda's Windows subprocess handling
+        # can't pass a multi-line string as a single -c argument. Writing
+        # the driver to a real .py file next to GridCreator and running
+        # that instead works on every platform.
+        fd, driver_path_str = tempfile.mkstemp(
+            suffix=".py", prefix="_gridkit_gridcreator_driver_", dir=self.gridcreator_dir
         )
+        driver_path = Path(driver_path_str)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(driver)
+            result = subprocess.run(
+                ["conda", "run", "-n", self.conda_env, "python", driver_path.name],
+                cwd=self.gridcreator_dir,
+                capture_output=True,
+                text=True,
+            )
+        finally:
+            driver_path.unlink(missing_ok=True)
+
         if result.returncode != 0:
             raise RuntimeError(
-                f"GridCreator run failed (exit {result.returncode}):\n{result.stderr}"
+                f"GridCreator run failed (exit {result.returncode}):\n"
+                f"--- stdout ---\n{result.stdout}\n"
+                f"--- stderr ---\n{result.stderr}"
             )
 
     def _load_output(self) -> tuple[pypsa.Network, pd.DataFrame]:
