@@ -104,11 +104,18 @@ class Trainer:
             self.stop()
         return results
 
-    def get_policy_module(self, policy_id: str = "household_policy"):
-        """Return the trained RLModule for inference (e.g. RLlibPolicyAdapter)."""
+    def get_policy_module(self, policy_id: str):
+        """Return one trained RLModule by policy id (e.g. 'ev_policy')."""
         if self._algo is None:
             raise RuntimeError("No trained algorithm — call run(cleanup=False) first.")
         return self._algo.get_module(policy_id)
+
+    def get_policy_modules(self) -> dict:
+        """Return {device_type -> trained RLModule} for all shared per-device policies
+        (feed straight into RLlibPolicyAdapter)."""
+        from GridKIT.core import constants as const
+        return {dev: self.get_policy_module(f"{dev}_policy")
+                for dev in const.CONTROLLABLE_DEVICE_TYPES}
 
     def save_checkpoint(self, path: str) -> str:
         """Persist the trained algorithm to `path`; returns the path."""

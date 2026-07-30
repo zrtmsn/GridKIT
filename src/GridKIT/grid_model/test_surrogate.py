@@ -64,3 +64,37 @@ def test_surrogate_voltage_drops_under_load(net):
     far_bus = hh[-1]
     assert v_light[far_bus] == pytest.approx(1.0)
     assert v_heavy[far_bus] < v_light[far_bus]
+
+
+# ── multi-feeder (ding0-style forest) ────────────────────────
+def _two_feeder_net():
+    from core.models import BusModel, GridNetwork, LineModel, TransformerModel
+    buses = [BusModel(bus_id=b) for b in ("hvA", "lvA", "h0", "h1", "hvB", "lvB", "h2", "h3")]
+    edges = [("lvA", "h0"), ("h0", "h1"), ("lvB", "h2"), ("h2", "h3")]
+    lines = [LineModel(line_id=f"l{i}", from_bus=a, to_bus=b, length_km=0.03,
+                       r_ohm_per_km=0.6, x_ohm_per_km=0.08, max_i_ka=0.2)
+             for i, (a, b) in enumerate(edges)]
+    trafos = [  # feeder A: one 0.1 MVA; feeder B: two 0.1 MVA in parallel → 0.2 MVA
+        TransformerModel(trafo_id="tA", hv_bus="hvA", lv_bus="lvA", s_nom_mva=0.1),
+        TransformerModel(trafo_id="tB1", hv_bus="hvB", lv_bus="lvB", s_nom_mva=0.1),
+        TransformerModel(trafo_id="tB2", hv_bus="hvB", lv_bus="lvB", s_nom_mva=0.1),
+    ]
+    return GridNetwork(network_id="2f", buses=buses, lines=lines, transformers=trafos,
+                       household_bus_ids=["h0", "h1", "h2", "h3"])
+
+
+def test_multi_feeder_detection_and_capacity():
+    sur = RadialPowerFlow(_two_feeder_net())
+    assert set(sur.feeder_capacity) == {"lvA", "lvB"}
+    assert sur.feeder_capacity["lvA"] == pytest.approx(0.1)
+    assert sur.feeder_capacity["lvB"] == pytest.approx(0.2)   # parallel transformers summed
+    assert sur.household_feeder == {"h0": "lvA", "h1": "lvA", "h2": "lvB", "h3": "lvB"}
+
+
+def test_multi_feeder_loadings_are_independent():
+    sur = RadialPowerFlow(_two_feeder_net())
+    # same load on each feeder, but B has twice the capacity → half the loading
+    max_l, _, _ = sur.solve({"h0": 0.04, "h1": 0.04, "h2": 0.04, "h3": 0.04})
+    assert sur.last_feeder_loadings["lvA"] == pytest.approx(0.8)
+    assert sur.last_feeder_loadings["lvB"] == pytest.approx(0.4)
+    assert max_l == pytest.approx(0.8)

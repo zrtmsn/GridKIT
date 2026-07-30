@@ -102,8 +102,27 @@ Work on feature branches, open a PR into `main`. Artem reviews PRs that touch `c
 
 | Library | Used in | Purpose |
 |---|---|---|
-| [GridCreator](https://github.com/INATECHCIG/GridCreator) | `map_ui` | Generate LV grid topology from OSM data |
+| [GridCreator](https://github.com/INATECHCIG/GridCreator) | `grid_model` | Real ding0 LV grid topology for a drawn area |
 | [pandapower](https://pandapower.readthedocs.io) | `grid_model` | Power flow simulation |
 | [Gymnasium](https://gymnasium.farama.org) | `rl_engine` | RL environment interface |
 | [RLlib](https://docs.ray.io/en/latest/rllib/) or [SB3](https://stable-baselines3.readthedocs.io) | `rl_engine` | MARL agents |
 | [Streamlit](https://streamlit.io) | `dashboard` | UI and visualization |
+
+### Enabling real ding0 grids (recommended)
+
+When you draw an area in the grid designer, GridKIT extracts the **actual** LV grid
+for that box from the ding0 archive — every transformer real and individually sized
+(GridCreator step 1). Without the archive it falls back to the OSM builder, which can
+only place **one generic 160 kVA transformer** for the whole area, so its congestion
+and §14a curtailment numbers are not physically meaningful.
+
+To enable it, download `input.zip` from [Zenodo](https://zenodo.org/records/17884917)
+and unpack it so the grids land here:
+
+```
+vendor/GridCreator/input/grids/<grid_district>/topology/buses.csv
+```
+
+Or point `$GRIDKIT_DING0_GRIDS_DIR` at an existing copy. The designer detects the
+archive automatically and greys out the ding0 option when it is missing.
+Coverage is Germany-only, limited to the districts in your download.

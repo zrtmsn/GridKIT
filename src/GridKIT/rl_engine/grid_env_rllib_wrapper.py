@@ -16,9 +16,9 @@ from GridKIT.core.models import (
     Observation,
     StepResult,
     PowerFlowResult,
-    ChargingAction,
     EpisodeMetrics, #TODO remove or use
-    SimResult #TODO remove or use
+    SimResult, #TODO remove or use
+    device_of,
 )
 
 class GridEnvRLlibWrapper(MultiAgentEnv):
@@ -56,17 +56,21 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         self._last_power_flow: Optional[PowerFlowResult] = None
         self._current_step: int = 0
 
-        # Define observation and action spaces using constants from core
+        # Define observation and action spaces using constants from core.
+        # Multi-device: obs is a uniform 10-dim Box across all agents; the action
+        # space DIFFERS by device type (ev/battery=Discrete(3), hp=Discrete(2)),
+        # so we build a per-agent action-space map keyed by the agent-id suffix.
         from GridKIT.core import constants as const
-        
-        self.observation_space = gym.spaces.Box(
-            low=0.0, high=1.0, shape=(const.OBS_DIM,), dtype=np.float32
-        )
-        self.action_space = gym.spaces.Discrete(const.ACTION_DIM)
-        #TODO add option for the user to pass a boolean when initializing the wrapper 
-        # to determine wether to run in discrete or continuous mode
-        #TODO add functinality for continuous mode
 
+        self.observation_space = gym.spaces.Box(
+            low=0.0, high=1.0, shape=(const.OBS_DIM_MULTIDEVICE,), dtype=np.float32
+        )
+        self._action_space_by_agent: Dict[str, gym.spaces.Space] = {
+            aid: gym.spaces.Discrete(const.ACTION_DIM_BY_DEVICE[device_of(aid)])
+            for aid in self._agent_ids
+        }
+        # a representative single-agent action space (RLlib sometimes queries `.action_space`)
+        self.action_space = next(iter(self._action_space_by_agent.values()))
 
         # For MultiAgentEnv compatibility
         self.possible_agents = self._agent_ids
@@ -123,14 +127,12 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         3. Store results for metrics.
         4. Convert outputs to RLlib format.
         """
-        # 1. Convert Actions
-        charging_actions: Dict[str, ChargingAction] = {}
-        for agent_id, action_int in actions.items():
-            # Map 0->OFF, 1->HALF, 2->FULL
-            charging_actions[agent_id] = ChargingAction(action_int)
+        # 1. The multi-device env decodes raw per-device action indices itself
+        #    (each agent's index is interpreted per its device type), so pass ints through.
+        int_actions: Dict[str, int] = {aid: int(a) for aid, a in actions.items()}
 
         # 2. Call Inner Environment
-        step_results_dict, power_flow_result = self._env.step(charging_actions)
+        step_results_dict, power_flow_result = self._env.step(int_actions)
 
         # 3. Store for Metrics/Logging
         self._last_step_results = step_results_dict
@@ -175,8 +177,8 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
 
     def _obs_to_numpy(self, obs: Observation) -> np.ndarray:
         """Convert an Observation to the normalized [0,1] policy input (shared helper)."""
-        from GridKIT.rl_engine.obs_norm import normalize_observation
-        return normalize_observation(obs)
+        from GridKIT.rl_engine.obs_norm import normalize_observation_multidevice
+        return normalize_observation_multidevice(obs)
 
     def get_latest_metrics(self) -> Tuple[Dict[str, StepResult], Optional[PowerFlowResult]]:
         """
@@ -225,5 +227,5 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
 
     @property
     def action_spaces(self) -> Dict[str, gym.spaces.Space]:
-        """Returns a dict mapping each agent ID to its action space."""
-        return {agent_id: self.action_space for agent_id in self._agent_ids}
+        """Returns a dict mapping each agent ID to its (device-specific) action space."""
+        return dict(self._action_space_by_agent)

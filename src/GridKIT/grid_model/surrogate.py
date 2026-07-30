@@ -1,16 +1,23 @@
 # grid_model/surrogate.py
 # ─────────────────────────────────────────────────────────────
-# Fast power-flow surrogate for a radial LV feeder.
+# Fast power-flow surrogate for radial LV grids — one OR MANY feeders.
 #
-# PyPSA pf() per step (~hundreds of ms) is the training-throughput
-# bottleneck. For a *fixed radial* topology and active-power-only loads,
-# the physics is linear and cheap:
+# A real ding0/GridCreator village is a *forest* of LV feeders, each an island
+# in the line graph rooted at its MV/LV transformer(s); a feeder may be fed by
+# several transformers in parallel (its capacity = their summed kVA). The stub /
+# feeder_20 nets are just the single-feeder case.
+#
+# For a fixed radial topology and active-power-only loads the physics is linear:
 #   - line flow  = sum of loads downstream of that line   (exact, loss-free DC)
-#   - trafo flow = sum of all household loads             (exact)
+#   - feeder loading = feeder load / feeder transformer capacity
 #   - bus voltage ≈ 1 − Σ_path (r·P)/V_base²             (linearized DistFlow)
 #
-# Validated against PyPSA pf in test_surrogate.py: flows match exactly,
-# voltages within a few 1e-3 pu on the stub feeder.
+# `solve()` keeps its 3-tuple signature — the scalar is the MAX feeder loading
+# (identical to the transformer loading for a single-feeder net). Per-feeder
+# detail (for localized §14a curtailment) is exposed via attributes:
+#   household_feeder, household_path_lines, last_feeder_loadings.
+#
+# Validated against PyPSA pf in test_surrogate.py (single feeder).
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -20,19 +27,15 @@ from core.models import GridNetwork
 
 
 class RadialPowerFlow:
-    """Linearized solver for a radial feeder rooted at the transformer LV bus."""
+    """Linearized solver for one or many radial LV feeders."""
 
     def __init__(self, network: GridNetwork):
         self._network = network
-        self._root = network.transformers[0].lv_bus
-        self._household_buses = set(network.household_bus_ids)
-
-        # bus nominal voltage (kV) for loading / drop calculations
         self._v_nom = {b.bus_id: b.v_nom_kv for b in network.buses}
 
-        # line static data
+        # line static data + adjacency over lines
         self._line_s_nom: dict[str, float] = {}     # MVA
-        self._line_r_ohm: dict[str, float] = {}      # total resistance
+        self._line_r_ohm: dict[str, float] = {}      # total resistance (Ω)
         adjacency: dict[str, list[tuple[str, str]]] = {b.bus_id: [] for b in network.buses}
         for ln in network.lines:
             v = self._v_nom[ln.from_bus]
@@ -41,35 +44,79 @@ class RadialPowerFlow:
             adjacency[ln.from_bus].append((ln.to_bus, ln.line_id))
             adjacency[ln.to_bus].append((ln.from_bus, ln.line_id))
 
-        # BFS from the root → parent line of each bus + path of lines root→bus
-        self._parent_line: dict[str, str] = {}
-        self._path_lines: dict[str, list[str]] = {self._root: []}
-        order: list[str] = [self._root]
-        seen = {self._root}
-        i = 0
-        while i < len(order):
-            bus = order[i]; i += 1
-            for nbr, line_id in adjacency[bus]:
-                if nbr not in seen:
-                    seen.add(nbr)
-                    self._parent_line[nbr] = line_id
-                    self._path_lines[nbr] = self._path_lines[bus] + [line_id]
-                    order.append(nbr)
+        # transformer LV buses → summed capacity (parallel transformers add up)
+        trafo_cap: dict[str, float] = {}
+        for t in network.transformers:
+            trafo_cap[t.lv_bus] = trafo_cap.get(t.lv_bus, 0.0) + t.s_nom_mva
 
-        # households downstream of each line = households whose root-path includes it
+        household = set(network.household_bus_ids)
+
+        # connected components over LINES → each becomes an LV feeder iff it
+        # contains a transformer LV bus (otherwise it is MV-side, ignored here)
+        comp_of: dict[str, int] = {}
+        components: list[list[str]] = []
+        for start in self._v_nom:
+            if start in comp_of:
+                continue
+            idx = len(components)
+            stack = [start]
+            comp_of[start] = idx
+            members: list[str] = []
+            while stack:
+                bus = stack.pop()
+                members.append(bus)
+                for nbr, _ in adjacency[bus]:
+                    if nbr not in comp_of:
+                        comp_of[nbr] = idx
+                        stack.append(nbr)
+            components.append(members)
+
+        # per-feeder structure
+        self.feeder_capacity: dict[str, float] = {}     # feeder_id → summed trafo kVA (MVA)
+        self.feeder_households: dict[str, set[str]] = {}
+        self.household_feeder: dict[str, str] = {}
+        self.household_path_lines: dict[str, list[str]] = {}
+        self._path_lines: dict[str, list[str]] = {}      # bus → root-path lines (all feeder buses)
         self._downstream: dict[str, set[str]] = {ln.line_id: set() for ln in network.lines}
-        for h in self._household_buses:
-            for line_id in self._path_lines.get(h, []):
-                self._downstream[line_id].add(h)
 
-        self._trafo_s_nom = network.transformers[0].s_nom_mva
+        for members in components:
+            trafo_buses = [b for b in members if b in trafo_cap]
+            if not trafo_buses:
+                continue  # MV-side component, no LV loads to curtail
+            root = min(trafo_buses)                       # deterministic feeder root
+            feeder_id = root
+            self.feeder_capacity[feeder_id] = sum(trafo_cap[b] for b in trafo_buses)
+            fh = {b for b in members if b in household}
+            self.feeder_households[feeder_id] = fh
+
+            # BFS from the feeder root → path of lines root→bus (within this feeder)
+            self._path_lines[root] = []
+            seen = {root}
+            order = [root]
+            i = 0
+            while i < len(order):
+                bus = order[i]; i += 1
+                for nbr, line_id in adjacency[bus]:
+                    if nbr not in seen:
+                        seen.add(nbr)
+                        self._path_lines[nbr] = self._path_lines[bus] + [line_id]
+                        order.append(nbr)
+            for h in fh:
+                self.household_feeder[h] = feeder_id
+                path = self._path_lines.get(h, [])
+                self.household_path_lines[h] = path
+                for line_id in path:
+                    self._downstream[line_id].add(h)
+
+        self.last_feeder_loadings: dict[str, float] = {}
 
     def solve(self, bus_load_mw: dict[str, float]) -> tuple[float, dict[str, float], dict[str, float]]:
         """
         Args:
             bus_load_mw: active power (MW) drawn at each household bus.
         Returns:
-            (transformer_loading_pu, {line_id: loading_pu}, {bus_id: voltage_pu})
+            (max_feeder_loading_pu, {line_id: loading_pu}, {bus_id: voltage_pu}).
+            Per-feeder loadings are stored on `self.last_feeder_loadings`.
         """
         # line flows = sum of downstream household loads
         line_flow_mw = {
@@ -81,10 +128,15 @@ class RadialPowerFlow:
             for line_id, flow in line_flow_mw.items()
         }
 
-        total_mw = sum(bus_load_mw.values())
-        trafo_loading = abs(total_mw) / self._trafo_s_nom
+        # per-feeder loading = feeder load / feeder transformer capacity
+        feeder_loadings: dict[str, float] = {}
+        for feeder_id, households in self.feeder_households.items():
+            load = sum(bus_load_mw.get(h, 0.0) for h in households)
+            cap = self.feeder_capacity[feeder_id]
+            feeder_loadings[feeder_id] = abs(load) / cap if cap > 0 else 0.0
+        self.last_feeder_loadings = feeder_loadings
 
-        # linearized voltage drop accumulated along the path from the root
+        # linearized voltage drop accumulated along the path from each feeder root
         voltages: dict[str, float] = {}
         for bus_id in self._v_nom:
             v_base = self._v_nom[bus_id]
@@ -92,4 +144,6 @@ class RadialPowerFlow:
             for line_id in self._path_lines.get(bus_id, []):
                 drop += self._line_r_ohm[line_id] * line_flow_mw[line_id] / (v_base ** 2)
             voltages[bus_id] = 1.0 - drop
-        return trafo_loading, line_loadings, voltages
+
+        max_loading = max(feeder_loadings.values(), default=0.0)
+        return max_loading, line_loadings, voltages

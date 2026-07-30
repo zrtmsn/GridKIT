@@ -45,6 +45,21 @@ def _timeline(env, result, label: str, penetration: float) -> dict:
         "curtailment": [bool(pf.curtailment_applied) for pf in tr],
         "price": env.day_ahead_prices(),
         "base_load": env.episode_base_load_kw,
+        "pv_generation": env.episode_pv_kw,
+        "temperature": env.episode_temperature_c,
+        # per-device decisions (feeder-aggregate delivered power): what each device type chose
+        "ev_power": [pf.device_power_kw.get("ev", 0.0) for pf in tr],
+        "battery_power": [pf.device_power_kw.get("battery", 0.0) for pf in tr],   # signed: + charge / − discharge
+        "hp_power": [pf.device_power_kw.get("hp", 0.0) for pf in tr],
+        # ONE representative household — exact device power + EV availability + SoC traces
+        "house_ev_power": [pf.sample_household.get("ev_kw", 0.0) for pf in tr],
+        "house_battery_power": [pf.sample_household.get("battery_kw", 0.0) for pf in tr],
+        "house_hp_power": [pf.sample_household.get("hp_kw", 0.0) for pf in tr],
+        "house_pv": [pf.sample_household.get("pv_kw", 0.0) for pf in tr],
+        "house_ev_available": [pf.sample_household.get("ev_available", 0.0) for pf in tr],
+        "house_ev_soc": [pf.sample_household.get("ev_soc", 0.0) for pf in tr],
+        "house_battery_soc": [pf.sample_household.get("battery_soc", 0.0) for pf in tr],
+        "house_hp_soc": [pf.sample_household.get("hp_soc", 0.0) for pf in tr],
         "soc_satisfaction_rate": result.metrics.soc_satisfaction_rate,
     }
 
@@ -86,7 +101,7 @@ def main() -> None:
 
         trainer = Trainer(env_factory=env_factory, config_func=create_ippo_config)
         trainer.run(num_episodes=args.iterations, cleanup=False)
-        adapter = RLlibPolicyAdapter(trainer.get_policy_module())
+        adapter = RLlibPolicyAdapter(trainer.get_policy_modules())
         trainer.save_checkpoint(str((out / "checkpoints" / f"pen_{int(pen * 100)}").resolve()))
 
         eval_env = GridEnv(ev_penetration=pen, builder=StubNetworkBuilder(path=network_path))

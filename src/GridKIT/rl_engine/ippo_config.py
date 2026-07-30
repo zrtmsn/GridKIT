@@ -3,17 +3,31 @@
 # IPPO (Independent PPO) Configuration for GridKIT.
 #
 # Design Decisions:
-# - Multi-Agent with Shared Policy: All household agents use the same neural
-#   network weights ("household_policy"). This accelerates convergence by pooling
-#   experiences from all agents.
-# - Discrete Action Space: Uses discrete actions (OFF/HALF/FULL) via the
-#   GridEnvRLlibWrapper. The action space in the wrapper must match.
+# - One shared policy PER device type (ev_policy / battery_policy / hp_policy):
+#   every agent of a given device type shares neural-network weights, pooling
+#   experience across households while keeping each device's action space small
+#   (agent-per-device avoids the combinatorial joint action space).
+# - Discrete Action Space, per device: ev/battery = Discrete(3), hp = Discrete(2),
+#   set explicitly on each PolicySpec. policy_mapping_fn routes by agent-id suffix.
 # ─────────────────────────────────────────────────────────────────────────────
 
+import gymnasium as gym
+import numpy as np
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
 
+from GridKIT.core import constants as const
 from GridKIT.core.config import settings
+from GridKIT.core.models import device_of
+
+
+def _policy_name(device: str) -> str:
+    return f"{device}_policy"
+
+
+def policy_mapping_fn(agent_id, *args, **kwargs):
+    """Route each agent to the shared policy for its device type (agent_id = bus::device)."""
+    return _policy_name(device_of(agent_id))
 
 
 def create_ippo_config(
@@ -48,20 +62,25 @@ def create_ippo_config(
     Returns:
         A configured ray.rllib.algorithms.ppo.PPOConfig object.
     """
+    # One shared policy PER device type (ev / battery / hp). Obs space is the
+    # uniform 10-dim Box; the action space differs by device type, so it is set
+    # explicitly on each PolicySpec.
+    obs_space = gym.spaces.Box(low=0.0, high=1.0, shape=(const.OBS_DIM_MULTIDEVICE,), dtype=np.float32)
+    policies = {
+        _policy_name(dev): PolicySpec(
+            observation_space=obs_space,
+            action_space=gym.spaces.Discrete(const.ACTION_DIM_BY_DEVICE[dev]),
+        )
+        for dev in const.CONTROLLABLE_DEVICE_TYPES
+    }
+
     return (
         PPOConfig()
         .environment(env=env_name)
         .env_runners(num_env_runners=num_env_runners)
         .multi_agent(
-            policies={
-                # All agents map to this single shared policy
-                "household_policy": PolicySpec(
-                    observation_space=None,  # Inferred from environment
-                    action_space=None,         # Inferred from environment
-                )
-            },
-            # Maps every agent_id to the same policy
-            policy_mapping_fn=lambda agent_id, *args, **kwargs: "household_policy",
+            policies=policies,
+            policy_mapping_fn=policy_mapping_fn,
         )
         .training(
             lr=lr,
