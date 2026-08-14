@@ -46,12 +46,53 @@ def _hours_axis(n: int) -> np.ndarray:
     return (EPISODE_START_HOUR + np.arange(n) * TIMESTEP_HOURS)
 
 
+def _penetration_levels(df) -> list[float]:
+    """Distinct EV-penetration levels in a result set — empty when it doesn't carry the field.
+
+    More than one level means the results really are a penetration sweep (the batch
+    experiment); one level means a single designed grid, where the figure is a constant
+    and must not become a chart axis.
+    """
+    if "penetration" not in getattr(df, "columns", []):
+        return []
+    return sorted(float(p) for p in df["penetration"].dropna().unique())
+
+
 # ══════════════════════════════════════════════════════════════
 # Overload map — WHERE the grid hurt, not just how often
 # ══════════════════════════════════════════════════════════════
 #: Loading (p.u.) → colour. A real LV grid is cable-limited long before the
 #: transformer notices, so the map has to make a 0.9 pu cable visible.
 _LOAD_COLORS = ((1.0, "#d7191c", 5.0), (0.9, "#fdae61", 4.0), (0.7, "#ffd54f", 3.0), (0.0, "#7cb342", 2.5))
+
+#: Mirrors core.constants.LINE_WATCH_THRESHOLD — the level from which the runner starts
+#: recording a cable at all. Restated here for the same reason the episode clock is:
+#: this module is launched by `streamlit run` and must not depend on the path bootstrap.
+#: test_app.py pins the two together.
+LINE_WATCH_PU: float = 0.5
+
+#: Per-line recording landed after the first runs were saved, so an old summary.json has
+#: no such key at all. A run that HAS the key but an empty dict is a different thing
+#: entirely: a grid where no cable ever reached the watch level. That is a real result —
+#: it must still be mapped, or a healthy grid is indistinguishable from a broken feature.
+LINE_PEAK_KEY = "line_peak_loading_pu"
+
+
+def _recorded_rows(summary) -> list[dict]:
+    """Summary rows carrying per-line recording, judged by key presence, not content."""
+    return [r for r in summary or [] if LINE_PEAK_KEY in r]
+
+
+def _map_caption(scenario: str, peaks: dict, n_over: int) -> str:
+    """Caption under the map — states the quiet case as a finding, not as an absence."""
+    legend = ("🟥 >1.0 overloaded · 🟧 >0.9 · 🟨 >0.7 · 🟩 loaded but healthy · "
+              "grey = below watch level. ⚡ = transformer. Hover any segment for its peak.")
+    if not peaks:
+        return (f"**{scenario}** — no cable reached the {LINE_WATCH_PU:.1f} pu watch level: "
+                f"this scenario never came close to a thermal limit. Topology shown for "
+                f"reference. {legend}")
+    return (f"**{scenario}** — worst cable {max(peaks.values()):.2f} pu · "
+            f"{n_over} cable(s) exceeded rating. {legend}")
 
 
 def _load_style(pu: float, tripped: bool = False) -> tuple[str, float]:
@@ -83,7 +124,7 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
         st.info("No stored network for this run — the overload map needs `network.json`.")
         return
 
-    rows = [r for r in summary if r.get("line_peak_loading_pu")]
+    rows = _recorded_rows(summary)
     if not rows:
         st.info("This run predates per-line recording, so there is no overload map for it. "
                 "New runs store it automatically.")
@@ -92,8 +133,11 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
     labels = [r["scenario"] for r in rows]
     chosen = st.selectbox("Scenario", labels, index=len(labels) - 1, key=f"{key}_scenario")
     row = next(r for r in rows if r["scenario"] == chosen)
-    peaks: dict = row.get("line_peak_loading_pu") or {}
+    peaks: dict = row.get(LINE_PEAK_KEY) or {}
     steps: dict = row.get("line_overload_steps") or {}
+    # nothing recorded ⇒ every cable stayed under the watch level. The map still draws
+    # (topology + transformers), just with the background lines legible instead of faint.
+    quiet = not peaks
 
     coords = {b.bus_id: (b.y_coord, b.x_coord)
               for b in network.buses if b.x_coord is not None and b.y_coord is not None}
@@ -112,7 +156,9 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
             continue
         pu = peaks.get(ln.line_id)
         if pu is None:
-            folium.PolyLine([a, b], color="#c3c9d1", weight=1.2, opacity=0.5).add_to(m)
+            folium.PolyLine([a, b], color="#c3c9d1", weight=2.0 if quiet else 1.2,
+                            opacity=0.8 if quiet else 0.5,
+                            tooltip=f"{ln.line_id} — below {LINE_WATCH_PU:.1f} pu").add_to(m)
             continue
         trips = steps.get(ln.line_id, 0)
         color, weight = _load_style(pu, tripped=trips > 0)
@@ -128,12 +174,7 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
             folium.Marker(tb, icon=folium.Icon(color="black", icon="bolt", prefix="fa"),
                           tooltip=f"{t.trafo_id} — {t.s_nom_mva*1000:.0f} kVA").add_to(m)
 
-    worst = max(peaks.values()) if peaks else 0.0
-    st.caption(
-        f"**{chosen}** — worst cable {worst:.2f} pu · {n_over} cable(s) exceeded rating. "
-        "🟥 >1.0 overloaded · 🟧 >0.9 · 🟨 >0.7 · 🟩 loaded but healthy · grey = below watch level. "
-        "⚡ = transformer. Hover any segment for its peak."
-    )
+    st.caption(_map_caption(chosen, peaks, n_over))
     st_folium(m, height=520, width=None, returned_objects=[], key=key)
 
 
@@ -143,61 +184,90 @@ def render_results(summary, timelines, network=None) -> None:
     Reused by the unified web app (per-run results), as well as the standalone
     dashboard `main()` which loads the batch experiment's outputs/. `network` is
     optional: when supplied, the overload map is drawn too.
+
+    EV penetration is shown ONLY when a result set actually sweeps it (the batch
+    experiment's 20/40/60 axis). A designed run carries one derived penetration
+    figure identical on every row, so displaying it splits every chart on a
+    constant and invites the reader to compare configurations that aren't there.
     """
     if not summary:
         st.info("No results for this selection yet.")
         return
 
     df = pd.DataFrame(summary)
-    penetrations = sorted(df["penetration"].unique())
+    penetrations = _penetration_levels(df)
+    swept = len(penetrations) > 1
 
     if network is not None:
         st.header("Where the grid was overloaded")
         render_overload_map(network, summary)
 
-    # ── 1. Curtailment comparison across penetration ──────────
-    st.header("Curtailment events by scenario and EV penetration")
+    # ── 1. Curtailment comparison ─────────────────────────────
+    st.header("Curtailment events by scenario and EV penetration" if swept
+              else "Curtailment events by scenario")
     st.write(
         "Timesteps per 24 h episode where §14a dimming was triggered (mean ± std over seeds). "
         "The story: naive **automated** price-following synchronizes into the cheap overnight "
         "window and curtails most; the selfish **RL** agent, able to sense local voltage / past "
         "dimming, learns to spread out."
     )
-    fig, ax = plt.subplots(figsize=(9, 4.2))
     scenarios = [s for s in SCENARIO_ORDER if s in df["scenario"].unique()]
-    x = np.arange(len(penetrations))
-    width = 0.8 / max(1, len(scenarios))
-    for i, scen in enumerate(scenarios):
-        sub = df[df["scenario"] == scen].set_index("penetration").reindex(penetrations)
-        ax.bar(x + i * width, sub["curtailment_mean"], width,
-               yerr=sub["curtailment_std"], capsize=3,
-               label=scen, color=SCENARIO_COLORS.get(scen, None))
-    ax.set_xticks(x + width * (len(scenarios) - 1) / 2)
-    ax.set_xticklabels([f"{p:.0%}" for p in penetrations])
-    ax.set_xlabel("EV penetration")
-    ax.set_ylabel("Curtailment events / episode")
-    ax.legend(fontsize=8, loc="upper left")
-    ax.grid(axis="y", alpha=0.3)
+    if swept:
+        fig, ax = plt.subplots(figsize=(9, 4.2))
+        x = np.arange(len(penetrations))
+        width = 0.8 / max(1, len(scenarios))
+        for i, scen in enumerate(scenarios):
+            sub = df[df["scenario"] == scen].set_index("penetration").reindex(penetrations)
+            ax.bar(x + i * width, sub["curtailment_mean"], width,
+                   yerr=sub["curtailment_std"], capsize=3,
+                   label=scen, color=SCENARIO_COLORS.get(scen, None))
+        ax.set_xticks(x + width * (len(scenarios) - 1) / 2)
+        ax.set_xticklabels([f"{p:.0%}" for p in penetrations])
+        ax.set_xlabel("EV penetration")
+        ax.set_ylabel("Curtailment events / episode")
+        ax.legend(fontsize=8, loc="upper left")
+        ax.grid(axis="y", alpha=0.3)
+    else:
+        # one bar per scenario, horizontal so the full scenario names stay readable
+        fig, ax = plt.subplots(figsize=(9, 0.75 * len(scenarios) + 1.4))
+        sub = df.drop_duplicates("scenario").set_index("scenario").reindex(scenarios)
+        y = np.arange(len(scenarios))
+        ax.barh(y, sub["curtailment_mean"], xerr=sub["curtailment_std"], capsize=3,
+                color=[SCENARIO_COLORS.get(s, "#888888") for s in scenarios])
+        ax.set_yticks(y)
+        ax.set_yticklabels(scenarios, fontsize=9)
+        ax.invert_yaxis()
+        ax.set_xlabel("Curtailment events / episode")
+        ax.grid(axis="x", alpha=0.3)
     st.pyplot(fig)
 
     # ── 2. SoC satisfaction (the customer-side cost) ──────────
     st.header("SoC satisfaction — did customers get charged in time?")
-    pivot = df.pivot_table(index="penetration", columns="scenario", values="soc_mean")
-    pivot = pivot.reindex(columns=[s for s in SCENARIO_ORDER if s in pivot.columns])
-    pivot.index = [f"{p:.0%}" for p in pivot.index]
-    st.dataframe(pivot.style.format("{:.2f}").background_gradient(cmap="RdYlGn", vmin=0, vmax=1),
+    if swept:
+        table = df.pivot_table(index="penetration", columns="scenario", values="soc_mean")
+        table = table.reindex(columns=[s for s in SCENARIO_ORDER if s in table.columns])
+        table.index = [f"{p:.0%}" for p in table.index]
+    else:
+        table = (df.drop_duplicates("scenario").set_index("scenario").reindex(scenarios)
+                   [["soc_mean"]].rename(columns={"soc_mean": "SoC satisfaction"}))
+    st.dataframe(table.style.format("{:.2f}").background_gradient(cmap="RdYlGn", vmin=0, vmax=1),
                  width="stretch")
 
     # ── 3. Representative 24 h timeline ───────────────────────
     if timelines:
         st.header("A representative 24 h episode")
         tdf = pd.DataFrame(timelines)
-        c1, c2 = st.columns(2)
-        sel_pen = c1.selectbox("EV penetration", penetrations, format_func=lambda p: f"{p:.0%}")
-        avail = [s for s in SCENARIO_ORDER if s in tdf[tdf["penetration"] == sel_pen]["scenario"].values]
-        sel_scen = c2.selectbox("Scenario", avail)
-
-        row = tdf[(tdf["penetration"] == sel_pen) & (tdf["scenario"] == sel_scen)]
+        if swept:
+            c1, c2 = st.columns(2)
+            sel_pen = c1.selectbox("EV penetration", penetrations, format_func=lambda p: f"{p:.0%}")
+            avail = [s for s in SCENARIO_ORDER if s in tdf[tdf["penetration"] == sel_pen]["scenario"].values]
+            sel_scen = c2.selectbox("Scenario", avail)
+            row = tdf[(tdf["penetration"] == sel_pen) & (tdf["scenario"] == sel_scen)]
+        else:
+            sel_pen = None
+            avail = [s for s in SCENARIO_ORDER if s in tdf["scenario"].values]
+            sel_scen = st.selectbox("Scenario", avail)
+            row = tdf[tdf["scenario"] == sel_scen]
         if not row.empty:
             rec = row.iloc[0]
             hours = _hours_axis(len(rec["transformer_loading"]))
@@ -215,7 +285,7 @@ def render_results(summary, timelines, network=None) -> None:
             axa.set_ylim(0, 1.4)
             axa.legend(fontsize=8, ncol=2)
             axa.grid(alpha=0.3)
-            axa.set_title(f"{sel_scen} @ {sel_pen:.0%} penetration")
+            axa.set_title(f"{sel_scen} @ {sel_pen:.0%} penetration" if sel_pen is not None else sel_scen)
 
             # price + PV generation (why self-consume vs export matters)
             axb.plot(hours, rec["price"], label="price (€/kWh)", color="#2a9d8f")
@@ -304,7 +374,8 @@ def render_results(summary, timelines, network=None) -> None:
             st.metric("SoC satisfaction (this episode)", f"{rec['soc_satisfaction_rate']:.0%}")
 
     with st.expander("Raw summary table"):
-        st.dataframe(df, width="stretch")
+        st.dataframe(df if swept else df.drop(columns=["penetration"], errors="ignore"),
+                     width="stretch")
 
 
 def main() -> None:
