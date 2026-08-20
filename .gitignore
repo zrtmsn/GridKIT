@@ -11,7 +11,12 @@ venv/
 
 # Project outputs
 outputs/
+outputs_*/
 checkpoints/
+
+# Generated/downloaded — regenerate locally, don't commit
+cache/
+data/oberacker.json
 
 # Streamlit local files
 .streamlit/
