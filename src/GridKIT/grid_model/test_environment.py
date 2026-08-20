@@ -1,356 +1,299 @@
 # grid_model/test_environment.py
+import numpy as np
 import pytest
-import time
-from grid_model.environment import GridEnv
-from grid_model.builder import StubNetworkBuilder
-from core.models import GridNetwork, Observation, EVState, ChargingAction, StepResult, PowerFlowResult
+
 import core.constants as const
-import pytest
+from core.models import (
+    BatteryAction,
+    ChargingAction,
+    HPAction,
+    Observation,
+    PowerFlowResult,
+    StepResult,
+)
+from grid_model.device_profiles import DeviceProfileProvider, _ANNUAL_HOURS
+from grid_model.environment import (
+    GridEnv,
+    battery_step,
+    curtail_household,
+    device_of,
+    hp_step,
+    make_agent_id,
+)
 
 
-
-
-@pytest.fixture
-def env():
-    # EV availability now defaults to a synthetic, occupancy-based profile
-    # (see grid_model.ev_availability) rather than always-connected, so it's
-    # not guaranteed any given agent is home at step 0. Most tests below are
-    # about charging/curtailment/reward math, not availability itself, so
-    # force every agent connected for the whole episode here; availability
-    # gating gets its own dedicated tests further down.
-    env = GridEnv()
-    for ev_state in env._evs.values():
-        ev_state.availability = [True] * const.EPISODE_STEPS
-    env.reset()
-    return env
-
-@pytest.fixture
-def all_full(env):
-    return {agent_id: ChargingAction.FULL for agent_id in env.agent_ids}
-
-@pytest.fixture
-def all_off(env):
-    return {agent_id: ChargingAction.OFF for agent_id in env.agent_ids}
-
-@pytest.fixture
-def all_half(env):
-    return {agent_id: ChargingAction.HALF for agent_id in env.agent_ids}
-# ── Constructor tests ─────────────────────────────────────────
-
-def test_env_has_network(env):
-    assert isinstance(env.network, GridNetwork)
-
-def test_env_has_correct_agent_ids(env):
-    assert env.agent_ids == env.network.household_bus_ids
-
-def test_env_starts_at_step_zero(env):
-    assert env.current_step == 0
-
-def test_env_has_ev_for_each_household(env):
-    assert len(env._evs) == env.network.n_households
-
-def test_env_pypsa_network_has_ev_loads(env):
-    for bus_id in env.network.household_bus_ids:
-        assert f"ev_{bus_id}" in env._pypsa_network.loads.index
-
-def test_env_pypsa_network_has_base_loads(env):
-    for bus_id in env.network.household_bus_ids:
-        assert f"base_{bus_id}" in env._pypsa_network.loads.index
-
-
-# ── EV availability defaults ─────────────────────────────────
-# Networks without real GridCreator data (including the stub network) get a
-# synthetic, occupancy-based availability profile instead of a flat
-# always-connected default (grid_model.ev_availability). These tests use
-# fresh GridEnv() instances rather than the `env` fixture, since that fixture
-# deliberately overrides availability to isolate the other tests from it.
-
-def test_default_availability_is_deterministic_per_bus():
-    env_a = GridEnv()
-    env_b = GridEnv()
-    for agent_id in env_a.agent_ids:
-        assert env_a._evs[agent_id].availability == env_b._evs[agent_id].availability
-
-def test_default_availability_has_correct_shape():
-    env = GridEnv()
-    for ev_state in env._evs.values():
-        assert len(ev_state.availability) == const.EPISODE_STEPS
-        assert all(isinstance(v, bool) for v in ev_state.availability)
-
-def test_real_availability_data_overrides_synthetic_default():
-    base_network = StubNetworkBuilder().build()
-    custom_availability = [False] * const.EPISODE_STEPS
-    custom_availability[10] = True
-    network = base_network.model_copy(
-        update={"ev_availability": {"bus_0": custom_availability}}
+# ── synthetic provider (constant profiles → deterministic, no pyCity) ──
+def _provider(avail=1.0, base=0.3, pv=0.0, hp=0.0, temp=10.0, n_sims=2):
+    ones = np.ones(_ANNUAL_HOURS)
+    return DeviceProfileProvider(
+        base_load_sims=np.full((n_sims, _ANNUAL_HOURS), base),
+        ev_avail_sims=np.full((n_sims, _ANNUAL_HOURS), avail),
+        hp_annual=ones * hp,
+        pv_annual_per_kwp=ones * (pv / 5.0),   # scaled back up by a sampled kWp
+        temp_annual=ones * temp,
+        pv_kwp_range=(5.0, 5.0),
     )
-    env = GridEnv(network=network)
-    assert env._evs["bus_0"].availability == custom_availability
-    # bus_1 has no explicit override -> still falls back to a synthetic profile
-    assert len(env._evs["bus_1"].availability) == const.EPISODE_STEPS
 
 
-# ── Reset tests ───────────────────────────────────────────────
+def _env(provider=None, **kw):
+    return GridEnv(profile_provider=provider or _provider(), **kw)
 
-def test_reset_returns_observations_for_all_agents(env):
-    obs = env.reset()
-    assert set(obs.keys()) == set(env.agent_ids)
 
-def test_reset_returns_observation_instances(env):
-    obs = env.reset()
-    for o in obs.values():
-        assert isinstance(o, Observation)
+def _actions(env, ev=0, batt=BatteryAction.IDLE, hp=HPAction.OFF):
+    a = {}
+    for aid in env.agent_ids:
+        dev = device_of(aid)
+        a[aid] = {const.DEVICE_EV: int(ev), const.DEVICE_BATTERY: int(batt),
+                  const.DEVICE_HEAT_PUMP: int(hp)}[dev]
+    return a
 
-def test_reset_resets_step_to_zero(env):
-    env._current_step = 10
-    env.reset()
+
+# ── agents / topology ────────────────────────────────────────
+def test_three_agents_per_active_household():
+    env = _env()
+    n_house = len(env._active_bus_ids)
+    assert len(env.agent_ids) == 3 * n_house
+    assert {device_of(a) for a in env.agent_ids} == set(const.CONTROLLABLE_DEVICE_TYPES)
+
+
+def test_penetration_limits_active_households():
+    assert len(_env(ev_penetration=0.4).agent_ids) < len(_env(ev_penetration=1.0).agent_ids)
+
+
+# ── reset ────────────────────────────────────────────────────
+def test_reset_returns_observation_per_agent():
+    env = _env()
+    obs = env.reset(seed=0)
+    assert set(obs) == set(env.agent_ids)
+    assert all(isinstance(o, Observation) for o in obs.values())
     assert env.current_step == 0
 
-def test_reset_resets_ev_soc(env):
-    for ev in env._evs.values():
-        ev.soc = 0.9
-    env.reset()
-    for ev in env._evs.values():
-        assert ev.soc == const.EV_INITIAL_SOC_MEAN
 
-def test_reset_ev_loads_are_zero(env):
-    env.reset()
-    for bus_id in env.network.household_bus_ids:
-        assert env._pypsa_network.loads.at[f"ev_{bus_id}", "p_set"] == 0.0
-
-def test_reset_observations_have_correct_soc_progress(env):
-    obs = env.reset()
-    for agent_id, o in obs.items():
-        assert o.soc_progress == const.EV_INITIAL_SOC_MEAN
-        
-# trivially passes until random EV sampling is implemented
-def test_reset_with_seed_is_reproducible(env):
-    obs1 = env.reset(seed=42)
-    obs2 = env.reset(seed=42)
-    for agent_id in env.agent_ids:
-        assert obs1[agent_id].soc_progress == obs2[agent_id].soc_progress
-
-# ── Return types ──────────────────────────────────────────────
-
-def test_step_returns_correct_types(env, all_off):
-    step_results, power_flow = env.step(all_off)
-    assert isinstance(step_results, dict)
-    assert isinstance(power_flow, PowerFlowResult)
-
-def test_step_returns_result_for_each_agent(env, all_off):
-    step_results, _ = env.step(all_off)
-    assert set(step_results.keys()) == set(env.agent_ids)
-
-def test_step_returns_step_result_instances(env, all_off):
-    step_results, _ = env.step(all_off)
-    for result in step_results.values():
-        assert isinstance(result, StepResult)
+def test_reset_reproducible_with_seed():
+    a = _env().reset(seed=3)
+    b = _env().reset(seed=3)
+    k = next(iter(a))
+    assert a[k].outdoor_temperature_c == b[k].outdoor_temperature_c
 
 
-# ── Step counter ──────────────────────────────────────────────
-
-def test_step_increments_current_step(env, all_off):
-    env.step(all_off)
-    assert env.current_step == 1
-
-def test_step_increments_across_multiple_steps(env, all_off):
-    for _ in range(5):
-        env.step(all_off)
-    assert env.current_step == 5
+def test_observation_multidevice_width():
+    env = _env()
+    o = next(iter(env.reset(seed=0).values()))
+    assert len(o.to_array_multidevice()) == const.OBS_DIM_MULTIDEVICE
+    assert o.feed_in_price == const.FEED_IN_TARIFF_EUR_KWH
 
 
-# ── Done flag ─────────────────────────────────────────────────
+# ── step mechanics ───────────────────────────────────────────
+def test_step_types_and_agent_coverage():
+    env = _env()
+    env.reset(seed=0)
+    results, pf = env.step(_actions(env))
+    assert isinstance(pf, PowerFlowResult)
+    assert set(results) == set(env.agent_ids)
+    assert all(isinstance(r, StepResult) for r in results.values())
 
-def test_step_not_done_before_last_step(env, all_off):
-    step_results, _ = env.step(all_off)
-    for result in step_results.values():
-        assert not result.done
 
-def test_step_done_at_last_step(env, all_off):
+def test_step_increments_and_done_at_last():
+    env = _env()
+    env.reset(seed=0)
     for _ in range(const.EPISODE_STEPS - 1):
-        env.step(all_off)
-    step_results, _ = env.step(all_off)
-    for result in step_results.values():
-        assert result.done
+        results, _ = env.step(_actions(env))
+    assert all(not r.done for r in results.values())
+    results, _ = env.step(_actions(env))
+    assert all(r.done for r in results.values())
 
 
-# ── EV SoC ────────────────────────────────────────────────────
-
-def test_step_off_does_not_charge(env, all_off):
-    soc_before = {a: env._evs[a].soc for a in env.agent_ids}
-    env.step(all_off)
-    for agent_id in env.agent_ids:
-        assert env._evs[agent_id].soc == soc_before[agent_id]
-
-def test_step_full_increases_soc(env, all_full):
-    soc_before = {a: env._evs[a].soc for a in env.agent_ids}
-    env.step(all_full)
-    for agent_id in env.agent_ids:
-        assert env._evs[agent_id].soc > soc_before[agent_id]
-
-def test_step_soc_does_not_exceed_1(env, all_full):
-    for ev in env._evs.values():
-        ev.soc = 1.0
-    env.step(all_full)
-    for ev in env._evs.values():
-        assert ev.soc <= 1.0
+def test_household_agents_share_reward():
+    env = _env()
+    env.reset(seed=0)
+    results, _ = env.step(_actions(env, ev=ChargingAction.FULL))
+    bus = env._active_bus_ids[0]
+    rewards = {device_of(a): results[a].reward for a in env.agent_ids if a.startswith(bus + "::")}
+    assert len(set(rewards.values())) == 1
 
 
-# ── Power flow result ─────────────────────────────────────────
-
-def test_power_flow_result_has_correct_timestep(env, all_off):
-    _, power_flow = env.step(all_off)
-    assert power_flow.timestep == 0
-
-def test_power_flow_result_has_all_buses(env, all_off):
-    _, power_flow = env.step(all_off)
-    for bus_id in env.network.buses:
-        assert bus_id.bus_id in power_flow.bus_voltages_pu
-
-def test_power_flow_result_has_all_lines(env, all_off):
-    _, power_flow = env.step(all_off)
-    for line in env.network.lines:
-        assert line.line_id in power_flow.line_loadings_pu
+def test_ev_full_charges_when_connected():
+    env = _env(_provider(avail=1.0))
+    env.reset(seed=0)
+    bus = env._active_bus_ids[0]
+    soc0 = env._households[bus].ev.soc
+    env.step(_actions(env, ev=ChargingAction.FULL))
+    assert env._households[bus].ev.soc > soc0
 
 
-# ── Curtailment ───────────────────────────────────────────────
-# §14a curtailment is triggered when the pre-charging power flow puts the
-# transformer or any line above its overload threshold (core.constants).
-# The stub network (5 households, 400 kW trafo, ~97 kW lines) never overloads
-# under normal FULL charging, so tests that need to force curtailment
-# temporarily lower the thresholds via monkeypatch rather than editing
-# core/constants.py permanently.
-
-def test_no_curtailment_when_not_overloaded(env, all_off):
-    _, power_flow = env.step(all_off)
-    assert not power_flow.curtailment_applied
-
-def test_no_curtailment_at_full_charge_under_default_thresholds(env, all_full):
-    # 5 households at FULL (7.4 kW each) stay well within the stub network's
-    # capacity, so §14a should not trigger under the real-world thresholds
-    _, power_flow = env.step(all_full)
-    assert not power_flow.curtailment_applied
-    assert power_flow.curtailed_power_kw == {}
-
-def test_curtailment_triggers_on_transformer_overload(env, all_full, monkeypatch):
-    monkeypatch.setattr(const, "TRANSFORMER_OVERLOAD_THRESHOLD", 0.0)
-    _, power_flow = env.step(all_full)
-    assert power_flow.curtailment_applied
-
-def test_curtailment_triggers_on_line_overload(env, all_full, monkeypatch):
-    monkeypatch.setattr(const, "LINE_OVERLOAD_THRESHOLD", 0.0)
-    _, power_flow = env.step(all_full)
-    assert power_flow.curtailment_applied
-
-def test_curtailment_caps_ev_power_at_full_charge(env, all_full, monkeypatch):
-    monkeypatch.setattr(const, "TRANSFORMER_OVERLOAD_THRESHOLD", 0.0)
-    step_results, power_flow = env.step(all_full)
-    expected_curtailed = const.EV_POWER_FULL_KW - const.MAX_CONTROLLED_POWER_KW
-    for agent_id in env.agent_ids:
-        assert power_flow.curtailed_power_kw[agent_id] == pytest.approx(expected_curtailed)
-        assert step_results[agent_id].info["curtailed_kw"] == pytest.approx(expected_curtailed)
-
-def test_curtailment_does_not_cap_power_already_below_limit(env, all_half, monkeypatch):
-    # HALF (3.7 kW) is already below MAX_CONTROLLED_POWER_KW (4.2 kW), so a
-    # forced overload should leave it untouched even though the flag is set
-    monkeypatch.setattr(const, "TRANSFORMER_OVERLOAD_THRESHOLD", 0.0)
-    step_results, power_flow = env.step(all_half)
-    assert power_flow.curtailment_applied
-    assert power_flow.curtailed_power_kw == {}
-    for agent_id in env.agent_ids:
-        assert step_results[agent_id].info["curtailed_kw"] == 0.0
-
-def test_curtailment_flagged_but_nothing_to_cut_when_off(env, all_off, monkeypatch):
-    # base load alone trips a zero threshold, but there is no EV power to curtail
-    monkeypatch.setattr(const, "TRANSFORMER_OVERLOAD_THRESHOLD", 0.0)
-    step_results, power_flow = env.step(all_off)
-    assert power_flow.curtailment_applied
-    assert power_flow.curtailed_power_kw == {}
-    for agent_id in env.agent_ids:
-        assert step_results[agent_id].info["curtailed_kw"] == 0.0
-
-def test_curtailment_reduces_soc_gain_vs_uncurtailed(env, all_full, monkeypatch):
-    soc_before = {a: env._evs[a].soc for a in env.agent_ids}
-    monkeypatch.setattr(const, "TRANSFORMER_OVERLOAD_THRESHOLD", 0.0)
-    env.step(all_full)
-
-    capped_delta = const.MAX_CONTROLLED_POWER_KW * const.TIMESTEP_HOURS / const.EV_BATTERY_CAPACITY_KWH
-    uncurtailed_delta = const.EV_POWER_FULL_KW * const.TIMESTEP_HOURS / const.EV_BATTERY_CAPACITY_KWH
-    for agent_id in env.agent_ids:
-        actual_delta = env._evs[agent_id].soc - soc_before[agent_id]
-        assert actual_delta == pytest.approx(capped_delta)
-        assert actual_delta < uncurtailed_delta
-
-def test_curtailment_recomputes_power_flow_with_capped_load(env, all_full, monkeypatch):
-    # the power flow returned to the caller must reflect the capped load,
-    # not the overloaded load that triggered curtailment in the first place
-    base_load_kw = env._h0_profile_kw.iloc[0] * env._load_multiplier
-    uncapped_bus_load_mw = {
-        b: (base_load_kw + const.EV_POWER_FULL_KW) / 1000.0 for b in env.agent_ids
-    }
-    uncapped_trafo_loading, _, _ = env._surrogate.solve(uncapped_bus_load_mw)
-
-    monkeypatch.setattr(const, "TRANSFORMER_OVERLOAD_THRESHOLD", 0.0)
-    _, power_flow = env.step(all_full)
-
-    capped_bus_load_mw = {
-        b: (base_load_kw + const.MAX_CONTROLLED_POWER_KW) / 1000.0 for b in env.agent_ids
-    }
-    expected_trafo_loading, expected_line_loadings, _ = env._surrogate.solve(capped_bus_load_mw)
-
-    assert power_flow.transformer_loading_pu == pytest.approx(expected_trafo_loading)
-    assert power_flow.transformer_loading_pu < uncapped_trafo_loading
-    for line_id, expected in expected_line_loadings.items():
-        assert power_flow.line_loadings_pu[line_id] == pytest.approx(expected)
-
-def test_curtailment_info_matches_power_flow_result(env, all_full, monkeypatch):
-    monkeypatch.setattr(const, "TRANSFORMER_OVERLOAD_THRESHOLD", 0.0)
-    step_results, power_flow = env.step(all_full)
-    for agent_id in env.agent_ids:
-        assert step_results[agent_id].info["curtailed_kw"] == pytest.approx(
-            power_flow.curtailed_power_kw.get(agent_id, 0.0)
-        )
-
-def test_curtailment_effects_report(env, all_full, monkeypatch):
-    """Not a strict assertion test — prints a before/after summary of what
-    curtailment changes (delivered power, SoC gain, transformer loading).
-    Run with `pytest -s` to see the output."""
-    base_load_kw = env._h0_profile_kw.iloc[0] * env._load_multiplier
-    uncapped_bus_load_mw = {
-        b: (base_load_kw + const.EV_POWER_FULL_KW) / 1000.0 for b in env.agent_ids
-    }
-    uncapped_trafo_loading, uncapped_lines, _ = env._surrogate.solve(uncapped_bus_load_mw)
-
-    soc_before = {a: env._evs[a].soc for a in env.agent_ids}
-    monkeypatch.setattr(const, "TRANSFORMER_OVERLOAD_THRESHOLD", 0.0)
-    step_results, power_flow = env.step(all_full)
-
-    print("\n── Curtailment effects (all agents requesting FULL charge) ──")
-    print(f"transformer loading: {uncapped_trafo_loading:.3f} pu (requested) "
-          f"-> {power_flow.transformer_loading_pu:.3f} pu (delivered)")
-    print(f"max line loading:    {max(uncapped_lines.values()):.3f} pu (requested) "
-          f"-> {max(power_flow.line_loadings_pu.values()):.3f} pu (delivered)")
-    for agent_id in env.agent_ids:
-        delta_soc = env._evs[agent_id].soc - soc_before[agent_id]
-        print(f"{agent_id}: requested {const.EV_POWER_FULL_KW:.1f} kW, "
-              f"curtailed {power_flow.curtailed_power_kw.get(agent_id, 0.0):.1f} kW, "
-              f"delivered {const.EV_POWER_FULL_KW - power_flow.curtailed_power_kw.get(agent_id, 0.0):.1f} kW, "
-              f"soc +{delta_soc:.4f} -> {step_results[agent_id].reward:+.4f} reward")
+def test_ev_does_not_charge_when_disconnected():
+    env = _env(_provider(avail=0.0))
+    env.reset(seed=0)
+    bus = env._active_bus_ids[0]
+    soc0 = env._households[bus].ev.soc
+    env.step(_actions(env, ev=ChargingAction.FULL))
+    assert env._households[bus].ev.soc == soc0
 
 
-# ── Observations ──────────────────────────────────────────────
+def test_battery_charge_raises_soc_discharge_lowers():
+    env = _env(_provider())
+    env.reset(seed=0)
+    bus = env._active_bus_ids[0]
+    s0 = env._households[bus].battery.soc
+    env.step(_actions(env, batt=BatteryAction.CHARGE))
+    s1 = env._households[bus].battery.soc
+    assert s1 > s0
+    env.step(_actions(env, batt=BatteryAction.DISCHARGE))
+    assert env._households[bus].battery.soc < s1
 
-def test_step_observation_soc_progress_updates(env, all_full):
-    step_results, _ = env.step(all_full)
-    for agent_id, result in step_results.items():
-        expected = env._evs[agent_id].soc / env._evs[agent_id].target_soc
-        assert abs(result.observation.soc_progress - expected) < 1e-6
 
-# ── Benchmark ──────────────────────────────────────────────
+def test_pv_export_earns_feed_in_positive_reward():
+    # large PV, no consumption → household exports → bill negative → reward > 0
+    env = _env(_provider(base=0.0, pv=8.0))
+    env.reset(seed=0)
+    results, _ = env.step(_actions(env))
+    assert next(iter(results.values())).reward > 0
 
-def test_step_performance(env, all_full):    
-    start = time.time()
-    env.step(all_full)
-    elapsed = time.time() - start
-    print(f"\nstep() took {elapsed:.3f}s")
-    assert elapsed < 1.0
+
+# ── §14a curtailment ─────────────────────────────────────────
+def test_synchronized_full_load_triggers_curtailment():
+    env = _env(_provider(avail=1.0, base=0.5))
+    env.reset(seed=0)
+    _, pf = env.step(_actions(env, ev=ChargingAction.FULL, batt=BatteryAction.CHARGE, hp=HPAction.HEAT))
+    assert pf.curtailment_applied
+    assert pf.curtailed_power_kw
+
+
+def test_no_curtailment_when_idle():
+    env = _env(_provider(avail=1.0, base=0.1))
+    env.reset(seed=0)
+    _, pf = env.step(_actions(env))
+    assert not pf.curtailment_applied
+
+
+def test_curtailment_is_localized_to_the_overloaded_feeder():
+    from core.models import BusModel, GridNetwork, LineModel, TransformerModel, build_device_layout
+    # feeder A: tiny 0.02 MVA trafo (will overload); feeder B: huge 1.0 MVA (stays fine)
+    buses = [BusModel(bus_id=b) for b in ("hvA", "lvA", "h0", "h1", "hvB", "lvB", "h2", "h3")]
+    lines = [LineModel(line_id=f"l{i}", from_bus=a, to_bus=b, length_km=0.02,
+                       r_ohm_per_km=0.6, x_ohm_per_km=0.08, max_i_ka=0.5)   # generous lines → trafo is the limit
+             for i, (a, b) in enumerate([("lvA", "h0"), ("h0", "h1"), ("lvB", "h2"), ("h2", "h3")])]
+    trafos = [TransformerModel(trafo_id="tA", hv_bus="hvA", lv_bus="lvA", s_nom_mva=0.02),
+              TransformerModel(trafo_id="tB", hv_bus="hvB", lv_bus="lvB", s_nom_mva=1.0)]
+    net = GridNetwork(network_id="2f", buses=buses, lines=lines, transformers=trafos,
+                      household_bus_ids=["h0", "h1", "h2", "h3"])
+    layout = build_device_layout(net.household_bus_ids, ev=1.0, battery=1.0, heat_pump=1.0, pv=0.0)
+
+    env = GridEnv(builder=type("B", (), {"build": lambda s: net})(), device_layout=layout,
+                  profile_provider=_provider(avail=1.0, base=0.3))
+    env.reset(seed=0)
+    _, pf = env.step(_actions(env, ev=ChargingAction.FULL, batt=BatteryAction.CHARGE, hp=HPAction.HEAT))
+
+    assert pf.curtailment_applied
+    assert pf.transformer_loadings_pu["lvA"] > 1.0        # feeder A overloaded
+    assert pf.transformer_loadings_pu["lvB"] < 1.0        # feeder B fine
+    # only feeder-A households were dimmed
+    assert "h0" in pf.curtailed_power_kw and "h1" in pf.curtailed_power_kw
+    assert "h2" not in pf.curtailed_power_kw and "h3" not in pf.curtailed_power_kw
+
+
+# ── pure device dynamics ─────────────────────────────────────
+def test_battery_step_respects_soc_window():
+    soc, bus = battery_step(const.BATTERY_MAX_SOC, BatteryAction.CHARGE, capacity_kwh=10, max_power_kw=5,
+                            efficiency=0.95, dt=0.25)
+    assert soc <= const.BATTERY_MAX_SOC + 1e-9 and bus == pytest.approx(0.0, abs=1e-6)
+    soc, bus = battery_step(const.BATTERY_MIN_SOC, BatteryAction.DISCHARGE, capacity_kwh=10, max_power_kw=5,
+                            efficiency=0.95, dt=0.25)
+    assert soc >= const.BATTERY_MIN_SOC - 1e-9 and bus == pytest.approx(0.0, abs=1e-6)
+
+
+def test_battery_charge_sign_and_efficiency():
+    soc, bus = battery_step(0.5, BatteryAction.CHARGE, capacity_kwh=10, max_power_kw=5,
+                            efficiency=0.9, dt=1.0)
+    assert bus > 0
+    assert soc == pytest.approx(0.5 + 5 * 0.9 / 10)
+
+
+def test_hp_heat_charges_buffer_off_drains():
+    up, elec = hp_step(0.5, HPAction.HEAT, demand_thermal_kw=0.0, cop=3.0, capacity_kwh=8.0, dt=0.25)
+    assert up > 0.5 and elec == const.HP_RATED_ELECTRIC_KW
+    down, elec = hp_step(0.5, HPAction.OFF, demand_thermal_kw=6.0, cop=3.0, capacity_kwh=8.0, dt=0.25)
+    assert down < 0.5 and elec == 0.0
+
+
+def test_curtail_household_floor_and_scaling():
+    assert curtail_household(10.0, 0.5) == pytest.approx(5.0)
+    assert curtail_household(10.0, 0.1) == pytest.approx(const.MIN_GUARANTEED_POWER_KW)
+    assert curtail_household(2.0, 0.1) == pytest.approx(2.0)
+
+
+def test_day_ahead_prices_length():
+    env = _env()
+    env.reset(seed=0)
+    assert len(env.day_ahead_prices()) == const.EPISODE_STEPS
+
+
+# ── EV SoC is scored proportionally, not as a cliff ──────────
+def _terminal_ev_infos(policy_charges: bool):
+    """Run one episode charging (or never charging) and return the EV terminal infos."""
+    from core.models import ChargingAction
+    env = _env(provider=_provider(avail=1.0, base=0.3))
+    obs = env.reset(seed=0)
+    infos = []
+    while True:
+        actions = {}
+        for aid in obs:
+            if device_of(aid) == const.DEVICE_EV:
+                actions[aid] = int(ChargingAction.FULL if policy_charges else ChargingAction.OFF)
+            else:
+                actions[aid] = 0
+        step_results, _ = env.step(actions)
+        for aid, r in step_results.items():
+            if r.info.get("ev_terminal"):
+                infos.append(r.info)
+        obs = {aid: r.observation for aid, r in step_results.items()}
+        if any(r.done for r in step_results.values()):
+            break
+    return infos
+
+
+def test_shortfall_is_recorded_and_bounded():
+    infos = _terminal_ev_infos(policy_charges=False)
+    assert infos, "expected at least one EV to reach its departure step"
+    for i in infos:
+        assert 0.0 <= i["ev_shortfall"] <= 1.0
+
+
+def test_a_car_that_charges_has_no_shortfall():
+    for i in _terminal_ev_infos(policy_charges=True):
+        if i["ev_satisfied"]:
+            assert i["ev_shortfall"] == 0.0
+
+
+def _soc_penalty(shortfall: float) -> float:
+    """The terminal EV term as environment._reward applies it."""
+    return const.REWARD_SOC_MISS_PENALTY * shortfall ** 2
+
+
+#: Bill spread between the cheapest and most expensive strategy, measured on the
+#: 245-home ding0 grid (€16.89 immediate vs €12.32). This is the prize the agent is
+#: trading against, so the SoC term has to be calibrated relative to it.
+_ACHIEVABLE_DAILY_SAVING = 4.5
+
+
+def test_missing_by_a_hair_is_nearly_free():
+    # a car 2% short has range margin to absorb it; scoring that as a failure is what
+    # drove the agent to ignore price entirely under the old cliff
+    assert abs(_soc_penalty(0.02)) < 0.5
+
+
+def test_price_still_steers_the_policy_at_small_shortfalls():
+    # if even a tiny deviation costs more than a day's achievable saving, price becomes
+    # irrelevant and the agent degenerates to "charge immediately"
+    assert abs(_soc_penalty(0.05)) < _ACHIEVABLE_DAILY_SAVING
+
+
+def test_deep_undercharging_is_prohibitive():
+    # the failure this replaced: a LINEAR -25 let the agent sell 14% of the charge for a
+    # cheaper bill. Gutting half the charge must cost far more than any saving available.
+    assert abs(_soc_penalty(0.5)) > 10 * _ACHIEVABLE_DAILY_SAVING
+
+
+def test_penalty_is_convex_not_linear():
+    # doubling the shortfall must more than double the penalty, or it stays exploitable
+    assert abs(_soc_penalty(0.4)) > 2 * abs(_soc_penalty(0.2))

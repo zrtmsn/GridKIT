@@ -58,7 +58,8 @@ class Trainer:
     def run(
         self,
         num_episodes: int = settings.rllib_default_num_episodes,
-        callback: Optional[TrainingCallback] = None
+        callback: Optional[TrainingCallback] = None,
+        cleanup: bool = True,
     ) -> List[TrainingResult]:
         """
         Run the training loop.
@@ -66,6 +67,8 @@ class Trainer:
         Args:
             num_episodes: Number of training iterations.
             callback: Optional callback for progress updates.
+            cleanup: If True, stop the algorithm and Ray when done. Pass False to
+                keep the trained policy alive for evaluation (get_policy_module).
 
         Returns:
             List of TrainingResult objects, one per iteration.
@@ -97,11 +100,37 @@ class Trainer:
                 training_result.episode_len_mean
             )
 
-        self._cleanup()
+        if cleanup:
+            self.stop()
         return results
 
-    def _cleanup(self):
-        """Clean up resources."""
+    def get_policy_module(self, policy_id: str):
+        """Return one trained RLModule by policy id (e.g. 'ev_policy')."""
+        if self._algo is None:
+            raise RuntimeError("No trained algorithm — call run(cleanup=False) first.")
+        return self._algo.get_module(policy_id)
+
+    def get_policy_modules(self) -> dict:
+        """Return {device_type -> trained RLModule} for all shared per-device policies
+        (feed straight into RLlibPolicyAdapter)."""
+        from GridKIT.core import constants as const
+        return {dev: self.get_policy_module(f"{dev}_policy")
+                for dev in const.CONTROLLABLE_DEVICE_TYPES}
+
+    def save_checkpoint(self, path: str) -> str:
+        """Persist the trained algorithm to `path`; returns the path."""
+        if self._algo is None:
+            raise RuntimeError("No trained algorithm to checkpoint.")
+        self._algo.save_to_path(path)
+        return path
+
+    def stop(self):
+        """Stop the algorithm and shut down Ray."""
         if self._algo is not None:
             self._algo.stop()
-        ray.shutdown()
+            self._algo = None
+        if ray.is_initialized():
+            ray.shutdown()
+
+    # backward-compat alias
+    _cleanup = stop
