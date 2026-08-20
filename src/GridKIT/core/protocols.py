@@ -78,6 +78,16 @@ class GridEnvProtocol(ABC):
         """Current timestep index (0–95)."""
         ...
 
+    def day_ahead_prices(self) -> list[float]:
+        """
+        Published day-ahead price forecast for the current episode (one value per step).
+
+        Real day-ahead prices are known in advance, so a price-reactive customer can plan
+        its charging window from this. Default returns a flat profile; grid_model overrides
+        it with the episode's actual price curve.
+        """
+        raise NotImplementedError
+
 
 class NetworkBuilderProtocol(ABC):
     """

@@ -1,23 +1,49 @@
 # grid_model/episode_plots.py
 # Shared episode-running + plotting logic used by both
 # test_gridcreator_episode.py and cli.py, so the two don't duplicate it.
+#
+# This is a lightweight dev-tool heuristic for a quick sanity-check plot, not
+# an RL baseline — see scenarios/ for the tuned comparison policies.
 
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
 import core.constants as const
-from core.models import ChargingAction, GridNetwork
-from grid_model.environment import GridEnv
+from core.models import BatteryAction, ChargingAction, GridNetwork, HPAction
+from grid_model.environment import GridEnv, bus_of, device_of
 
 
-def full_when_possible_policy(env: GridEnv) -> dict[str, ChargingAction]:
-    """Charge FULL whenever the EV is plugged in and hasn't reached its target SoC yet, else OFF."""
-    actions = {}
-    for agent_id, ev in env._evs.items():
-        available = ev.is_connected_at(env.current_step)
-        needs_charge = ev.soc < ev.target_soc
-        actions[agent_id] = ChargingAction.FULL if (available and needs_charge) else ChargingAction.OFF
+def _device_soc(env: GridEnv, agent_id: str) -> float:
+    hh = env._households[bus_of(agent_id)]
+    dev = device_of(agent_id)
+    if dev == const.DEVICE_EV:
+        return hh.ev.soc
+    if dev == const.DEVICE_HEAT_PUMP:
+        return hh.hp.thermal_soc
+    return hh.battery.soc
+
+
+def full_when_possible_policy(env: GridEnv) -> dict[str, int]:
+    """Simple per-device heuristic for a quick sanity-check episode.
+
+    EV: charge FULL whenever plugged in and below target SoC, else OFF.
+    Heat pump: HEAT whenever the thermal buffer is below its comfort floor, else OFF.
+    Battery: idle (no arbitrage) — this tool is for a quick network/curtailment
+    sanity check, not a tuned baseline.
+    """
+    actions: dict[str, int] = {}
+    for agent_id in env.agent_ids:
+        hh = env._households[bus_of(agent_id)]
+        dev = device_of(agent_id)
+        if dev == const.DEVICE_EV:
+            available = hh.ev.is_connected_at(env.current_step)
+            needs_charge = hh.ev.soc < hh.ev.target_soc
+            actions[agent_id] = int(ChargingAction.FULL if (available and needs_charge) else ChargingAction.OFF)
+        elif dev == const.DEVICE_HEAT_PUMP:
+            actions[agent_id] = int(HPAction.HEAT if hh.hp.thermal_soc < hh.hp.comfort_min_soc else HPAction.OFF)
+        else:  # battery
+            actions[agent_id] = int(BatteryAction.IDLE)
     return actions
 
 
@@ -28,8 +54,8 @@ def run_episode(env: GridEnv, seed: int | None = None) -> dict:
         "max_line_loading_pu": [],
         "curtailment_applied": [],
         "total_curtailed_kw": [],
-        "total_load_mw": [],
-        "soc": {agent_id: [env._evs[agent_id].soc] for agent_id in env.agent_ids},
+        "total_load_kw": [],
+        "soc": {agent_id: [_device_soc(env, agent_id)] for agent_id in env.agent_ids},
         "reward": {agent_id: [] for agent_id in env.agent_ids},
     }
 
@@ -38,13 +64,13 @@ def run_episode(env: GridEnv, seed: int | None = None) -> dict:
         step_results, power_flow = env.step(actions)
 
         log["transformer_loading_pu"].append(power_flow.transformer_loading_pu)
-        log["max_line_loading_pu"].append(max(power_flow.line_loadings_pu.values()))
+        log["max_line_loading_pu"].append(max(power_flow.line_loadings_pu.values(), default=0.0))
         log["curtailment_applied"].append(power_flow.curtailment_applied)
         log["total_curtailed_kw"].append(sum(power_flow.curtailed_power_kw.values()))
-        log["total_load_mw"].append(sum(power_flow.bus_load_mw.values()))
+        log["total_load_kw"].append(sum(hh.last_net_load_kw for hh in env._households.values()))
 
         for agent_id in env.agent_ids:
-            log["soc"][agent_id].append(env._evs[agent_id].soc)
+            log["soc"][agent_id].append(_device_soc(env, agent_id))
             log["reward"][agent_id].append(step_results[agent_id].reward)
 
     return log
@@ -101,6 +127,7 @@ def plot_network_topology(network: GridNetwork, out_path: Path) -> None:
 def save_plots(log: dict, network: GridNetwork, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     steps = range(const.EPISODE_STEPS)
+    step_label = f"timestep ({const.TIMESTEP_MINUTES} min)"
 
     plot_network_topology(network, out_dir / "network_topology.png")
 
@@ -108,7 +135,7 @@ def save_plots(log: dict, network: GridNetwork, out_dir: Path) -> None:
     ax.plot(steps, log["transformer_loading_pu"], label="transformer loading")
     ax.plot(steps, log["max_line_loading_pu"], label="max line loading")
     ax.axhline(1.0, color="red", linestyle="--", label="overload threshold")
-    ax.set_xlabel("timestep (1h)")
+    ax.set_xlabel(step_label)
     ax.set_ylabel("loading [p.u.]")
     ax.set_title("Network loading over the episode")
     ax.legend()
@@ -117,9 +144,9 @@ def save_plots(log: dict, network: GridNetwork, out_dir: Path) -> None:
     plt.close(fig)
 
     fig, ax1 = plt.subplots(figsize=(10, 4))
-    ax1.plot(steps, log["total_load_mw"], color="tab:blue", label="total delivered load")
-    ax1.set_xlabel("timestep (1h)")
-    ax1.set_ylabel("total load [MW]", color="tab:blue")
+    ax1.plot(steps, log["total_load_kw"], color="tab:blue", label="total delivered load")
+    ax1.set_xlabel(step_label)
+    ax1.set_ylabel("total load [kW]", color="tab:blue")
     ax2 = ax1.twinx()
     ax2.bar(steps, log["total_curtailed_kw"], color="tab:red", alpha=0.4, label="curtailed power")
     ax2.set_ylabel("curtailed power [kW]", color="tab:red")
@@ -136,23 +163,24 @@ def save_plots(log: dict, network: GridNetwork, out_dir: Path) -> None:
     mean_soc = [sum(v) / len(v) for v in zip(*soc_matrix)]
     min_soc = [min(v) for v in zip(*soc_matrix)]
     max_soc = [max(v) for v in zip(*soc_matrix)]
-    soc_steps = range(const.EPISODE_STEPS + 1)  # +1: includes the SoC at reset, before any charging
+    soc_steps = range(const.EPISODE_STEPS + 1)  # +1: includes the SoC at reset, before any action
     ax.plot(soc_steps, mean_soc, label="mean SoC")
     ax.fill_between(soc_steps, min_soc, max_soc, alpha=0.2, label="min-max range")
-    ax.axhline(const.EV_TARGET_SOC, color="green", linestyle="--", label="target SoC")
-    ax.set_xlabel("timestep (1h)")
+    ax.axhline(const.EV_TARGET_SOC, color="green", linestyle="--", label="EV target SoC")
+    ax.set_xlabel(step_label)
     ax.set_ylabel("state of charge")
-    ax.set_title(f"EV SoC across {len(soc_matrix)} agents")
+    ax.set_title(f"Device SoC across {len(soc_matrix)} agents (EV / battery / heat pump, mixed)")
     ax.legend()
     fig.tight_layout()
-    fig.savefig(out_dir / "ev_soc.png", dpi=150)
+    fig.savefig(out_dir / "device_soc.png", dpi=150)
     plt.close(fig)
 
     total_reward = sum(sum(v) for v in log["reward"].values())
     final_soc = {agent_id: v[-1] for agent_id, v in log["soc"].items()}
-    n_met_target = sum(1 for soc in final_soc.values() if soc >= const.EV_TARGET_SOC)
+    ev_final_soc = {aid: soc for aid, soc in final_soc.items() if device_of(aid) == const.DEVICE_EV}
+    n_met_target = sum(1 for soc in ev_final_soc.values() if soc >= const.EV_TARGET_SOC)
     print("Episode summary:")
     print(f"  curtailment events: {sum(log['curtailment_applied'])}/{const.EPISODE_STEPS} timesteps")
     print(f"  peak transformer loading: {max(log['transformer_loading_pu']):.3f} pu")
-    print(f"  agents reaching target SoC: {n_met_target}/{len(final_soc)}")
+    print(f"  EV agents reaching target SoC: {n_met_target}/{len(ev_final_soc)}")
     print(f"  total reward across all agents: {total_reward:.2f}")
