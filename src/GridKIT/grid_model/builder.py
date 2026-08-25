@@ -199,8 +199,19 @@ class OSMNetworkBuilder(NetworkBuilderProtocol):
     def _run_gridcreator(self) -> None:
         # Mirrors GridCreator(steps=[1,2,3,4,5]) in vendor/GridCreator/main.py
         # step by step, since main.py itself can't be imported safely.
-        driver = f"""
+        driver = f"""# -*- coding: utf-8 -*-
 import os
+import sys
+from pathlib import Path
+
+proj_data = Path(sys.prefix) / "Library" / "share" / "proj"
+if proj_data.exists():
+    os.environ["PROJ_DATA"] = str(proj_data)
+    os.environ["PROJ_LIB"] = str(proj_data)
+
+    import pyproj
+    pyproj.datadir.set_data_dir(str(proj_data))
+
 import main_functions as mf
 import input_data as data
 
@@ -244,13 +255,26 @@ buses_df.to_csv(os.path.join(output_dir, 'buses.csv'))
         )
         driver_path = Path(driver_path_str)
         try:
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
                 f.write(driver)
+            env_name = (self.conda_env or "GridCreator").strip()
+
+            gridcreator_python_env = os.environ.get("GRIDCREATOR_PYTHON")
+
+            if gridcreator_python_env:
+                cmd = [gridcreator_python_env, driver_path.name]
+            else:
+                cmd = ["conda", "run", "-n", env_name, "python", driver_path.name]
+
+            run_env = os.environ.copy()
             result = subprocess.run(
-                ["conda", "run", "-n", self.conda_env, "python", driver_path.name],
+                cmd,
                 cwd=self.gridcreator_dir,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=run_env,
             )
         finally:
             driver_path.unlink(missing_ok=True)
