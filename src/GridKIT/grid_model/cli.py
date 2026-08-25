@@ -5,10 +5,15 @@ persisting it as JSON between invocations (GridNetwork.model_dump_json /
 model_validate_json — no separate serialization logic needed).
 
 Examples:
-    # Real GridCreator network, cut down to one transformer's feeder
+    # Real GridCreator network (OSM step, via conda), cut down to one transformer's feeder
     python -m grid_model.cli build --top 52.396954 --bottom 52.390330 \\
         --left 13.267724 --right 13.273824 --scenario "South Berlin" \\
         --single-feeder --max-households 15 --out network.json
+
+    # Real GridCreator network from the ding0 archive (step 1 only, no conda env
+    # needed — real, individually-sized transformers instead of OSM's one generic one)
+    python -m grid_model.cli build --ding0 \\
+        --south 49.098 --west 8.703 --north 49.112 --east 8.720 --out network.json
 
     # Or the stub network, for a fast demo without GridCreator
     python -m grid_model.cli build --stub --out network.json
@@ -29,17 +34,16 @@ import argparse
 from pathlib import Path
 
 from core.models import BusModel, GridNetwork, LineModel
-import core.constants as const
-from grid_model.bdew_h0 import BDEW_H0_ANNUAL_KWH
-from grid_model.builder import OSMNetworkBuilder, StubNetworkBuilder
+from grid_model.builder import FixedNetworkBuilder, OSMNetworkBuilder, StubNetworkBuilder
 from grid_model.environment import GridEnv
 from grid_model.episode_plots import run_episode, save_plots
+from grid_model import gridcreator_loader
 from grid_model import network_editor
 
 # Defaults for a manually added line, matching data/stub_network.json's own values.
 DEFAULT_LINE_R_OHM_PER_KM = 0.32
 DEFAULT_LINE_X_OHM_PER_KM = 0.08
-DEFAULT_LINE_MAX_I_KA = 0.14
+DEFAULT_LINE_MAX_I_KA = 0.045
 DEFAULT_LINE_LENGTH_KM = 0.05
 
 
@@ -56,10 +60,23 @@ def _save_network(network: GridNetwork, path: str) -> None:
 def cmd_build(args: argparse.Namespace) -> None:
     if args.stub:
         network = StubNetworkBuilder().build()
+    elif args.ding0:
+        missing = [name for name in ("south", "west", "north", "east") if getattr(args, name) is None]
+        if missing:
+            raise SystemExit(f"build --ding0: --{'/--'.join(missing)} required")
+        try:
+            network = gridcreator_loader.build_grid_network_from_ding0(
+                args.south, args.west, args.north, args.east,
+                grids_dir=args.grids_dir, residential_only=not args.include_non_residential,
+            )
+        except gridcreator_loader.Ding0Unavailable as e:
+            raise SystemExit(f"build --ding0: {e}")
+        print(f"Full network: {len(network.buses)} buses, {network.n_households} households, "
+              f"{len(network.transformers)} transformers (real, individually-sized).")
     else:
         missing = [name for name in ("top", "bottom", "left", "right", "scenario") if getattr(args, name) is None]
         if missing:
-            raise SystemExit(f"build: --{'/--'.join(missing)} required unless --stub is set")
+            raise SystemExit(f"build: --{'/--'.join(missing)} required unless --stub or --ding0 is set")
 
         builder = OSMNetworkBuilder(
             top=args.top, bottom=args.bottom, left=args.left, right=args.right,
@@ -81,7 +98,7 @@ def cmd_build(args: argparse.Namespace) -> None:
 
 def cmd_plot(args: argparse.Namespace) -> None:
     network = _load_network(args.network)
-    env = GridEnv(network=network)
+    env = GridEnv(builder=FixedNetworkBuilder(network))
     log = run_episode(env, seed=args.seed)
     out_dir = Path(args.out_dir)
     save_plots(log, network, out_dir)
@@ -113,15 +130,15 @@ def cmd_add_bus(args: argparse.Namespace) -> None:
 
 def cmd_add_household(args: argparse.Namespace) -> None:
     network = _load_network(args.network)
-    network = network_editor.add_household(network, args.bus_id, annual_kwh=args.annual_kwh)
+    network = network_editor.add_household(network, args.bus_id, seed=args.seed)
     out = args.out or args.network
     _save_network(network, out)
-    print(f"Marked {args.bus_id!r} as a household ({args.annual_kwh:.0f} kWh/year). Saved to {out}")
+    print(f"Marked {args.bus_id!r} as a household. Saved to {out}")
 
 
 def cmd_add_ev(args: argparse.Namespace) -> None:
     network = _load_network(args.network)
-    network = network_editor.add_ev(network, args.bus_id, household_size=args.household_size, seed=args.seed)
+    network = network_editor.add_ev(network, args.bus_id, seed=args.seed)
     out = args.out or args.network
     _save_network(network, out)
     print(f"Added EV availability to {args.bus_id!r}. Saved to {out}")
@@ -131,9 +148,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="grid_model.cli", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    p_build = subparsers.add_parser("build", help="build a GridNetwork (GridCreator or stub) and save it as JSON")
+    p_build = subparsers.add_parser("build", help="build a GridNetwork (GridCreator, ding0, or stub) and save it as JSON")
     p_build.add_argument("--out", required=True, help="path to write the network JSON to")
     p_build.add_argument("--stub", action="store_true", help="use the stub network instead of GridCreator")
+    # OSM (via conda-run GridCreator)
     p_build.add_argument("--top", type=float)
     p_build.add_argument("--bottom", type=float)
     p_build.add_argument("--left", type=float)
@@ -142,6 +160,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_build.add_argument("--conda-env", type=str, default="GridCreator")
     p_build.add_argument("--single-feeder", action="store_true", help="extract a single transformer's feeder (see build_single_feeder)")
     p_build.add_argument("--max-households", type=int, default=None)
+    # ding0 archive (GridCreator step 1 only — no conda env needed)
+    p_build.add_argument("--ding0", action="store_true",
+                         help="build from the local ding0 grid archive instead of running GridCreator/OSM — "
+                              "real, individually-sized transformers (see grid_model/gridcreator_loader.py)")
+    p_build.add_argument("--south", type=float, help="ding0: bbox south latitude")
+    p_build.add_argument("--west", type=float, help="ding0: bbox west longitude")
+    p_build.add_argument("--north", type=float, help="ding0: bbox north latitude")
+    p_build.add_argument("--east", type=float, help="ding0: bbox east longitude")
+    p_build.add_argument("--grids-dir", type=str, default=None,
+                         help="ding0: archive location (default: $GRIDKIT_DING0_GRIDS_DIR or the vendored default)")
+    p_build.add_argument("--include-non-residential", action="store_true",
+                         help="ding0: keep non-residential loads as household buses too (default: residential only)")
     p_build.set_defaults(func=cmd_build)
 
     p_plot = subparsers.add_parser("plot", help="run one episode on a saved network and save plots")
@@ -168,14 +198,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_add_household = subparsers.add_parser("add-household", help="mark an existing bus as a household with a default load profile")
     p_add_household.add_argument("network", help="path to a network JSON file")
     p_add_household.add_argument("--bus-id", required=True, help="must already exist — use add-bus first if not")
-    p_add_household.add_argument("--annual-kwh", type=float, default=BDEW_H0_ANNUAL_KWH)
+    p_add_household.add_argument("--seed", type=int, default=None)
     p_add_household.add_argument("--out", default=None, help="defaults to overwriting the input file")
     p_add_household.set_defaults(func=cmd_add_household)
 
     p_add_ev = subparsers.add_parser("add-ev", help="attach a synthetic EV availability profile to a household bus")
     p_add_ev.add_argument("network", help="path to a network JSON file")
     p_add_ev.add_argument("--bus-id", required=True, help="must already be a household — use add-household first")
-    p_add_ev.add_argument("--household-size", type=int, default=const.SYNTHETIC_EV_HOUSEHOLD_SIZE)
     p_add_ev.add_argument("--seed", type=int, default=None)
     p_add_ev.add_argument("--out", default=None, help="defaults to overwriting the input file")
     p_add_ev.set_defaults(func=cmd_add_ev)

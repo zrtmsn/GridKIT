@@ -7,12 +7,11 @@
 # will typically want to keep the previous version around (undo, before/after
 # comparison) rather than have it silently change underneath it.
 
-import pandas as pd
+import numpy as np
 
 import core.constants as const
 from core.models import BusModel, GridNetwork, LineModel
-from grid_model.bdew_h0 import BDEW_H0_ANNUAL_KWH, build_h0_profile
-from grid_model.ev_availability import synthetic_ev_availability
+from grid_model.profiles import base_load_profile, hour_to_step
 
 
 def add_bus(network: GridNetwork, bus: BusModel, line: LineModel | None = None) -> GridNetwork:
@@ -45,18 +44,18 @@ def remove_bus(network: GridNetwork, bus_id: str) -> GridNetwork:
     })
 
 
-def add_household(network: GridNetwork, bus_id: str, annual_kwh: float = BDEW_H0_ANNUAL_KWH) -> GridNetwork:
+def add_household(network: GridNetwork, bus_id: str, seed: int | None = None) -> GridNetwork:
     """
     Mark an existing bus as a household and give it a default load profile —
-    the same BDEW H0 generator GridEnv itself falls back to for buses without
-    real GridCreator data.
+    the same synthetic BDEW-H0-like generator (grid_model.profiles.base_load_profile)
+    GridEnv's DeviceProfileProvider falls back to for buses without real
+    GridCreator/pyCity data.
     """
     existing_ids = {b.bus_id for b in network.buses}
     if bus_id not in existing_ids:
         raise ValueError(f"bus {bus_id!r} does not exist in the network — call add_bus() first")
 
-    snapshots = pd.date_range("2024-01-01", periods=const.EPISODE_STEPS, freq=f"{const.TIMESTEP_MINUTES}min")
-    profile = build_h0_profile(snapshots, annual_kwh=annual_kwh).tolist()
+    profile = base_load_profile(np.random.default_rng(seed)).tolist()
 
     household_bus_ids = network.household_bus_ids if bus_id in network.household_bus_ids \
         else network.household_bus_ids + [bus_id]
@@ -64,19 +63,24 @@ def add_household(network: GridNetwork, bus_id: str, annual_kwh: float = BDEW_H0
     return network.model_copy(update={"household_bus_ids": household_bus_ids, "household_load_profile_kw": profiles})
 
 
-def add_ev(
-    network: GridNetwork,
-    bus_id: str,
-    household_size: int = const.SYNTHETIC_EV_HOUSEHOLD_SIZE,
-    seed: int | None = None,
-) -> GridNetwork:
+def _synthetic_ev_window(rng: np.random.Generator) -> list[bool]:
     """
-    Attach a synthetic EV availability profile to a household bus — the same
-    occupancy-based generator GridEnv itself falls back to (mimics
-    GridCreator's create_e_car; see grid_model.ev_availability).
+    Synthetic single-EV connection window: sampled the same way GridEnv's
+    heterogeneous EVs are (evening arrival, next-morning departure — no wrap,
+    since the episode starts at noon), but for one bus at a time, since this
+    tool edits a network one household at a time.
     """
+    arrival_h = rng.normal(const.EV_ARRIVAL_HOUR_MEAN, const.EV_ARRIVAL_HOUR_STD)
+    departure_h = rng.normal(const.EV_DEPARTURE_HOUR_MEAN, const.EV_DEPARTURE_HOUR_STD)
+    arrival = int(np.clip(hour_to_step(arrival_h), const.EV_ARRIVAL_STEP_MIN, const.EPISODE_STEPS - 1))
+    departure = int(np.clip(hour_to_step(departure_h), arrival + const.EV_MIN_CONNECTED_STEPS, const.EV_DEPARTURE_STEP_MAX))
+    return [arrival <= s <= departure for s in range(const.EPISODE_STEPS)]
+
+
+def add_ev(network: GridNetwork, bus_id: str, seed: int | None = None) -> GridNetwork:
+    """Attach a synthetic EV connection-window availability profile to a household bus."""
     if bus_id not in network.household_bus_ids:
         raise ValueError(f"bus {bus_id!r} is not a household bus — call add_household() first")
 
-    availability = synthetic_ev_availability(household_size, seed=seed)
+    availability = _synthetic_ev_window(np.random.default_rng(seed))
     return network.model_copy(update={"ev_availability": {**network.ev_availability, bus_id: availability}})

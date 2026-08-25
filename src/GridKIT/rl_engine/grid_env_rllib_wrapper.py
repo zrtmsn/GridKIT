@@ -16,10 +16,11 @@ from GridKIT.core.models import (
     Observation,
     StepResult,
     PowerFlowResult,
-    ChargingAction,
     EpisodeMetrics, #TODO remove or use
-    SimResult #TODO remove or use
+    SimResult, #TODO remove or use
+    device_of,
 )
+from GridKIT.rl_engine.obs_norm import normalize_observation_multidevice
 
 class GridEnvRLlibWrapper(MultiAgentEnv):
     """
@@ -27,8 +28,8 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
     
     How it works:
     - You hand over an existing Environment object when creating this wrapper.
-    - The wrapper translates data formats: 
-      Core Models (Observation, ChargingAction) <-> RLlib Formats (numpy arrays, dicts).
+    - The wrapper translates data formats:
+      Core Models (Observation, per-device action indices) <-> RLlib Formats (numpy arrays, dicts).
     - It handles the communication loop without knowing the internal logic of the Environment.
     """
 
@@ -56,14 +57,42 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         self._last_power_flow: Optional[PowerFlowResult] = None
         self._current_step: int = 0
 
-        # Define observation and action spaces using constants from core
+        # Define observation and action spaces using constants from core.
+        #
+        # Agents are per-device (ev / battery / hp), and device types do NOT all
+        # share the same action space: EV and battery have 3 discrete actions,
+        # heat pump only has 2 (OFF/HEAT — see constants.ACTION_DIM_BY_DEVICE). A
+        # single shared Discrete(ACTION_DIM) space would let RLlib sample an
+        # out-of-range action index for an HP agent and crash inside GridEnv.step().
+        # Observation width IS uniform across device types (soc_progress/
+        # time_urgency carry each agent's own device state) — we use the 10-dim
+        # multi-device vector (OBS_DIM_MULTIDEVICE) via obs_norm, properly
+        # normalized to [0,1] (unlike the legacy 7-dim to_array(), whose raw
+        # values — e.g. temperature -10..40, price ~0.01..0.6 — violate the
+        # [0,1] Box this space declares) — so only the action space needs to be
+        # per-device.
         from GridKIT.core import constants as const
-        
-        self.observation_space = gym.spaces.Box(
-            low=0.0, high=1.0, shape=(const.OBS_DIM,), dtype=np.float32
+
+        self._obs_space_per_agent = gym.spaces.Box(
+            low=0.0, high=1.0, shape=(const.OBS_DIM_MULTIDEVICE,), dtype=np.float32
         )
-        self.action_space = gym.spaces.Discrete(const.ACTION_DIM)
-        #TODO add option for the user to pass a boolean when initializing the wrapper 
+        self._action_space_by_device = {
+            device: gym.spaces.Discrete(dim)
+            for device, dim in const.ACTION_DIM_BY_DEVICE.items()
+        }
+
+        # RLlib multi-agent contract for heterogeneous per-agent spaces: expose
+        # observation_space/action_space as agent_id-keyed Dict spaces and flag
+        # that they're already in that "preferred" per-agent format.
+        self._obs_space_in_preferred_format = True
+        self._action_space_in_preferred_format = True
+        self.observation_space = gym.spaces.Dict(
+            {aid: self._obs_space_per_agent for aid in self._agent_ids}
+        )
+        self.action_space = gym.spaces.Dict(
+            {aid: self._action_space_by_device[device_of(aid)] for aid in self._agent_ids}
+        )
+        #TODO add option for the user to pass a boolean when initializing the wrapper
         # to determine wether to run in discrete or continuous mode
         #TODO add functinality for continuous mode
 
@@ -118,26 +147,22 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
     ]:
         """
         Execute one step in the environment.
-        1. Convert RLlib actions (int) to ChargingAction enums.
-        2. Call env.step() on the injected environment.
-        3. Store results for metrics.
-        4. Convert outputs to RLlib format.
+        1. Call env.step() on the injected environment (GridEnv takes plain
+           per-device action indices directly — decoding into ChargingAction/
+           BatteryAction/HPAction happens inside GridEnv itself, since which
+           enum applies depends on each agent's device type).
+        2. Store results for metrics.
+        3. Convert outputs to RLlib format.
         """
-        # 1. Convert Actions
-        charging_actions: Dict[str, ChargingAction] = {}
-        for agent_id, action_int in actions.items():
-            # Map 0->OFF, 1->HALF, 2->FULL
-            charging_actions[agent_id] = ChargingAction(action_int)
+        # 1. Call Inner Environment
+        step_results_dict, power_flow_result = self._env.step(actions)
 
-        # 2. Call Inner Environment
-        step_results_dict, power_flow_result = self._env.step(charging_actions)
-
-        # 3. Store for Metrics/Logging
+        # 2. Store for Metrics/Logging
         self._last_step_results = step_results_dict
         self._last_power_flow = power_flow_result
         self._current_step += 1
 
-        # 4. Prepare Return Values for RLlib
+        # 3. Prepare Return Values for RLlib
         observations = {}
         rewards = {}
         terminateds = {}
@@ -175,18 +200,12 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
 
     def _obs_to_numpy(self, obs: Observation) -> np.ndarray:
         """
-        Helper: Convert Observation model to normalized numpy array.
-        Ensures values are clamped to [0, 1] where appropriate for NN stability.
+        Helper: Convert Observation model to a normalized [0,1] numpy array.
+        Delegates to obs_norm.normalize_observation_multidevice — the single
+        source of truth shared with RLlibPolicyAdapter, so train-time and
+        eval-time inputs match.
         """
-        raw_values = obs.to_array()
-        
-        # Normalize specific fields if not already pre-processed
-        # Index 0: soc_progress
-        # Index 3: base_load_kw 
-        # Index 4: temp
-        
-        # This conversion relies on the consistent structure of Observation.to_array().
-        return np.array(raw_values, dtype=np.float32)
+        return normalize_observation_multidevice(obs)
 
     def get_latest_metrics(self) -> Tuple[Dict[str, StepResult], Optional[PowerFlowResult]]:
         """
@@ -230,10 +249,14 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
   
     @property
     def observation_spaces(self) -> Dict[str, gym.spaces.Space]:
-        """Returns a dict mapping each agent ID to its observation space."""
-        return {agent_id: self.observation_space for agent_id in self._agent_ids}
+        """Returns a dict mapping each agent ID to its observation space.
+
+        Uniform across device types (Observation.to_array() is always OBS_DIM
+        wide) — unlike action_spaces below, which does vary by device.
+        """
+        return {agent_id: self._obs_space_per_agent for agent_id in self._agent_ids}
 
     @property
     def action_spaces(self) -> Dict[str, gym.spaces.Space]:
-        """Returns a dict mapping each agent ID to its action space."""
-        return {agent_id: self.action_space for agent_id in self._agent_ids}
+        """Returns a dict mapping each agent ID to its (device-type-specific) action space."""
+        return {agent_id: self._action_space_by_device[device_of(agent_id)] for agent_id in self._agent_ids}

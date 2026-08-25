@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pypsa
 
@@ -18,21 +19,49 @@ EV_BUS_SUFFIX = "_E_Car"
 
 def _first_episode_day(series: pd.Series) -> list[float]:
     """
-    GridCreator's own snapshots are hourly (a full year); GridKIT episodes are
-    one representative day, also at 1-hour resolution (EPISODE_STEPS steps) —
-    so this is a direct slice, no resampling needed.
+    GridCreator's own snapshots are hourly (a full year); GridKIT episodes run
+    at EPISODE_STEPS steps of TIMESTEP_MINUTES each (96 x 15 min). Slice the
+    first 24 h (one representative day, positionally — GridCreator's export
+    isn't noon-aligned like device_profiles.py's annual pool) and linearly
+    resample onto the episode clock; a straight positional slice only lines up
+    1:1 when TIMESTEP_MINUTES == 60.
     """
-    return series.iloc[: const.EPISODE_STEPS].tolist()
+    hourly = np.asarray(series.iloc[:24].tolist(), dtype=float)
+    steps_per_hour = 60 / const.TIMESTEP_MINUTES
+    xp = np.arange(24) * steps_per_hour
+    x = np.arange(const.EPISODE_STEPS)
+    return np.interp(x, xp, hourly).tolist()
+
 
 class StubNetworkBuilder(NetworkBuilderProtocol):
+    """
+    Loads a GridNetwork from a JSON file. Defaults to the small test stub
+    (settings.stub_network_path); pass `path` to load a larger feeder
+    (e.g. data/feeder_20.json) or a map_ui-exported OSM network.
+    """
+
+    def __init__(self, path: str | Path | None = None):
+        self._path = Path(path) if path is not None else settings.stub_network_path
 
     def build(self) -> GridNetwork:
-        """
-        loads a json file from data containing example network specs
-        and converts it into a GridNetwork as defined in core.models.
-        """
-        with open(settings.stub_network_path) as f:
+        with open(self._path) as f:
             return GridNetwork.model_validate(json.load(f))
+
+
+class FixedNetworkBuilder(NetworkBuilderProtocol):
+    """
+    Wraps an already-built GridNetwork as an injectable builder — for callers
+    that already have a GridNetwork (loaded from JSON, extracted via
+    OSMNetworkBuilder.build_single_feeder, etc.) and just need to satisfy
+    GridEnv's `builder=...` slot without re-running GridCreator or re-reading
+    a file on every construction.
+    """
+
+    def __init__(self, network: GridNetwork):
+        self._network = network
+
+    def build(self) -> GridNetwork:
+        return self._network
 
 
 class OSMNetworkBuilder(NetworkBuilderProtocol):

@@ -14,14 +14,16 @@ composable commands (build / plot / add-bus / add-household).
 """
 
 from core.config import settings
-from grid_model.builder import OSMNetworkBuilder
+from grid_model.builder import FixedNetworkBuilder, OSMNetworkBuilder
 from grid_model.environment import GridEnv
 from grid_model.episode_plots import run_episode, save_plots
 
 # South Berlin — already verified to produce a real network rather than an
-# empty one. It has 6 transformers though, and RadialPowerFlow/build_pypsa_network
-# only ever model transformers[0] — so build_single_feeder() below picks just
-# one transformer's radial feeder rather than silently mis-modelling the rest.
+# empty one. It has 6 transformers though, and build_pypsa_network (the PyPSA
+# validation path, still single-transformer-only) only ever models
+# transformers[0] — so build_single_feeder() below picks just one
+# transformer's radial feeder rather than silently mis-modelling the rest.
+# RadialPowerFlow itself (the actual sim backend) handles multiple feeders fine.
 BBOX = dict(top=52.396954, bottom=52.390330, left=13.267724, right=13.273824)
 SCENARIO = "South Berlin"
 MAX_HOUSEHOLDS = 15
@@ -39,7 +41,7 @@ def main() -> None:
     network = builder.build_single_feeder(max_households=MAX_HOUSEHOLDS, network=full_network)
     print(f"Selected feeder {network.network_id!r}: {len(network.buses)} buses, {network.n_households} households.")
 
-    env = GridEnv(network=network)
+    env = GridEnv(builder=FixedNetworkBuilder(network))
     log = run_episode(env, seed=SEED)
 
     out_dir = settings.output_dir / "gridcreator_episode"
