@@ -1,4 +1,3 @@
-\
 # ─────────────────────────────────────────────────────────────
 # map_ui/map_widget.py
 #
@@ -6,7 +5,7 @@
 # core.models.GridNetwork to grid_model.
 #
 # Run:
-#   streamlit run map_ui/map_widget.py
+#   python -m streamlit run map_ui/map_widget.py
 # ─────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -19,7 +18,12 @@ import streamlit as st
 from folium.plugins import Draw
 from streamlit_folium import st_folium
 
-from map_ui.osm_fetcher import AreaBounds, OsmFetchConfig, build_grid_network_from_bounds
+from map_ui.osm_fetcher import (
+    AreaBounds,
+    GridNetworkBuildError,
+    OsmFetchConfig,
+    build_grid_network_from_bounds,
+)
 
 
 DEFAULT_CENTER = (49.0069, 8.4037)  # Karlsruhe
@@ -29,7 +33,7 @@ DEFAULT_ZOOM = 15
 def main() -> None:
     st.set_page_config(page_title="GridKIT map_ui", layout="wide")
 
-    st.title("GridKIT map_ui")
+    st.title("GridKIT Map")
     st.caption(
         "Kartenansicht → Bereich auswählen → Overpass API → "
         "GridNetwork JSON für grid_model"
@@ -50,9 +54,20 @@ def main() -> None:
         use_manual_bbox = st.checkbox("Manuelle Bounding Box verwenden", value=False)
 
         st.subheader("Overpass")
-        max_area = st.number_input("max_area_km²", value=4.0, min_value=0.1, max_value=25.0, step=0.1)
-        timeout = st.number_input("timeout_seconds", value=45, min_value=10, max_value=180, step=5)
-        allow_fallback = st.checkbox("Highway-Fallback erlauben, falls keine power lines existieren", value=True)
+        max_area = st.number_input(
+            "max_area_km²",
+            value=4.0,
+            min_value=0.1,
+            max_value=25.0,
+            step=0.1,
+        )
+        timeout = st.number_input(
+            "timeout_seconds",
+            value=45,
+            min_value=10,
+            max_value=180,
+            step=5,
+        )
 
         build_clicked = st.button("GridNetwork erzeugen", type="primary")
 
@@ -60,17 +75,32 @@ def main() -> None:
 
     with col_map:
         fmap = make_base_map()
-        map_data = st_folium(fmap, height=650, width=None, returned_objects=["last_active_drawing", "all_drawings"])
+        map_data = st_folium(
+            fmap,
+            height=650,
+            width=None,
+            returned_objects=["last_active_drawing", "all_drawings"],
+        )
 
     selected_bounds: AreaBounds | None = None
 
     if use_manual_bbox:
-        selected_bounds = AreaBounds(south=south, west=west, north=north, east=east)
+        try:
+            selected_bounds = AreaBounds(
+                south=south,
+                west=west,
+                north=north,
+                east=east,
+            )
+        except Exception as exc:
+            st.error(f"Ungültige Bounding Box: {exc}")
+            selected_bounds = None
     else:
         selected_bounds = bounds_from_drawings(map_data)
 
     with col_out:
         st.subheader("Auswahl")
+
         if selected_bounds:
             st.json(selected_bounds.model_dump())
             st.metric("Fläche ca. km²", f"{selected_bounds.approx_area_km2():.3f}")
@@ -85,7 +115,6 @@ def main() -> None:
             config = OsmFetchConfig(
                 timeout_seconds=int(timeout),
                 max_area_km2=float(max_area),
-                allow_highway_fallback=allow_fallback,
             )
 
             with st.spinner("Overpass API wird abgefragt und GridNetwork wird gebaut ..."):
@@ -95,7 +124,11 @@ def main() -> None:
                         area_name=area_name,
                         config=config,
                     )
+                except GridNetworkBuildError as exc:
+                    st.error(str(exc))
+                    return
                 except Exception as exc:
+                    st.error("Beim Erzeugen des GridNetwork ist ein technischer Fehler aufgetreten.")
                     st.exception(exc)
                     return
 
@@ -132,6 +165,7 @@ def bounds_from_drawings(map_data: dict[str, Any] | None) -> AreaBounds | None:
         return None
 
     drawing = map_data.get("last_active_drawing")
+
     if not drawing:
         drawings = map_data.get("all_drawings") or []
         drawing = drawings[-1] if drawings else None
@@ -149,7 +183,6 @@ def bounds_from_drawings(map_data: dict[str, Any] | None) -> AreaBounds | None:
     lon_lat_pairs: list[tuple[float, float]] = []
 
     if geom_type == "Polygon":
-        # GeoJSON polygon: [[[lon, lat], ...]]
         lon_lat_pairs = [(float(lon), float(lat)) for lon, lat in coordinates[0]]
 
     elif geom_type == "MultiPolygon":
@@ -174,7 +207,8 @@ def show_result(result) -> None:
     network = result.grid_network
     summary = result.summary_dict()
 
-    st.subheader("Output für grid_model")
+    st.subheader("Output")
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Buses / Knoten", result.bus_count)
     c2.metric("Lines", result.line_count)

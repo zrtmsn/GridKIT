@@ -1,4 +1,3 @@
-\
 # ─────────────────────────────────────────────────────────────
 # map_ui/osm_fetcher.py
 #
@@ -17,8 +16,6 @@
 
 from __future__ import annotations
 
-import time
-from collections import defaultdict
 from dataclasses import dataclass
 from math import atan2, cos, radians, sin, sqrt
 from pathlib import Path
@@ -27,59 +24,25 @@ from typing import Any, Iterable
 import requests
 from pydantic import BaseModel, Field, model_validator
 
-from core.models import BusModel, GridNetwork, LineModel, TransformerModel
 from core.constants import NOMINAL_VOLTAGE_KV
+from core.models import BusModel, GridNetwork, LineModel, TransformerModel
 
 
-# Conservative LV cable defaults used until grid_model replaces them
-# with technology-specific parameters.
 DEFAULT_R_OHM_PER_KM = 0.642
 DEFAULT_X_OHM_PER_KM = 0.083
 DEFAULT_MAX_I_KA = 0.20
 DEFAULT_TRAFO_MVA = 0.16
 
-# Building → household classification.
-# Most OSM buildings (especially in villages) are tagged only `building=yes`, so a
-# whitelist of specific residential subtypes misses the majority. We instead count
-# ANY building as a household EXCEPT this blacklist of clearly non-residential
-# types. Set OsmFetchConfig.strict_residential=True to fall back to the whitelist.
-# Explicit residential subtypes (used by strict mode). Note `building=yes` is NOT
-# here — strict deliberately excludes it; inclusive mode keeps it via the blacklist.
-RESIDENTIAL_BUILDING_TAGS = {
-    "house", "detached", "residential", "apartments", "terrace",
-    "semidetached_house", "bungalow", "farm", "dormitory", "cabin", "houseboat",
-}
-NON_RESIDENTIAL_BUILDING_TAGS = {
-    "garage", "garages", "carport", "shed", "roof", "greenhouse", "hut", "cabin_hut",
-    "industrial", "commercial", "retail", "warehouse", "supermarket", "kiosk",
-    "church", "chapel", "cathedral", "mosque", "synagogue", "temple", "shrine",
-    "school", "university", "college", "kindergarten", "hospital", "hotel",
-    "public", "civic", "government", "office", "barn", "stable", "cowshed",
-    "farm_auxiliary", "service", "construction", "ruins", "container",
-    "transformer_tower", "water_tower", "silo", "storage_tank", "tank", "bunker",
-    "parking", "hangar", "train_station", "toilets", "bridge", "sports_hall",
-}
 
-
-def is_residential_building(building: str | None, *, strict: bool = False) -> bool:
-    """Whether an OSM building tag should count as a household connection point.
-
-    Default (inclusive): any building except the non-residential blacklist —
-    critically this keeps `building=yes`, the tag most village houses carry.
-    strict: only the explicit residential subtype whitelist.
-    """
-    if not building:
-        return False
-    if strict:
-        return building in RESIDENTIAL_BUILDING_TAGS
-    return building not in NON_RESIDENTIAL_BUILDING_TAGS
+class GridNetworkBuildError(ValueError):
+    """Raised when a valid GridNetwork cannot be created from the selected OSM area."""
 
 
 class AreaBounds(BaseModel):
     """
     Bounding box selected in the GUI.
 
-    Coordinate order is explicit to avoid the common Overpass/GeoJSON mix-up:
+    Coordinate order:
     - north/south are latitudes
     - east/west are longitudes
     """
@@ -105,49 +68,40 @@ class AreaBounds(BaseModel):
     def center_lon(self) -> float:
         return (self.west + self.east) / 2
 
-    def contains(self, lat: float, lon: float) -> bool:
-        """True when a point falls inside the drawn box (edges included)."""
-        return self.south <= lat <= self.north and self.west <= lon <= self.east
-
     @property
     def as_overpass_bbox(self) -> str:
-        # Overpass order: south, west, north, east
         return f"{self.south},{self.west},{self.north},{self.east}"
 
     @property
     def as_geojson_bbox(self) -> list[float]:
-        # GeoJSON-ish order: west, south, east, north
         return [self.west, self.south, self.east, self.north]
 
     def approx_area_km2(self) -> float:
-        height_km = haversine_km(self.south, self.center_lon, self.north, self.center_lon)
-        width_km = haversine_km(self.center_lat, self.west, self.center_lat, self.east)
+        height_km = haversine_km(
+            self.south,
+            self.center_lon,
+            self.north,
+            self.center_lon,
+        )
+        width_km = haversine_km(
+            self.center_lat,
+            self.west,
+            self.center_lat,
+            self.east,
+        )
         return height_km * width_km
 
 
 class OsmFetchConfig(BaseModel):
     overpass_url: str = "https://overpass-api.de/api/interpreter"
-    # Fallback mirrors tried in order when the primary is overloaded (503/504/timeout).
-    overpass_mirrors: tuple[str, ...] = (
-        "https://overpass.kumi.systems/api/interpreter",
-        "https://lz4.overpass-api.de/api/interpreter",
-        "https://z.overpass-api.de/api/interpreter",
-    )
-    max_retries: int = 1                 # full extra rounds over all endpoints
     timeout_seconds: int = 45
     max_area_km2: float = 4.0
 
-    # If OpenStreetMap contains no power=* lines in the selected area,
-    # fall back to highway ways. This makes demos robust, but the result is
-    # only a topology proxy, not a verified electrical grid.
+    # Falls OpenStreetMap im ausgewählten Bereich keine power=*-Leitungen enthält,
+    # auf Highway-Wege zurückfallen. Macht Demos robuster, aber das Ergebnis ist
+    # nur ein Topologie-Ersatz, kein verifiziertes Stromnetz.
     allow_highway_fallback: bool = True
 
-    # Household detection: inclusive (any building minus a non-residential
-    # blacklist — keeps `building=yes`) vs. strict (residential-subtype whitelist).
-    strict_residential: bool = False
-
-    # Buildings are connected to the closest network bus if it is within this
-    # radius. Otherwise a household bus is created without a service line.
     household_connection_radius_m: float = 120.0
 
 
@@ -199,13 +153,19 @@ class MapUiBuildResult(BaseModel):
     def save_grid_json(self, path: str | Path) -> Path:
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(self.grid_network.model_dump_json(indent=2), encoding="utf-8")
+        out.write_text(
+            self.grid_network.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
         return out
 
     def save_summary_json(self, path: str | Path) -> Path:
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json_dumps_pretty(self.summary_dict()), encoding="utf-8")
+        out.write_text(
+            json_dumps_pretty(self.summary_dict()),
+            encoding="utf-8",
+        )
         return out
 
 
@@ -244,32 +204,38 @@ def build_grid_network_from_bounds(
     config = config or OsmFetchConfig()
 
     if bounds.approx_area_km2() > config.max_area_km2:
-        raise ValueError(
-            f"Selected area is about {bounds.approx_area_km2():.2f} km². "
-            f"Please select at most {config.max_area_km2:.2f} km² to keep Overpass fast."
+        raise GridNetworkBuildError(
+            f"Der ausgewählte Bereich ist ungefähr {bounds.approx_area_km2():.2f} km² groß. "
+            f"Bitte wählen Sie einen Bereich mit maximal {config.max_area_km2:.2f} km² aus."
         )
 
     osm_json = fetch_overpass_json(bounds, config=config)
     nodes, ways = parse_osm_elements(osm_json)
 
+    warnings: list[str] = []
+
     power_ways = [
-        way for way in ways.values()
+        way
+        for way in ways.values()
         if way.tags.get("power") in {"line", "minor_line", "cable"}
     ]
 
-    used_highway_fallback = False
     topology_ways = power_ways
-    warnings: list[str] = []
-
     if not topology_ways and config.allow_highway_fallback:
         topology_ways = [
             way for way in ways.values()
             if "highway" in way.tags and way.tags.get("highway") not in {"footway", "cycleway", "path"}
         ]
-        used_highway_fallback = True
         warnings.append(
-            "No OSM power=line/minor_line/cable ways found. "
-            "Used highway ways as a topology fallback. Treat electrical parameters as placeholder values."
+            "Keine OSM-Stromleitungen (power=line/minor_line/cable) gefunden. "
+            "Highway-Wege als Topologie-Ersatz verwendet. Elektrische Kennwerte sind Platzhalter."
+        )
+
+    if not topology_ways:
+        raise GridNetworkBuildError(
+            "Im ausgewählten Bereich wurden keine OSM-Stromleitungs- oder Kabeldaten gefunden. "
+            "Aus den verfügbaren OSM-Daten kann kein gültiges GridNetwork erstellt werden. "
+            "Bitte wählen Sie einen anderen Bereich mit Strominfrastruktur-Daten aus."
         )
 
     buses: list[BusModel] = []
@@ -283,19 +249,16 @@ def build_grid_network_from_bounds(
     def add_bus_for_node(node_id: int, prefix: str = "bus") -> str | None:
         if node_id in bus_id_by_osm_node:
             return bus_id_by_osm_node[node_id]
+
         node = nodes.get(node_id)
+
         if node is None:
-            return None
-        # Overpass' `>;` recursion returns EVERY node of any way that merely clips
-        # the box, so a single road can drag in geometry tens of km away. Keep the
-        # grid inside the area the user actually drew; the line loop below already
-        # skips segments whose endpoints were rejected here.
-        if not bounds.contains(node.lat, node.lon):
             return None
 
         bus_id = f"{prefix}_{node_id}"
         bus_id_by_osm_node[node_id] = bus_id
         bus_locations[bus_id] = (node.lat, node.lon)
+
         buses.append(
             BusModel(
                 bus_id=bus_id,
@@ -304,6 +267,7 @@ def build_grid_network_from_bounds(
                 y_coord=node.lat,
             )
         )
+
         return bus_id
 
     for way in topology_ways:
@@ -319,7 +283,11 @@ def build_grid_network_from_bounds(
             if not from_bus or not to_bus or not node_a or not node_b or from_bus == to_bus:
                 continue
 
-            length_km = max(haversine_km(node_a.lat, node_a.lon, node_b.lat, node_b.lon), 0.001)
+            length_km = max(
+                haversine_km(node_a.lat, node_a.lon, node_b.lat, node_b.lon),
+                0.001,
+            )
+
             line_id = f"osmway_{way.osm_id}_{idx}"
 
             lines.append(
@@ -334,61 +302,62 @@ def build_grid_network_from_bounds(
                 )
             )
 
-    # Explicit transformer/substation information from OSM if available.
+    if not buses:
+        raise GridNetworkBuildError(
+            "Aus dem ausgewählten Bereich konnten keine Netzknoten erstellt werden. "
+            "Aus den verfügbaren OSM-Daten kann kein gültiges GridNetwork erstellt werden."
+        )
+
+    if not lines:
+        raise GridNetworkBuildError(
+            "Aus dem ausgewählten Bereich konnten keine Netzleitungen erstellt werden. "
+            "Aus den verfügbaren OSM-Daten kann kein gültiges GridNetwork erstellt werden."
+        )
+
     transformer_candidates = find_transformer_candidates(nodes, ways)
-    if buses:
-        for i, (lat, lon) in enumerate(transformer_candidates[:1]):
-            closest = nearest_bus(lat, lon, bus_locations)
-            if closest:
-                hv_bus = f"trafo_hv_{i}"
-                buses.append(
-                    BusModel(
-                        bus_id=hv_bus,
-                        v_nom_kv=20.0,
-                        x_coord=lon,
-                        y_coord=lat,
-                    )
-                )
-                transformers.append(
-                    TransformerModel(
-                        trafo_id=f"trafo_{i}",
-                        hv_bus=hv_bus,
-                        lv_bus=closest,
-                        s_nom_mva=DEFAULT_TRAFO_MVA,
-                    )
-                )
 
-    if buses and not transformers:
-        # Create a synthetic grid head near the middle of the area. NOT at buses[0]:
-        # that is whichever node the first OSM way happened to start at, which can
-        # sit in a far corner — leaving the ⚡ marker off-screen and, worse, rooting
-        # the feeders somewhere unrepresentative. grid_model may replace it with a
-        # better transformer placement later.
-        anchor_id = nearest_bus(bounds.center_lat, bounds.center_lon, bus_locations) or buses[0].bus_id
-        anchor = next(b for b in buses if b.bus_id == anchor_id)
-        hv_bus = "trafo_hv_synthetic"
-        buses.append(
-            BusModel(
-                bus_id=hv_bus,
-                v_nom_kv=20.0,
-                x_coord=anchor.x_coord,
-                y_coord=anchor.y_coord,
-            )
+    if not transformer_candidates:
+        raise GridNetworkBuildError(
+            "Im ausgewählten Bereich wurden keine Transformator- oder Umspannwerksdaten in OSM gefunden. "
+            "Aus den verfügbaren OSM-Daten kann kein vollständiges GridNetwork erstellt werden. "
+            "Bitte wählen Sie einen anderen Bereich aus."
         )
-        transformers.append(
-            TransformerModel(
-                trafo_id="trafo_synthetic",
-                hv_bus=hv_bus,
-                lv_bus=anchor.bus_id,
-                s_nom_mva=DEFAULT_TRAFO_MVA,
-            )
-        )
-        warnings.append("No transformer found in OSM. Added a synthetic transformer at the centre of the area.")
 
-    # Residential buildings become household connection points.
-    residential_centroids = building_centroids(nodes, ways, strict=config.strict_residential)
+    for i, (lat, lon) in enumerate(transformer_candidates[:1]):
+        closest = nearest_bus(lat, lon, bus_locations)
+
+        if closest:
+            hv_bus = f"trafo_hv_{i}"
+
+            buses.append(
+                BusModel(
+                    bus_id=hv_bus,
+                    v_nom_kv=20.0,
+                    x_coord=lon,
+                    y_coord=lat,
+                )
+            )
+
+            transformers.append(
+                TransformerModel(
+                    trafo_id=f"trafo_{i}",
+                    hv_bus=hv_bus,
+                    lv_bus=closest,
+                    s_nom_mva=DEFAULT_TRAFO_MVA,
+                )
+            )
+
+    if not transformers:
+        raise GridNetworkBuildError(
+            "Die gefundenen Transformator- oder Umspannwerksdaten konnten keinem Netzknoten zugeordnet werden. "
+            "Aus den verfügbaren OSM-Daten kann kein vollständiges GridNetwork erstellt werden."
+        )
+
+    residential_centroids = building_centroids(nodes, ways)
+
     for idx, (lat, lon) in enumerate(residential_centroids):
         household_bus = f"household_{idx}"
+
         buses.append(
             BusModel(
                 bus_id=household_bus,
@@ -397,12 +366,15 @@ def build_grid_network_from_bounds(
                 y_coord=lat,
             )
         )
+
         household_bus_ids.append(household_bus)
 
         closest = nearest_bus(lat, lon, bus_locations)
+
         if closest is not None:
             c_lat, c_lon = bus_locations[closest]
             dist_km = haversine_km(lat, lon, c_lat, c_lon)
+
             if dist_km * 1000 <= config.household_connection_radius_m:
                 lines.append(
                     LineModel(
@@ -416,11 +388,11 @@ def build_grid_network_from_bounds(
                     )
                 )
 
-    if not buses:
-        warnings.append("No usable topology was found in the selected area. Try a larger or different selection.")
-
-    if used_highway_fallback and not household_bus_ids:
-        warnings.append("No residential buildings found. household_bus_ids is empty.")
+    if not household_bus_ids:
+        warnings.append(
+            "Im ausgewählten Bereich wurden keine Wohngebäude gefunden. "
+            "Es konnten keine Haushaltsanschlusspunkte erstellt werden."
+        )
 
     network = GridNetwork(
         network_id=network_id or make_network_id(bounds),
@@ -432,6 +404,7 @@ def build_grid_network_from_bounds(
     )
 
     selected_coordinate_count = 4
+
     return MapUiBuildResult(
         bounds=bounds,
         grid_network=network,
@@ -442,14 +415,18 @@ def build_grid_network_from_bounds(
     )
 
 
-def fetch_overpass_json(bounds: AreaBounds, *, config: OsmFetchConfig | None = None) -> dict[str, Any]:
+def fetch_overpass_json(
+    bounds: AreaBounds,
+    *,
+    config: OsmFetchConfig | None = None,
+) -> dict[str, Any]:
     """
     Query Overpass for the selected bounding box.
 
     The query fetches:
-      - power lines/cables and transformers/substations
+      - power lines/cables
+      - transformers/substations
       - residential buildings for household/agent placement
-      - highways as optional fallback topology
     """
 
     config = config or OsmFetchConfig()
@@ -461,46 +438,59 @@ def fetch_overpass_json(bounds: AreaBounds, *, config: OsmFetchConfig | None = N
       way["power"~"^(line|minor_line|cable)$"]({bbox});
       node["power"~"^(transformer|substation)$"]({bbox});
       way["power"~"^(transformer|substation)$"]({bbox});
-      way["building"]({bbox});
-      way["highway"]({bbox});
+      way["building"~"^(house|detached|residential|apartments|terrace|semidetached_house)$"]({bbox});
     );
     out body;
     >;
     out skel qt;
     """
 
-    # Try the primary endpoint, then mirrors; retry the whole set. Overpass public
-    # servers routinely return 429/503/504 when busy, so failover is essential.
-    endpoints: list[str] = []
-    for url in (config.overpass_url, *config.overpass_mirrors):
-        if url not in endpoints:
-            endpoints.append(url)
+    try:
+        response = requests.post(
+            config.overpass_url,
+            data={"data": query},
+            timeout=config.timeout_seconds + 10,
+            headers={"User-Agent": "GridKIT-map-ui/0.1"},
+        )
+    except requests.Timeout as exc:
+        raise GridNetworkBuildError(
+            "Die Anfrage an die Overpass API hat zu lange gedauert. "
+            "Bitte wählen Sie einen kleineren Bereich aus oder versuchen Sie es später erneut."
+        ) from exc
+    except requests.RequestException as exc:
+        raise GridNetworkBuildError(
+            "Die Overpass API konnte nicht erreicht werden. "
+            "Bitte prüfen Sie Ihre Internetverbindung oder versuchen Sie es später erneut."
+        ) from exc
 
-    last_error: Exception | None = None
-    for attempt in range(config.max_retries + 1):
-        for url in endpoints:
-            try:
-                response = requests.post(
-                    url,
-                    data={"data": query},
-                    timeout=config.timeout_seconds + 15,
-                    headers={"User-Agent": "GridKIT-map-ui/0.1"},
-                )
-                response.raise_for_status()
-                return response.json()
-            except Exception as exc:  # noqa: BLE001 — try the next mirror
-                last_error = exc
-        if attempt < config.max_retries:
-            time.sleep(2 * (attempt + 1))
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        if response.status_code == 429:
+            raise GridNetworkBuildError(
+                "Die Overpass API hat zu viele Anfragen erhalten. "
+                "Bitte warten Sie einige Minuten und versuchen Sie es danach erneut. "
+                "Wählen Sie außerdem möglichst einen kleineren Bereich aus."
+            ) from exc
 
-    raise RuntimeError(
-        f"Overpass is unavailable right now (tried {len(endpoints)} server(s) × "
-        f"{config.max_retries + 1} attempt(s)). This is usually temporary server load — "
-        f"try again in a moment or select a smaller area. Last error: {last_error}"
-    )
+        raise GridNetworkBuildError(
+            f"Die Overpass API konnte die Anfrage nicht erfolgreich verarbeiten "
+            f"(HTTP-Statuscode: {response.status_code}). "
+            "Bitte versuchen Sie es später erneut oder wählen Sie einen kleineren Bereich aus."
+        ) from exc
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise GridNetworkBuildError(
+            "Die Antwort der Overpass API konnte nicht als JSON gelesen werden. "
+            "Bitte versuchen Sie es später erneut."
+        ) from exc
 
 
-def parse_osm_elements(osm_json: dict[str, Any]) -> tuple[dict[int, OsmNode], dict[int, OsmWay]]:
+def parse_osm_elements(
+    osm_json: dict[str, Any],
+) -> tuple[dict[int, OsmNode], dict[int, OsmWay]]:
     nodes: dict[int, OsmNode] = {}
     ways: dict[int, OsmWay] = {}
 
@@ -510,15 +500,27 @@ def parse_osm_elements(osm_json: dict[str, Any]) -> tuple[dict[int, OsmNode], di
         tags = dict(element.get("tags") or {})
 
         if element_type == "node" and "lat" in element and "lon" in element:
-            nodes[osm_id] = OsmNode(osm_id=osm_id, lat=float(element["lat"]), lon=float(element["lon"]), tags=tags)
+            nodes[osm_id] = OsmNode(
+                osm_id=osm_id,
+                lat=float(element["lat"]),
+                lon=float(element["lon"]),
+                tags=tags,
+            )
 
         elif element_type == "way":
-            ways[osm_id] = OsmWay(osm_id=osm_id, node_ids=[int(n) for n in element.get("nodes", [])], tags=tags)
+            ways[osm_id] = OsmWay(
+                osm_id=osm_id,
+                node_ids=[int(n) for n in element.get("nodes", [])],
+                tags=tags,
+            )
 
     return nodes, ways
 
 
-def find_transformer_candidates(nodes: dict[int, OsmNode], ways: dict[int, OsmWay]) -> list[tuple[float, float]]:
+def find_transformer_candidates(
+    nodes: dict[int, OsmNode],
+    ways: dict[int, OsmWay],
+) -> list[tuple[float, float]]:
     result: list[tuple[float, float]] = []
 
     for node in nodes.values():
@@ -527,7 +529,12 @@ def find_transformer_candidates(nodes: dict[int, OsmNode], ways: dict[int, OsmWa
 
     for way in ways.values():
         if way.tags.get("power") in {"transformer", "substation"}:
-            coords = [(nodes[n].lat, nodes[n].lon) for n in way.node_ids if n in nodes]
+            coords = [
+                (nodes[n].lat, nodes[n].lon)
+                for n in way.node_ids
+                if n in nodes
+            ]
+
             if coords:
                 result.append(centroid(coords))
 
@@ -537,16 +544,30 @@ def find_transformer_candidates(nodes: dict[int, OsmNode], ways: dict[int, OsmWa
 def building_centroids(
     nodes: dict[int, OsmNode],
     ways: dict[int, OsmWay],
-    *,
-    strict: bool = False,
 ) -> list[tuple[float, float]]:
+    residential_values = {
+        "house",
+        "detached",
+        "residential",
+        "apartments",
+        "terrace",
+        "semidetached_house",
+    }
+
     result: list[tuple[float, float]] = []
 
     for way in ways.values():
-        if not is_residential_building(way.tags.get("building"), strict=strict):
+        building = way.tags.get("building")
+
+        if building not in residential_values:
             continue
 
-        coords = [(nodes[n].lat, nodes[n].lon) for n in way.node_ids if n in nodes]
+        coords = [
+            (nodes[n].lat, nodes[n].lon)
+            for n in way.node_ids
+            if n in nodes
+        ]
+
         if len(coords) >= 3:
             result.append(centroid(coords))
 
@@ -563,6 +584,7 @@ def nearest_bus(
 
     for bus_id, (b_lat, b_lon) in bus_locations.items():
         distance = haversine_km(lat, lon, b_lat, b_lon)
+
         if distance < best_distance:
             best_distance = distance
             best_bus = bus_id
@@ -572,6 +594,7 @@ def nearest_bus(
 
 def centroid(coords: Iterable[tuple[float, float]]) -> tuple[float, float]:
     coords_list = list(coords)
+
     return (
         sum(lat for lat, _ in coords_list) / len(coords_list),
         sum(lon for _, lon in coords_list) / len(coords_list),
@@ -583,15 +606,26 @@ def pairwise(values: list[int]) -> Iterable[tuple[int, int]]:
         yield values[i], values[i + 1]
 
 
-def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+def haversine_km(
+    lat1: float,
+    lon1: float,
+    lat2: float,
+    lon2: float,
+) -> float:
     radius_km = 6371.0088
+
     phi1 = radians(lat1)
     phi2 = radians(lat2)
     d_phi = radians(lat2 - lat1)
     d_lambda = radians(lon2 - lon1)
 
-    a = sin(d_phi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(d_lambda / 2) ** 2
+    a = (
+        sin(d_phi / 2) ** 2
+        + cos(phi1) * cos(phi2) * sin(d_lambda / 2) ** 2
+    )
+
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
     return radius_km * c
 
 
@@ -608,9 +642,14 @@ def deduplicate_lines(lines: list[LineModel]) -> list[LineModel]:
     result: list[LineModel] = []
 
     for line in lines:
-        key = tuple(sorted([line.from_bus, line.to_bus]) + [f"{line.length_km:.6f}"])
+        key = tuple(
+            sorted([line.from_bus, line.to_bus])
+            + [f"{line.length_km:.6f}"]
+        )
+
         if key in seen:
             continue
+
         seen.add(key)
         result.append(line)
 
