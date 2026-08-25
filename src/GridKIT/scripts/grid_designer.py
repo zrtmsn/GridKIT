@@ -417,6 +417,103 @@ def _apply_mark(chart, display: str):  # pragma: no cover (UI)
     return chart.mark_line(strokeWidth=2)  # "Linie" (default)
 
 
+# ── Schwellenwert-Interpretation ─────────────────────────────────
+# Defaults sind bewusst von core.constants abgeleitet statt frei erfunden:
+# EV an der §14a-Mindestleistung (der naheliegendste Bezugswert im Projektkontext),
+# Batterie/Wärmepumpe an ihrer Nennleistung. PV hat keine feste Nennleistung
+# (Anlagengröße wird pro Haushalt aus [PV_PEAK_KWP_MIN, PV_PEAK_KWP_MAX] gezogen),
+# daher ein typischer Wert aus der Mitte dieser Spanne.
+_DEFAULT_THRESHOLDS_KW = {
+    const.DEVICE_EV: const.MIN_GUARANTEED_POWER_KW,
+    const.DEVICE_BATTERY: const.BATTERY_MAX_POWER_KW,
+    const.DEVICE_HEAT_PUMP: const.HP_RATED_ELECTRIC_KW,
+    const.DEVICE_PV: 5.0,
+}
+
+
+def _format_hour(h: float) -> str:
+    """"14.25" -> "14:15". `% 24` because the episode runs noon->noon, so h goes past 24."""
+    hh = int(h) % 24
+    mm = int(round((h - int(h)) * 60)) % 60
+    return f"{hh:02d}:{mm:02d}"
+
+
+def _format_range(start: float, end: float) -> str:
+    return _format_hour(start) if abs(start - end) < 1e-9 else f"{_format_hour(start)}–{_format_hour(end)}"
+
+
+def _contiguous_ranges(hours: np.ndarray, mask: np.ndarray) -> list[tuple[float, float]]:
+    """Collapse a boolean mask over `hours` into (start, end) ranges of contiguous True runs —
+    so "exceeded from 14:00 to 16:30" instead of listing every single 15-min step."""
+    ranges: list[tuple[float, float]] = []
+    start_idx = None
+    for i, flag in enumerate(mask):
+        if flag and start_idx is None:
+            start_idx = i
+        elif not flag and start_idx is not None:
+            ranges.append((hours[start_idx], hours[i - 1]))
+            start_idx = None
+    if start_idx is not None:
+        ranges.append((hours[start_idx], hours[-1]))
+    return ranges
+
+
+def _threshold_status(hours: np.ndarray, values: np.ndarray, threshold: float) -> tuple[str, str]:
+    """('kritisch'|'warnung'|'gut', message) for one device's day against its threshold.
+    Priority matches what the colour is supposed to mean: exceeded (red) beats exactly-at
+    (yellow) beats always-below (green) — an exceeded reading is also, technically, "reached
+    the threshold", but it should never show as merely a warning."""
+    exceeded = values > threshold
+    if exceeded.any():
+        when = ", ".join(_format_range(a, b) for a, b in _contiguous_ranges(hours, exceeded))
+        return "kritisch", f"Schwellenwert ({threshold:.1f} kW) überschritten: {when}"
+    equal = np.isclose(values, threshold, atol=0.01)
+    if equal.any():
+        when = ", ".join(_format_range(a, b) for a, b in _contiguous_ranges(hours, equal))
+        return "warnung", f"Schwellenwert ({threshold:.1f} kW) genau erreicht: {when}"
+    return "gut", f"Blieb den ganzen Tag unter dem Schwellenwert ({threshold:.1f} kW)."
+
+
+def _render_device_panel(col, dev: str, df, display: str) -> None:  # pragma: no cover (UI)
+    """One device's threshold input + chart (with a dashed threshold line) + the
+    resulting interpretation message — all three re-render from the already-computed
+    `df`, so moving the number_input needs no simulation re-run, just a normal
+    Streamlit rerun (same mechanism the Darstellung selector already relies on)."""
+    import altair as alt
+    import pandas as pd
+    import streamlit as st
+
+    label = DEVICE_LABELS_DE[dev]
+    with col:
+        threshold = st.number_input(
+            f"Schwellenwert {label} (kW)", value=_DEFAULT_THRESHOLDS_KW[dev],
+            step=0.5, format="%.1f", key=f"threshold_{dev}",
+        )
+
+        chart = _apply_mark(alt.Chart(df, title=label), display).encode(
+            x=alt.X("Stunde:Q", title="Stunde"),
+            y=alt.Y(f"{dev}:Q", title="kW"),
+            color=alt.value(_DEVICE_PANEL_COLORS[dev]),
+            tooltip=[alt.Tooltip("Stunde:Q", title="Stunde", format=".2f"),
+                     alt.Tooltip(f"{dev}:Q", title=f"{label} (kW)", format=".2f")],
+        )
+        threshold_rule = (
+            alt.Chart(pd.DataFrame({"y": [threshold]}))
+            .mark_rule(color="#6c757d", strokeDash=[4, 4], strokeWidth=1.5)
+            .encode(y="y:Q")
+        )
+        st.altair_chart((chart + threshold_rule).properties(width="container", height=220), width="stretch")
+
+        level, message = _threshold_status(df["Stunde"].to_numpy(), df[dev].to_numpy(), threshold)
+        icon = {"kritisch": "🔴", "warnung": "🟡", "gut": "🟢"}[level]
+        if level == "kritisch":
+            st.error(f"{icon} {message}")
+        elif level == "warnung":
+            st.warning(f"{icon} {message}")
+        else:
+            st.success(f"{icon} {message}")
+
+
 def _render_device_power_panels(timestep_results) -> None:  # pragma: no cover (UI)
     """Device-power view for EV/Batterie/Wärmepumpe/PV with a switchable display:
     four individual hoverable charts (line/area/step/bar), a raw value table, or —
@@ -435,31 +532,27 @@ def _render_device_power_panels(timestep_results) -> None:  # pragma: no cover (
 
     display = st.radio("Darstellung", _CHART_DISPLAYS, horizontal=True, key="device_power_display")
 
+    export_df = df.rename(columns=DEVICE_LABELS_DE).round(3)
+    dl1, dl2 = st.columns(2)
+    dl1.download_button(
+        "📥 Als CSV herunterladen", data=export_df.to_csv(index=False).encode("utf-8"),
+        file_name="geraeteleistung.csv", mime="text/csv", key="download_csv_device_power",
+    )
+    dl2.download_button(
+        "📥 Als JSON herunterladen", data=export_df.to_json(orient="records", indent=2, force_ascii=False),
+        file_name="geraeteleistung.json", mime="application/json", key="download_json_device_power",
+    )
+
     if display == "Tabelle":
-        st.dataframe(df.rename(columns=DEVICE_LABELS_DE).round(3), width="stretch", hide_index=True)
+        st.dataframe(export_df, width="stretch", hide_index=True)
         return
 
-    def panel(dev: str) -> alt.Chart:
-        label = DEVICE_LABELS_DE[dev]
-        base = alt.Chart(df, title=label)
-        return (
-            _apply_mark(base, display)
-            .encode(
-                x=alt.X("Stunde:Q", title="Stunde"),
-                y=alt.Y(f"{dev}:Q", title="kW"),
-                color=alt.value(_DEVICE_PANEL_COLORS[dev]),
-                tooltip=[alt.Tooltip("Stunde:Q", title="Stunde", format=".2f"),
-                         alt.Tooltip(f"{dev}:Q", title=f"{label} (kW)", format=".2f")],
-            )
-            .properties(width="container", height=220)
-        )
-
     row1 = st.columns(2)
-    row1[0].altair_chart(panel(const.DEVICE_EV), width="stretch")
-    row1[1].altair_chart(panel(const.DEVICE_BATTERY), width="stretch")
+    _render_device_panel(row1[0], const.DEVICE_EV, df, display)
+    _render_device_panel(row1[1], const.DEVICE_BATTERY, df, display)
     row2 = st.columns(2)
-    row2[0].altair_chart(panel(const.DEVICE_HEAT_PUMP), width="stretch")
-    row2[1].altair_chart(panel(const.DEVICE_PV), width="stretch")
+    _render_device_panel(row2[0], const.DEVICE_HEAT_PUMP, df, display)
+    _render_device_panel(row2[1], const.DEVICE_PV, df, display)
 
     st.write("**Vergleich aller Geräte**")
     long_df = df.melt(id_vars="Stunde", var_name="dev", value_name="kW")

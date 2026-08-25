@@ -15,6 +15,10 @@ from scripts.grid_designer import (
     household_color,
     layout_counts,
     nearest_household,
+    _contiguous_ranges,
+    _format_hour,
+    _format_range,
+    _threshold_status,
 )
 
 
@@ -90,3 +94,55 @@ def test_available_checkpoints(tmp_path):
     (tmp_path / "pen_20").mkdir()
     (tmp_path / "not_a_ckpt").mkdir()
     assert available_checkpoints(str(tmp_path)) == ["pen_20", "pen_40"]
+
+
+# ── threshold interpretation ─────────────────────────────────
+def test_format_hour_handles_quarter_hours():
+    assert _format_hour(14.25) == "14:15"
+    assert _format_hour(14.5) == "14:30"
+
+
+def test_format_hour_wraps_past_midnight():
+    # episode runs noon -> noon, so hour 36.5 is 12:30 the next day
+    assert _format_hour(36.5) == "12:30"
+    assert _format_hour(24.0) == "00:00"
+
+
+def test_format_range_collapses_single_point():
+    assert _format_range(14.0, 14.0) == "14:00"
+    assert _format_range(14.0, 16.5) == "14:00–16:30"
+
+
+def test_contiguous_ranges_collapses_separate_runs():
+    hours = 12 + np.arange(10) * 0.25
+    mask = np.array([0, 0, 1, 1, 1, 0, 0, 1, 0, 0], dtype=bool)
+    assert _contiguous_ranges(hours, mask) == [(12.5, 13.0), (13.75, 13.75)]
+
+
+def test_contiguous_ranges_empty_mask_gives_no_ranges():
+    hours = 12 + np.arange(4) * 0.25
+    assert _contiguous_ranges(hours, np.zeros(4, dtype=bool)) == []
+
+
+def test_threshold_status_exceeded_beats_equal():
+    # touches exactly 3.0 AND goes above it elsewhere -> must read as exceeded, not "at threshold"
+    hours = 12 + np.arange(5) * 0.25
+    values = np.array([1.0, 5.0, 3.0, 3.0, 1.0])
+    level, message = _threshold_status(hours, values, 3.0)
+    assert level == "kritisch"
+    assert "überschritten" in message
+
+
+def test_threshold_status_equal_only():
+    hours = 12 + np.arange(5) * 0.25
+    values = np.array([1.0, 3.0, 1.0, 1.0, 1.0])
+    level, message = _threshold_status(hours, values, 3.0)
+    assert level == "warnung"
+    assert "genau erreicht" in message
+
+
+def test_threshold_status_always_below():
+    hours = 12 + np.arange(5) * 0.25
+    values = np.array([1.0, 2.0, 1.5, 0.5, 1.0])
+    level, message = _threshold_status(hours, values, 3.0)
+    assert level == "gut"
