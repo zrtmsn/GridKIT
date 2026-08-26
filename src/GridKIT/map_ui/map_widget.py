@@ -13,16 +13,28 @@ from __future__ import annotations
 from typing import Any
 
 import folium
+import requests
 import streamlit as st
 from folium.plugins import Draw
 from streamlit_folium import st_folium
 
 from grid_model.builder import OSMNetworkBuilder
+from map_ui.household_config import (
+    bool_from_choice,
+    build_household_configuration,
+    choice_index_from_bool,
+    default_scenario_assumptions,
+    json_dumps_pretty,
+)
+from map_ui.network_visualization import show_network_visualization
 from map_ui.osm_fetcher import AreaBounds
 
 
 DEFAULT_CENTER = (49.0069, 8.4037)  # Karlsruhe
 DEFAULT_ZOOM = 15
+
+NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_USER_AGENT = "GridKIT-map-ui/0.1"
 
 
 def main() -> None:
@@ -30,7 +42,7 @@ def main() -> None:
 
     st.title("GridKIT Karte")
     st.caption(
-        "Kartenansicht → Bereich auswählen → GridNetwork erzeugen → Netzansicht visualisieren"
+        "Ort suchen → Bereich auswählen → GridNetwork erzeugen → Netzansicht visualisieren → Haushalte konfigurieren"
     )
 
     if "built_network" not in st.session_state:
@@ -40,9 +52,79 @@ def main() -> None:
     if "built_scenario" not in st.session_state:
         st.session_state["built_scenario"] = None
 
+    if "map_center" not in st.session_state:
+        st.session_state["map_center"] = DEFAULT_CENTER
+    if "map_zoom" not in st.session_state:
+        st.session_state["map_zoom"] = DEFAULT_ZOOM
+    if "search_results" not in st.session_state:
+        st.session_state["search_results"] = []
+    if "search_marker" not in st.session_state:
+        st.session_state["search_marker"] = None
+
+    if "household_overrides" not in st.session_state:
+        st.session_state["household_overrides"] = {}
+
+    if "scenario_assumptions" not in st.session_state:
+        st.session_state["scenario_assumptions"] = default_scenario_assumptions()
+
+    if "scenario_config_version" not in st.session_state:
+        st.session_state["scenario_config_version"] = 0
+
+    if "household_config_version" not in st.session_state:
+        st.session_state["household_config_version"] = 0
+
     with st.sidebar:
         st.header("Eingabe")
-        st.write("Zeichne links ein Rechteck/Polygon oder gib unten eine Bounding Box ein.")
+        st.write(
+            "Suche zuerst einen Ort oder zeichne direkt links ein Rechteck/Polygon. "
+            "Alternativ kannst du unten eine Bounding Box manuell eingeben."
+        )
+
+        st.subheader("Ort suchen")
+
+        place_query = st.text_input(
+            "Ort, Stadt, Straße oder Adresse",
+            placeholder="z. B. Karlsruhe, Kaiserstraße Karlsruhe",
+        )
+
+        search_clicked = st.button("Ort suchen")
+
+        if search_clicked:
+            try:
+                st.session_state["search_results"] = search_place(place_query)
+                if not st.session_state["search_results"]:
+                    st.warning("Keine Suchergebnisse gefunden.")
+            except Exception as exc:
+                st.error("Die Ortssuche ist fehlgeschlagen.")
+                st.exception(exc)
+                st.session_state["search_results"] = []
+
+        search_results = st.session_state.get("search_results", [])
+
+        if search_results:
+            selected_index = st.selectbox(
+                "Suchergebnis auswählen",
+                options=list(range(len(search_results))),
+                format_func=lambda i: format_search_result(search_results[i]),
+            )
+
+            selected_place = search_results[selected_index]
+
+            if st.button("Karte auf Suchergebnis zentrieren"):
+                lat = float(selected_place["lat"])
+                lon = float(selected_place["lon"])
+
+                st.session_state["map_center"] = (lat, lon)
+                st.session_state["map_zoom"] = 16
+                st.session_state["search_marker"] = {
+                    "lat": lat,
+                    "lon": lon,
+                    "display_name": selected_place.get("display_name", "Suchergebnis"),
+                }
+
+                st.rerun()
+
+        st.divider()
 
         area_name = st.text_input("area_name", value="selected_area")
 
@@ -71,12 +153,26 @@ def main() -> None:
 
     with col_map:
         st.subheader("Bereichsauswahl")
-        fmap = make_base_map()
+
+        fmap = make_base_map(
+            center=st.session_state["map_center"],
+            zoom=st.session_state["map_zoom"],
+            search_marker=st.session_state.get("search_marker"),
+        )
+
+        map_key = (
+            f"base_map_"
+            f"{st.session_state['map_center'][0]:.6f}_"
+            f"{st.session_state['map_center'][1]:.6f}_"
+            f"{st.session_state['map_zoom']}"
+        )
+
         map_data = st_folium(
             fmap,
             height=650,
             width=None,
             returned_objects=["last_active_drawing", "all_drawings"],
+            key=map_key,
         )
 
     selected_bounds: AreaBounds | None = None
@@ -127,10 +223,31 @@ def main() -> None:
                     st.session_state["built_network"] = network
                     st.session_state["built_bounds"] = selected_bounds
                     st.session_state["built_scenario"] = scenario
+                    st.session_state["max_households"] = int(max_households)
+
+                    # Alte individuelle Haushalt-Anpassungen zurücksetzen,
+                    # wenn ein neues GridNetwork erzeugt wird.
+                    st.session_state["household_overrides"] = {}
+                    st.session_state["household_config_version"] += 1
 
                 except Exception as exc:
-                    st.error("Das GridNetwork konnte nicht mit grid_model erzeugt werden.")
-                    st.exception(exc)
+                    if is_overpass_timeout_error(exc):
+                        st.error(
+                            "Die Overpass API ist aktuell nicht erreichbar oder antwortet zu langsam.\n\n"
+                            "Bitte versuchen Sie es später erneut oder wählen Sie ein kleineres Gebiet."
+                        )
+
+                        with st.expander("Technische Details anzeigen"):
+                            st.exception(exc)
+                    else:
+                        st.error(
+                            "Das GridNetwork konnte nicht erzeugt werden. "
+                            "Bitte prüfen Sie die Eingaben oder versuchen Sie es erneut."
+                        )
+
+                        with st.expander("Technische Details anzeigen"):
+                            st.exception(exc)
+
                     return
 
             st.success("GridNetwork erzeugt.")
@@ -143,15 +260,28 @@ def main() -> None:
         show_grid_model_result(built_network, built_bounds)
         st.divider()
         show_network_visualization(built_network, built_bounds)
+        st.divider()
+        show_household_configuration(built_network, built_bounds)
 
 
-def make_base_map() -> folium.Map:
+def make_base_map(
+    center: tuple[float, float] = DEFAULT_CENTER,
+    zoom: int = DEFAULT_ZOOM,
+    search_marker: dict[str, Any] | None = None,
+) -> folium.Map:
     fmap = folium.Map(
-        location=DEFAULT_CENTER,
-        zoom_start=DEFAULT_ZOOM,
+        location=center,
+        zoom_start=zoom,
         tiles="OpenStreetMap",
         control_scale=True,
     )
+
+    if search_marker:
+        folium.Marker(
+            location=[search_marker["lat"], search_marker["lon"]],
+            tooltip="Suchergebnis",
+            popup=folium.Popup(search_marker["display_name"], max_width=350),
+        ).add_to(fmap)
 
     Draw(
         export=False,
@@ -167,6 +297,66 @@ def make_base_map() -> folium.Map:
     ).add_to(fmap)
 
     return fmap
+
+
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 24)
+def search_place(query: str) -> list[dict[str, Any]]:
+    query = query.strip()
+
+    if not query:
+        return []
+
+    response = requests.get(
+        NOMINATIM_SEARCH_URL,
+        params={
+            "q": query,
+            "format": "jsonv2",
+            "limit": 5,
+            "addressdetails": 1,
+            "countrycodes": "de",
+        },
+        headers={
+            "User-Agent": NOMINATIM_USER_AGENT,
+        },
+        timeout=10,
+    )
+
+    response.raise_for_status()
+    return response.json()
+
+
+def format_search_result(result: dict[str, Any]) -> str:
+    return result.get("display_name", "Unbekanntes Suchergebnis")
+
+
+def is_overpass_timeout_error(exc: Exception) -> bool:
+    error_text = str(exc).lower()
+
+    overpass_indicators = [
+        "overpass-api",
+        "overpass",
+    ]
+
+    timeout_indicators = [
+        "connecttimeout",
+        "readtimeout",
+        "timed out",
+        "timeout",
+        "max retries exceeded",
+        "connection aborted",
+        "connection error",
+        "connection reset",
+    ]
+
+    has_overpass_reference = any(
+        indicator in error_text for indicator in overpass_indicators
+    )
+
+    has_timeout_reference = any(
+        indicator in error_text for indicator in timeout_indicators
+    )
+
+    return has_overpass_reference and has_timeout_reference
 
 
 def bounds_from_drawings(map_data: dict[str, Any] | None) -> AreaBounds | None:
@@ -259,240 +449,249 @@ def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
         st.code(grid_json, language="json")
 
 
-def show_network_visualization(network, selected_bounds: AreaBounds) -> None:
-    st.subheader("Netzansicht / Netzwerkkonfiguration")
+def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
+    st.subheader("Haushaltskonfiguration")
 
-    st.markdown(
-        """
-        **Legende**
-        - 🟠 Transformator-Bus
-        - 🟢 Haushalts-Bus
-        - 🔵 Sonstiger Bus
-        - Türkise Linien = Leitungen
-        """
+    household_ids = sorted(str(bus_id) for bus_id in getattr(network, "household_bus_ids", []))
+
+    if not household_ids:
+        st.warning(
+            "Im erzeugten GridNetwork wurden keine Haushalts-/Last-Busse gefunden. "
+            "Die Haushaltskonfiguration kann deshalb nicht angewendet werden."
+        )
+        return
+
+    if st.session_state.pop("scenario_assumptions_saved_message", False):
+        st.success("Szenario-Annahmen wurden gespeichert.")
+
+    if st.session_state.pop("scenario_assumptions_reset_message", False):
+        st.success("Szenario-Annahmen wurden zurückgesetzt.")
+
+    saved_household = st.session_state.pop("household_saved_message", None)
+    if saved_household:
+        st.success(f"Individuelle Anpassung für {saved_household} gespeichert.")
+
+    reset_household = st.session_state.pop("household_reset_message", None)
+    if reset_household:
+        st.info(f"Individuelle Anpassung für {reset_household} wurde gelöscht.")
+
+    st.session_state.setdefault("household_overrides", {})
+    st.session_state.setdefault("scenario_assumptions", default_scenario_assumptions())
+    st.session_state.setdefault("scenario_config_version", 0)
+    st.session_state.setdefault("household_config_version", 0)
+
+    household_overrides: dict[str, dict[str, Any]] = st.session_state["household_overrides"]
+    saved_assumptions: dict[str, Any] = st.session_state["scenario_assumptions"]
+
+    st.markdown("### Szenario-Annahmen für das Gebiet")
+
+    st.info(
+        "Diese Werte werden nicht automatisch aus OSM erkannt, "
+        "sondern als Annahmen für das Szenario verwendet."
     )
 
-    fmap, missing_bus_coords, missing_line_coords = create_network_map(network, selected_bounds)
-
-    st_folium(
-        fmap,
-        height=700,
-        width=None,
-        returned_objects=[],
+    st.caption(
+        "Die folgenden Eingabefelder sind zunächst ein Entwurf. "
+        "Mit „Szenario-Annahmen speichern“ werden sie für die JSON-Konfiguration übernommen."
     )
 
-    info_col1, info_col2 = st.columns(2)
-    info_col1.metric("Busse ohne Koordinaten", missing_bus_coords)
-    info_col2.metric("Leitungen ohne vollständig darstellbare Endpunkte", missing_line_coords)
+    widget_suffix = st.session_state["scenario_config_version"]
 
-    with st.expander("Hinweis zur Visualisierung"):
-        st.write(
-            "Die Netzansicht wird direkt aus dem von `grid_model` erzeugten `GridNetwork` aufgebaut. "
-            "Busse werden anhand ihrer Koordinaten dargestellt, Leitungen verbinden die zugehörigen Busse. "
-            "Damit sie sichtbar sind, müssen für die Busse `x_coord` und `y_coord` vorhanden sein."
+    high_col1, high_col2, high_col3, high_col4 = st.columns(4)
+
+    draft_ev_share_percent = high_col1.slider(
+        "Anteil Haushalte mit EV (%)",
+        min_value=0,
+        max_value=100,
+        value=int(saved_assumptions["ev_share_percent"]),
+        step=5,
+        help="Annahme für den Anteil der Haushalte, die ein Elektrofahrzeug besitzen sollen.",
+        key=f"draft_ev_share_percent_{widget_suffix}",
+    )
+
+    draft_heat_pump_share_percent = high_col2.slider(
+        "Anteil Haushalte mit WP (%)",
+        min_value=0,
+        max_value=100,
+        value=int(saved_assumptions["heat_pump_share_percent"]),
+        step=5,
+        help="Annahme für den Anteil der Haushalte, die eine Wärmepumpe besitzen sollen.",
+        key=f"draft_heat_pump_share_percent_{widget_suffix}",
+    )
+
+    draft_global_load_scaling_factor = high_col3.number_input(
+        "Verbrauchsfaktor global",
+        min_value=0.1,
+        max_value=5.0,
+        value=float(saved_assumptions["global_load_scaling_factor"]),
+        step=0.1,
+        format="%.2f",
+        help="1.0 bedeutet unverändert, 1.2 bedeutet 20 % höherer Verbrauch.",
+        key=f"draft_global_load_scaling_factor_{widget_suffix}",
+    )
+
+    draft_selection_seed = high_col4.number_input(
+        "Zufallswert für Haushalt-Auswahl",
+        min_value=0,
+        max_value=99999,
+        value=int(saved_assumptions["selection_seed"]),
+        step=1,
+        help="Sorgt dafür, dass die prozentuale Auswahl reproduzierbar bleibt.",
+        key=f"draft_selection_seed_{widget_suffix}",
+    )
+
+    draft_assumptions = {
+        "ev_share_percent": int(draft_ev_share_percent),
+        "heat_pump_share_percent": int(draft_heat_pump_share_percent),
+        "global_load_scaling_factor": float(draft_global_load_scaling_factor),
+        "selection_seed": int(draft_selection_seed),
+    }
+
+    high_action_col1, high_action_col2 = st.columns(2)
+
+    if high_action_col1.button("Szenario-Annahmen speichern"):
+        st.session_state["scenario_assumptions"] = draft_assumptions
+        st.session_state["scenario_config_version"] += 1
+        st.session_state["scenario_assumptions_saved_message"] = True
+        st.rerun()
+
+    if high_action_col2.button("Szenario-Annahmen zurücksetzen"):
+        st.session_state["scenario_assumptions"] = default_scenario_assumptions()
+        st.session_state["scenario_config_version"] += 1
+        st.session_state["scenario_assumptions_reset_message"] = True
+        st.rerun()
+
+    if draft_assumptions != saved_assumptions:
+        st.warning(
+            "Es gibt nicht gespeicherte Änderungen in den Szenario-Annahmen. "
+            "Klicke auf „Szenario-Annahmen speichern“, damit diese Werte in die JSON-Konfiguration übernommen werden."
         )
 
+    saved_ev_share_percent = int(saved_assumptions["ev_share_percent"])
+    saved_heat_pump_share_percent = int(saved_assumptions["heat_pump_share_percent"])
+    saved_global_load_scaling_factor = float(saved_assumptions["global_load_scaling_factor"])
+    saved_selection_seed = int(saved_assumptions["selection_seed"])
 
-def create_network_map(network, selected_bounds: AreaBounds) -> tuple[folium.Map, int, int]:
-    buses_with_coords = [
-        bus for bus in network.buses
-        if bus.x_coord is not None and bus.y_coord is not None
-    ]
+    st.markdown("### Individuelle Anpassung einzelner Haushalte")
 
-    center = (
-        (selected_bounds.south + selected_bounds.north) / 2,
-        (selected_bounds.west + selected_bounds.east) / 2,
+    selected_household = st.selectbox(
+        "Haushalt / Lastpunkt auswählen",
+        household_ids,
+        help="Hier kann ein konkreter vorhandener Haushalts-/Last-Bus individuell angepasst werden.",
     )
 
-    fmap = folium.Map(
-        location=center,
-        zoom_start=15,
-        tiles="OpenStreetMap",
-        control_scale=True,
+    current_override = household_overrides.get(selected_household, {})
+    household_widget_suffix = st.session_state["household_config_version"]
+
+    low_col1, low_col2, low_col3 = st.columns(3)
+
+    ev_choice = low_col1.selectbox(
+        "EV für diesen Haushalt",
+        options=["Automatisch aus Szenario-Annahmen", "Ja", "Nein"],
+        index=choice_index_from_bool(current_override.get("has_ev")),
+        key=f"ev_choice_{selected_household}_{household_widget_suffix}",
     )
 
-    # ausgewählten Bereich anzeigen
-    folium.Rectangle(
-        bounds=[
-            [selected_bounds.south, selected_bounds.west],
-            [selected_bounds.north, selected_bounds.east],
-        ],
-        color="#444444",
-        weight=2,
-        fill=False,
-        dash_array="5, 5",
-        tooltip="Ausgewählte Bounding Box",
-    ).add_to(fmap)
-
-    bus_lookup = {bus.bus_id: bus for bus in network.buses}
-    household_ids = set(network.household_bus_ids)
-
-    transformer_bus_ids = set()
-    for trafo in network.transformers:
-        transformer_bus_ids.add(trafo.hv_bus)
-        transformer_bus_ids.add(trafo.lv_bus)
-
-    line_group = folium.FeatureGroup(name="Leitungen", show=True)
-    household_group = folium.FeatureGroup(name="Haushalte", show=True)
-    transformer_group = folium.FeatureGroup(name="Transformator-Busse", show=True)
-    bus_group = folium.FeatureGroup(name="Sonstige Busse", show=True)
-
-    missing_line_coords = add_network_lines(line_group, network, bus_lookup)
-    missing_bus_coords = add_network_buses(
-        household_group=household_group,
-        transformer_group=transformer_group,
-        bus_group=bus_group,
-        network=network,
-        household_ids=household_ids,
-        transformer_bus_ids=transformer_bus_ids,
+    heat_pump_choice = low_col2.selectbox(
+        "WP für diesen Haushalt",
+        options=["Automatisch aus Szenario-Annahmen", "Ja", "Nein"],
+        index=choice_index_from_bool(current_override.get("has_heat_pump")),
+        key=f"heat_pump_choice_{selected_household}_{household_widget_suffix}",
     )
 
-    line_group.add_to(fmap)
-    household_group.add_to(fmap)
-    transformer_group.add_to(fmap)
-    bus_group.add_to(fmap)
-
-    folium.LayerControl(collapsed=False).add_to(fmap)
-
-    fmap.fit_bounds(
-        [
-            [selected_bounds.south, selected_bounds.west],
-            [selected_bounds.north, selected_bounds.east],
-        ]
+    load_factor_mode = low_col3.selectbox(
+        "Verbrauchsfaktor-Modus",
+        options=["Automatisch aus Szenario-Annahmen", "Individuell festlegen"],
+        index=1 if "load_scaling_factor" in current_override else 0,
+        key=f"load_factor_mode_{selected_household}_{household_widget_suffix}",
+        help=(
+            "Automatisch bedeutet: Der globale Verbrauchsfaktor aus den Szenario-Annahmen gilt. "
+            "Individuell bedeutet: Für diesen Haushalt wird ein eigener Verbrauchsfaktor gespeichert."
+        ),
     )
 
-    return fmap, missing_bus_coords, missing_line_coords
+    individual_load_scaling_factor = low_col3.number_input(
+        "Individueller Verbrauchsfaktor",
+        min_value=0.1,
+        max_value=5.0,
+        value=float(current_override.get("load_scaling_factor", saved_global_load_scaling_factor)),
+        step=0.1,
+        format="%.2f",
+        key=f"load_factor_{selected_household}_{household_widget_suffix}",
+        disabled=load_factor_mode == "Automatisch aus Szenario-Annahmen",
+        help="Dieser Wert wird nur gespeichert, wenn der Modus auf „Individuell festlegen“ steht.",
+    )
 
+    action_col1, action_col2 = st.columns(2)
 
-def add_network_lines(line_group, network, bus_lookup: dict[str, Any]) -> int:
-    missing_line_coords = 0
+    if action_col1.button(
+        "Individuelle Anpassung für diesen Haushalt speichern",
+        key=f"save_override_{selected_household}",
+    ):
+        new_override: dict[str, Any] = {}
 
-    for line in network.lines:
-        from_bus = bus_lookup.get(line.from_bus)
-        to_bus = bus_lookup.get(line.to_bus)
+        ev_override = bool_from_choice(ev_choice)
+        heat_pump_override = bool_from_choice(heat_pump_choice)
 
-        if from_bus is None or to_bus is None:
-            missing_line_coords += 1
-            continue
+        if ev_override is not None:
+            new_override["has_ev"] = ev_override
 
-        if (
-            from_bus.x_coord is None or from_bus.y_coord is None
-            or to_bus.x_coord is None or to_bus.y_coord is None
-        ):
-            missing_line_coords += 1
-            continue
+        if heat_pump_override is not None:
+            new_override["has_heat_pump"] = heat_pump_override
 
-        popup_html = f"""
-        <b>Line ID:</b> {line.line_id}<br>
-        <b>From:</b> {line.from_bus}<br>
-        <b>To:</b> {line.to_bus}<br>
-        <b>Length (km):</b> {line.length_km:.4f}<br>
-        <b>R (Ohm/km):</b> {line.r_ohm_per_km:.4f}<br>
-        <b>X (Ohm/km):</b> {line.x_ohm_per_km:.4f}<br>
-        <b>Max I (kA):</b> {line.max_i_ka:.4f}
-        """
+        if load_factor_mode == "Individuell festlegen":
+            new_override["load_scaling_factor"] = float(individual_load_scaling_factor)
 
-        folium.PolyLine(
-            locations=[
-                [from_bus.y_coord, from_bus.x_coord],
-                [to_bus.y_coord, to_bus.x_coord],
-            ],
-            color="#0f9d8a",
-            weight=3,
-            opacity=0.85,
-            tooltip=f"Leitung: {line.line_id}",
-            popup=folium.Popup(popup_html, max_width=350),
-        ).add_to(line_group)
-
-    return missing_line_coords
-
-
-def add_network_buses(
-    household_group,
-    transformer_group,
-    bus_group,
-    network,
-    household_ids: set[str],
-    transformer_bus_ids: set[str],
-) -> int:
-    missing_bus_coords = 0
-
-    for bus in network.buses:
-        if bus.x_coord is None or bus.y_coord is None:
-            missing_bus_coords += 1
-            continue
-
-        popup_html = make_bus_popup(
-            bus=bus,
-            household_ids=household_ids,
-            transformer_bus_ids=transformer_bus_ids,
-            network=network,
-        )
-
-        if bus.bus_id in transformer_bus_ids:
-            folium.CircleMarker(
-                location=[bus.y_coord, bus.x_coord],
-                radius=8,
-                color="#d94801",
-                fill=True,
-                fill_color="#f16913",
-                fill_opacity=0.95,
-                weight=2,
-                tooltip=f"Transformator-Bus: {bus.bus_id}",
-                popup=folium.Popup(popup_html, max_width=350),
-            ).add_to(transformer_group)
-
-        elif bus.bus_id in household_ids:
-            folium.CircleMarker(
-                location=[bus.y_coord, bus.x_coord],
-                radius=6,
-                color="#238b45",
-                fill=True,
-                fill_color="#41ab5d",
-                fill_opacity=0.9,
-                weight=1,
-                tooltip=f"Haushalt: {bus.bus_id}",
-                popup=folium.Popup(popup_html, max_width=350),
-            ).add_to(household_group)
-
+        if new_override:
+            household_overrides[selected_household] = new_override
+            st.session_state["household_config_version"] += 1
+            st.session_state["household_saved_message"] = selected_household
+            st.rerun()
         else:
-            folium.CircleMarker(
-                location=[bus.y_coord, bus.x_coord],
-                radius=5,
-                color="#2171b5",
-                fill=True,
-                fill_color="#4292c6",
-                fill_opacity=0.85,
-                weight=1,
-                tooltip=f"Bus: {bus.bus_id}",
-                popup=folium.Popup(popup_html, max_width=350),
-            ).add_to(bus_group)
+            household_overrides.pop(selected_household, None)
+            st.session_state["household_config_version"] += 1
+            st.session_state["household_reset_message"] = selected_household
+            st.rerun()
 
-    return missing_bus_coords
+    if action_col2.button(
+        "Individuelle Anpassung löschen",
+        key=f"delete_override_{selected_household}",
+    ):
+        household_overrides.pop(selected_household, None)
+        st.session_state["household_config_version"] += 1
+        st.session_state["household_reset_message"] = selected_household
+        st.rerun()
 
+    household_configuration = build_household_configuration(
+        network=network,
+        selected_bounds=selected_bounds,
+        household_ids=household_ids,
+        ev_share_percent=saved_ev_share_percent,
+        heat_pump_share_percent=saved_heat_pump_share_percent,
+        global_load_scaling_factor=saved_global_load_scaling_factor,
+        selection_seed=saved_selection_seed,
+        household_overrides=household_overrides,
+    )
 
-def make_bus_popup(bus, household_ids: set[str], transformer_bus_ids: set[str], network) -> str:
-    roles: list[str] = []
+    st.markdown("### Zusammenfassung der aktuellen Haushaltskonfiguration")
 
-    if bus.bus_id in transformer_bus_ids:
-        roles.append("Transformator-Bus")
-    if bus.bus_id in household_ids:
-        roles.append("Haushalt")
-    if not roles:
-        roles.append("Standard-Bus")
+    resolved = household_configuration["resolved"]
 
-    has_ev = bus.bus_id in getattr(network, "ev_availability", {})
-    has_load_profile = bus.bus_id in getattr(network, "household_load_profile_kw", {})
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+    summary_col1.metric("Haushalte gesamt", len(household_ids))
+    summary_col2.metric("Haushalte mit EV", len(resolved["ev_bus_ids"]))
+    summary_col3.metric("Haushalte mit WP", len(resolved["heat_pump_bus_ids"]))
+    summary_col4.metric("Individuelle Anpassungen", len(household_overrides))
 
-    return f"""
-    <b>Bus ID:</b> {bus.bus_id}<br>
-    <b>Rolle:</b> {", ".join(roles)}<br>
-    <b>Nominalspannung (kV):</b> {bus.v_nom_kv}<br>
-    <b>x_coord:</b> {bus.x_coord}<br>
-    <b>y_coord:</b> {bus.y_coord}<br>
-    <b>Load Profile:</b> {"Ja" if has_load_profile else "Nein"}<br>
-    <b>EV Availability:</b> {"Ja" if has_ev else "Nein"}
-    """
+    with st.expander("household_configuration.json anzeigen"):
+        st.json(household_configuration)
+
+    st.download_button(
+        label="household_configuration.json herunterladen",
+        data=json_dumps_pretty(household_configuration),
+        file_name="household_configuration.json",
+        mime="application/json",
+    )
 
 
 if __name__ == "__main__":
