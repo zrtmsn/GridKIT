@@ -13,6 +13,7 @@ venv/
 outputs/
 outputs_*/
 checkpoints/
+runs/
 
 # Generated/downloaded — regenerate locally, don't commit
 cache/

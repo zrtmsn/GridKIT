@@ -229,3 +229,10 @@ PV_GEN_NORM_MAX_KW: float = 10.0        # ≈ PV_PEAK_KWP_MAX
 # ── RLlib / Ray ──────────────────────────────────────────────
 RLLIB_ENV_REGISTRY_NAME: str = "GridEnv-v0"    # registered name for Gymnasium/RLlib — do not change without updating the registration hook
 RLLIB_DEFAULT_NUM_EPISODES: int = 3            # low default for fast iteration on consumer hardware; increase for real training runs
+
+# ── UI-launched training runs (scripts/train_run.py) ──────────
+# The map UI never exposes these — a user picks a network + device mix, not
+# RL hyperparameters. Fixed here so "launch training" behaves the same for
+# every run regardless of who clicks it.
+PIPELINE_TRAINING_ITERATIONS: int = 20   # IPPO training iterations per UI-launched run
+PIPELINE_EVALUATION_SEEDS: int = 5       # evaluation episodes per scenario after training

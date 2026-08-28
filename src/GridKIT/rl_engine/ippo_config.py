@@ -46,6 +46,7 @@ def create_ippo_config(
     clip_param: float = settings.ippo_clip_eps,
     entropy_coeff: float = settings.ippo_entropy_coeff,
     evaluation_interval: int = settings.ippo_evaluation_interval,
+    device_types: tuple[str, ...] = const.CONTROLLABLE_DEVICE_TYPES,
 ) -> PPOConfig:
     """
     Creates and returns a configured PPOConfig for IPPO training.
@@ -62,6 +63,13 @@ def create_ippo_config(
         clip_param: PPO clipping range to prevent large policy updates.
         entropy_coeff: Bonus weight to encourage exploration.
         evaluation_interval: Run evaluation every N iterations.
+        device_types: Which device types to declare a shared policy for. Must
+            match the device types actually present in the training env's
+            device layout — RLlib's new API stack cannot derive a policy's
+            action space when zero agents ever route to it (e.g. training on a
+            layout with no battery-equipped household while battery_policy is
+            still declared raises "Could not find or derive any act-space").
+            Defaults to all controllable types for backward compatibility.
 
     Returns:
         A configured ray.rllib.algorithms.ppo.PPOConfig object.
@@ -77,6 +85,7 @@ def create_ippo_config(
                     action_space=gym.spaces.Discrete(dim),
                 )
                 for device, dim in const.ACTION_DIM_BY_DEVICE.items()
+                if device in device_types
             },
             # Maps each agent to its device type's shared policy (see _policy_id).
             policy_mapping_fn=_policy_id,
