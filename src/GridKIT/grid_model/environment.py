@@ -283,9 +283,9 @@ class GridEnv(GridEnvProtocol):
                                   ev_kw=ev_kw, hp_kw=hp_kw, batt_kw=batt_kw,
                                   base=float(p.base_load_kw[t]), pv=pv)
 
-        # 2. Power flow on the requested household nets
-        max_loading, lines, volts = self._solve(self._household_nets(req))
-        feeder_loadings = dict(self._surrogate.last_feeder_loadings)
+        # 2. Power flow on the requested household nets — BEFORE curtailment
+        max_loading_before, lines_before, volts = self._solve(self._household_nets(req))
+        feeder_loadings_before = dict(self._surrogate.last_feeder_loadings)
         hh_feeder = self._surrogate.household_feeder
         hh_path = self._surrogate.household_path_lines
         thresh = const.TRANSFORMER_OVERLOAD_THRESHOLD
@@ -293,13 +293,13 @@ class GridEnv(GridEnvProtocol):
         # 3. §14a curtailment — LOCALIZED per feeder: each household is dimmed only by
         #    the overload of ITS OWN feeder (its transformer capacity + its path lines).
         #    Households on healthy feeders keep full power.
-        overloaded = (any(v > thresh for v in feeder_loadings.values())
-                      or any(l > const.LINE_OVERLOAD_THRESHOLD for l in lines.values()))
+        overloaded = (any(v > thresh for v in feeder_loadings_before.values())
+                      or any(l > const.LINE_OVERLOAD_THRESHOLD for l in lines_before.values()))
         delivered: dict[str, dict] = {b: dict(r) for b, r in req.items()}
         if overloaded:
             for b, r in req.items():
-                local = max(feeder_loadings.get(hh_feeder.get(b), 0.0),
-                            max((lines[l] for l in hh_path.get(b, [])), default=0.0))
+                local = max(feeder_loadings_before.get(hh_feeder.get(b), 0.0),
+                            max((lines_before[l] for l in hh_path.get(b, [])), default=0.0))
                 if local <= thresh:
                     continue  # this household's feeder is fine
                 creq = r["ev_kw"] + r["hp_kw"] + max(0.0, r["batt_kw"])
@@ -309,8 +309,19 @@ class GridEnv(GridEnvProtocol):
                 delivered[b]["hp_kw"] = r["hp_kw"] * ratio
                 delivered[b]["batt_kw"] = (r["batt_kw"] * ratio) if r["batt_kw"] > 0 else r["batt_kw"]
                 delivered[b]["ctrl_ratio"] = ratio
-            max_loading, lines, volts = self._solve(self._household_nets(delivered))
-            feeder_loadings = dict(self._surrogate.last_feeder_loadings)
+            
+            # CONSISTENCY FIX: When curtailment was applied, log the BEFORE values
+            # (the overload that triggered §14a), not the reduced after values.
+            # This ensures: curtailment_applied=True ⇒ overloads are visible in logs!
+            max_loading = max_loading_before
+            feeder_loadings = feeder_loadings_before
+            lines = lines_before
+        else:
+            # No curtailment → use the original values
+            max_loading = max_loading_before
+            feeder_loadings = feeder_loadings_before
+            lines = lines_before
+            
         for b in delivered:
             delivered[b].setdefault("ctrl_ratio", 1.0)
 

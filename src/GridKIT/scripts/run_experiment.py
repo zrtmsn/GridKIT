@@ -42,6 +42,21 @@ def _timeline(env, result, label: str, penetration: float) -> dict:
         "transformer_loading": [pf.transformer_loading_pu for pf in tr],
         "max_line_loading": [max(pf.line_loadings_pu.values()) for pf in tr],
         "curtailment": [bool(pf.curtailment_applied) for pf in tr],
+        
+        # ════════════════════════════════════════════════════════════════
+        # NEU: IDs der überlasteten Netzwerkelemente (pro Timestep)
+        # ════════════════════════════════════════════════════════════════
+        # Loggt nur in Steps wo curtailment_applied=True (Netzregelung aktiv)
+        # Format: Liste von Listen [[], ["line_42"], ["trafo_1", "line_73"], ...]
+        "overloaded_transformers": [
+            [tid for tid, loading in pf.transformer_loadings_pu.items() if loading > 1.0]
+            for pf in tr
+        ],
+        "overloaded_lines": [
+            [lid for lid, loading in pf.line_loadings_pu.items() if loading > 1.0]
+            for pf in tr
+        ],
+        
         "price": env.day_ahead_prices(),
         "base_load": env.episode_base_load_kw,
         "pv_generation": env.episode_pv_kw,
@@ -100,8 +115,21 @@ def main() -> None:
 
         trainer = Trainer(env_factory=env_factory, config_func=create_ippo_config)
         trainer.run(num_episodes=args.iterations, cleanup=False)
+        
+        # Save iteration metrics to output directory
+        checkpoint_dir = out / "checkpoints" / f"pen_{int(pen * 100)}"
+        trainer.save_checkpoint(str(checkpoint_dir.resolve()))
+        
+        # Copy iteration metrics from temp dir to output dir
+        import shutil
+        temp_log_dir = Path("/tmp/gridkit_rl_logs")
+        temp_metrics_file = temp_log_dir / "iteration_metrics_raw.json"
+        if temp_metrics_file.exists():
+            metrics_out_file = checkpoint_dir / "iteration_metrics.json"
+            shutil.copy(temp_metrics_file, metrics_out_file)
+            print(f"  Saved iteration metrics → {metrics_out_file}")
+        
         adapter = RLlibPolicyAdapter(trainer.get_policy_modules())
-        trainer.save_checkpoint(str((out / "checkpoints" / f"pen_{int(pen * 100)}").resolve()))
 
         eval_env = GridEnv(ev_penetration=pen, builder=StubNetworkBuilder(path=network_path))
         scenarios = {
@@ -111,7 +139,17 @@ def main() -> None:
             "3: selfish RL": adapter,
         }
         for label, policy in scenarios.items():
+            # ════════════════════════════════════════════════════════════════
+            # LOGGING STUFFE 1: Evaluation über mehrere Seeds (default: 12)
+            # ════════════════════════════════════════════════════════════════
+            # run_scenario() führt 12 Episodes aus und aggregiert die Metriken
+            # zu mean±std (curtailment, SoC, peak loading, reward, bill, etc.)
             stats = run_scenario(eval_env, policy, seeds, label=label, ev_penetration=pen)
+            
+            # ════════════════════════════════════════════════════════════════
+            # LOGGING STUFFE 2: Aggregierte Metriken zur summary-Liste hinzufügen
+            # ════════════════════════════════════════════════════════════════
+            # Diese Daten landen später in summary.json (für Bar-Charts)
             summary.append({
                 "penetration": pen,
                 "scenario": label,
@@ -128,11 +166,22 @@ def main() -> None:
                 "battery_discharge_kwh_std": stats.battery_discharge_kwh[1],
             })
             print("  " + str(stats))
+            
+            # ════════════════════════════════════════════════════════════════
+            # LOGGING STUFFE 3: Detaillierte Zeitreihen für EINE Episode speichern
+            # ════════════════════════════════════════════════════════════════
+            # run_episode() mit seed[0] (= erste der 12 Episodes) liefert
+            # komplette 96-Step-Zeitreihen (transformer loading, device power, SoC, etc.)
+            # Diese Daten landen später in timelines.json (für Line-Charts)
             rep = run_episode(eval_env, policy, seeds[0], ev_penetration=pen)
             timelines.append(_timeline(eval_env, rep, label, pen))
 
         trainer.stop()
 
+    # ════════════════════════════════════════════════════════════════════════
+    # LOGGING STUFFE 4: JSON-Dateien schreiben (summary + timelines)
+    # ════════════════════════════════════════════════════════════════════════
+    # Diese beiden Files werden von plot_results.py gelesen um PNGs zu erzeugen
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     (out / "timelines.json").write_text(json.dumps(timelines, indent=2))
     print(f"\nSaved {len(summary)} scenario results → {out/'summary.json'} and timelines → {out/'timelines.json'}")
