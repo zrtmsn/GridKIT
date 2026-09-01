@@ -37,9 +37,10 @@ NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_USER_AGENT = "GridKIT-map-ui/0.1"
 
 
-def main() -> None:
-    st.set_page_config(page_title="GridKIT map_ui", layout="wide")
-
+def render_map_ui() -> None:
+    """Page body — no st.set_page_config here, so this can be composed as one
+    page of a larger app (see scripts/app.py) as well as run standalone
+    (see main() below, which owns page config for the standalone case)."""
     st.title("GridKIT Karte")
     st.caption(
         "Ort suchen → Bereich auswählen → GridNetwork erzeugen → Netzansicht visualisieren → "
@@ -782,6 +783,12 @@ def _launch_training(run_id: str) -> None:
             [sys.executable, "-m", "GridKIT.scripts.train_run", "--run-dir", str(run_directory)],
             cwd=str(repo_root), env=env, stdout=logf, stderr=subprocess.STDOUT,
         )
+
+
+def main() -> None:
+    """Standalone entry point: streamlit run src/GridKIT/map_ui/map_widget.py"""
+    st.set_page_config(page_title="GridKIT map_ui", layout="wide")
+    render_map_ui()
 
 
 if __name__ == "__main__":

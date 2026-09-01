@@ -38,12 +38,15 @@ SCENARIO_COLORS = {
 }
 
 
-def main() -> None:
-    st.set_page_config(page_title="GridKIT — Dashboard", layout="wide")
+def render_dashboard() -> None:
+    """Page body — no st.set_page_config here, so this can be composed as one
+    page of a larger app (see scripts/app.py) as well as run standalone
+    (see main() below, which owns page config for the standalone case)."""
     st.title("GridKIT — Dashboard")
     st.caption(
-        "Zeigt gespeicherte Netze und Trainingsläufe aus dem Karten-UI "
-        "(`streamlit run src/GridKIT/map_ui/map_widget.py`)."
+        "Zeigt gespeicherte Netze und Trainingsläufe aus der Karte "
+        "(erreichbar über `streamlit run src/GridKIT/scripts/app.py`, oder "
+        "eigenständig über `streamlit run src/GridKIT/map_ui/map_widget.py`)."
     )
 
     if st.button("🔄 Aktualisieren"):
@@ -160,17 +163,11 @@ def render_results(summary: list[dict], timelines: dict) -> None:
     st.pyplot(fig2)
 
 
-def _running_under_streamlit() -> bool:
-    try:
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-        return get_script_run_ctx() is not None
-    except Exception:
-        return False
+def main() -> None:
+    """Standalone entry point: streamlit run src/GridKIT/dashboard/app.py"""
+    st.set_page_config(page_title="GridKIT — Dashboard", layout="wide")
+    render_dashboard()
 
 
 if __name__ == "__main__":
-    main()
-elif _running_under_streamlit():
-    # `streamlit run` imports the module (name != __main__); auto-run only
-    # then, NOT on a plain import.
     main()
