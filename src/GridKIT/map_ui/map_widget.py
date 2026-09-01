@@ -736,9 +736,26 @@ def show_training_section(network, household_configuration: dict[str, Any]) -> N
         help="Nur ein Anzeigename, um mehrere gespeicherte Netze auseinanderzuhalten — muss nicht eindeutig sein.",
     )
 
+    # Each training run spawns its own Ray instance + worker processes — running
+    # several at once has been observed to exhaust memory and crash Ray's
+    # actors (surfacing as cryptic RLlib errors in the dashboard, or a run
+    # silently orphaned). `stale` running entries (no status update in a long
+    # time — see core.run_store.STALE_AFTER_SECONDS) are excluded: those are
+    # themselves almost certainly dead, not a real second training in progress.
+    active_runs = [r for r in rs.list_runs() if r["state"] == rs.RUNNING and not r.get("stale")]
+    if active_runs:
+        names = ", ".join(f"**{r.get('name') or r['run_id']}**" for r in active_runs)
+        st.warning(
+            f"Es läuft bereits ein Training ({names}). Mehrere gleichzeitige Trainings können den "
+            "Rechner überlasten und Abstürze verursachen — bitte warten, bis es fertig ist (Fortschritt "
+            "im Dashboard), bevor ein weiteres gestartet wird. Speichern allein ist weiterhin möglich."
+        )
+
     col1, col2 = st.columns(2)
     save_only_clicked = col1.button("Nur speichern")
-    save_and_train_clicked = col2.button("Speichern & Training starten", type="primary")
+    save_and_train_clicked = col2.button(
+        "Speichern & Training starten", type="primary", disabled=bool(active_runs),
+    )
 
     if save_only_clicked:
         run_id = rs.save_network_only(run_name, network, household_configuration, network_source="map_ui")

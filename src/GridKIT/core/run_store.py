@@ -48,9 +48,28 @@ RUNNING = "running"
 DONE = "done"
 FAILED = "failed"
 
+# A "running" status this old with no update is almost certainly an orphaned
+# process (killed by the OS — e.g. out-of-memory — rather than exiting
+# normally), not real progress: every training iteration touches status.json,
+# so a live run updates far more often than this. train_run.py catches
+# ordinary exceptions and interruption and marks the run FAILED itself, but a
+# SIGKILL can't be caught by anything running inside the killed process — this
+# is the only way stale "running" entries get flagged at all.
+STALE_AFTER_SECONDS = 10 * 60
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _is_stale(updated: str | None) -> bool:
+    if not updated:
+        return False
+    try:
+        ts = datetime.fromisoformat(updated)
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc) - ts).total_seconds() > STALE_AFTER_SECONDS
 
 
 def new_run_id() -> str:
@@ -156,12 +175,15 @@ def list_runs(root: str | Path = DEFAULT_ROOT) -> list[dict]:
         if cfg is None:
             continue
         st = _read_json(d / "status.json") or {}
+        state = st.get("state", "unknown")
         out.append({**cfg,
-                    "state": st.get("state", "unknown"),
+                    "state": state,
                     "progress": st.get("progress", 0.0),
                     "iteration": st.get("iteration", 0),
                     "message": st.get("message", ""),
-                    "has_results": (d / "summary.json").exists()})
+                    "has_results": (d / "summary.json").exists(),
+                    # only meaningful while state == RUNNING; see STALE_AFTER_SECONDS
+                    "stale": state == RUNNING and _is_stale(st.get("updated"))})
     # Tiebreak by run_id: `created` is wall-clock to the second, so two runs
     # made within the same second would otherwise tie and fall back to
     # non-deterministic filesystem iteration order.

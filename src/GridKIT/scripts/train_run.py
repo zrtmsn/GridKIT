@@ -157,7 +157,10 @@ def main() -> None:
         rs.save_results(run_id, summary, timelines, root=root)
         trainer.stop()
 
-    except Exception as exc:  # noqa: BLE001
+    except BaseException as exc:  # noqa: BLE001 — including KeyboardInterrupt/SystemExit: this
+        # process's only job is to train and report status, so however it's ending, record FAILED
+        # before we go. (A SIGKILL — e.g. an OOM kill — can't be caught by anything, by any process,
+        # ever; that case is invisible here and only shows up as a stale run — see run_store.STALE_AFTER_SECONDS.)
         rs.set_status(run_id, state=rs.FAILED, message=f"{type(exc).__name__}: {exc}", root=root)
         traceback.print_exc()
         sys.exit(1)

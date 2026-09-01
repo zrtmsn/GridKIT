@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from core import run_store as rs
 from core.models import BusModel, GridNetwork
 
@@ -98,3 +100,31 @@ def test_delete_run_removes_everything(tmp_path):
 
 def test_delete_run_missing_is_a_noop(tmp_path):
     rs.delete_run("does_not_exist", root=tmp_path)  # must not raise
+
+
+def _age_status(run_id: str, root, *, state: str, seconds_ago: float) -> None:
+    """Backdate a run's status.json's `updated` timestamp directly — set_status()
+    itself always stamps "now", so simulating an old status needs a raw write."""
+    import json as _json
+
+    old = (datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)).isoformat(timespec="seconds")
+    path = rs.run_dir(run_id, root) / "status.json"
+    path.write_text(_json.dumps({"state": state, "updated": old}))
+
+
+def test_list_runs_flags_stale_running_status(tmp_path):
+    net = _net()
+    rid = rs.create_run("r", net, _config(), iterations=10, seeds=2, root=tmp_path)
+    rs.set_status(rid, state=rs.RUNNING, progress=0.2, iteration=2, root=tmp_path)
+    assert rs.list_runs(root=tmp_path)[0]["stale"] is False   # just updated — fresh
+
+    _age_status(rid, tmp_path, state=rs.RUNNING, seconds_ago=rs.STALE_AFTER_SECONDS + 60)
+    assert rs.list_runs(root=tmp_path)[0]["stale"] is True
+
+
+def test_list_runs_never_flags_non_running_states_as_stale(tmp_path):
+    net = _net()
+    rid = rs.create_run("r", net, _config(), iterations=1, seeds=1, root=tmp_path)
+    # QUEUED with a stale timestamp must not be reported as a stale RUNNING run
+    _age_status(rid, tmp_path, state=rs.QUEUED, seconds_ago=rs.STALE_AFTER_SECONDS + 60)
+    assert rs.list_runs(root=tmp_path)[0]["stale"] is False

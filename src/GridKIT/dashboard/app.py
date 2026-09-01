@@ -83,6 +83,13 @@ def render_dashboard() -> None:
     state = r["state"]
     if state == rs.QUEUED:
         st.info("Gespeichert, Training wurde noch nicht gestartet.")
+    elif state == rs.RUNNING and r.get("stale"):
+        st.warning(
+            f"Zeigt seit über {rs.STALE_AFTER_SECONDS // 60} Minuten keinen Fortschritt mehr "
+            f"(letzte Meldung: „{r.get('message', '')}“) — der Prozess ist wahrscheinlich abgestürzt "
+            "(z. B. durch zu wenig Arbeitsspeicher, wenn mehrere Trainings gleichzeitig liefen), nicht "
+            "wirklich noch am Trainieren. Sicherheitshalber löschen und neu starten."
+        )
     elif state == rs.RUNNING:
         st.progress(min(1.0, r.get("progress", 0.0)), text=r.get("message", "Training läuft…"))
         st.caption("Noch am Trainieren — auf „Aktualisieren“ klicken, um den Fortschritt zu sehen.")
