@@ -17,7 +17,10 @@ runs/
 
 # Generated/downloaded — regenerate locally, don't commit
 cache/
-data/oberacker.json
+data/
+!data/stub_network.json
 
 # Streamlit local files
 .streamlit/
+
+runs/
