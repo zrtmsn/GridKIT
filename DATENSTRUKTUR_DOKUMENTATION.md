@@ -66,6 +66,10 @@ Diese Dokumentation beschreibt die Struktur aller JSON-Dateien die vom GridKIT-P
 | `battery_charge_kwh_std` | float | Standardabweichung: Battery Throughput geladen |
 | `battery_discharge_kwh_mean` | float | Mittelwert: Battery Throughput entladen (kWh) |
 | `battery_discharge_kwh_std` | float | Standardabweichung: Battery Throughput entladen |
+| `battery_throughput_kwh_mean` | float | Mittelwert: Gesamte Energie-Bewegung (laden + entladen in kWh) |
+| `battery_throughput_kwh_std` | float | Standardabweichung: Gesamte Energie-Bewegung |
+| `battery_full_cycles_mean` | float | Mittelwert: Äquivalente Vollzyklen (Full Equivalent Cycles nach IEEE-Standard) |
+| `battery_full_cycles_std` | float | Standardabweichung: Äquivalente Vollzyklen |
 
 ---
 
@@ -98,6 +102,8 @@ Diese Dokumentation beschreibt die Struktur aller JSON-Dateien die vom GridKIT-P
     "house_ev_available": <list[float]>,
     "house_battery_power": <list[float]>,
     "house_battery_soc": <list[float]>,
+    "house_battery_charge_cumulative_kwh": <list[float]>,
+    "house_battery_discharge_cumulative_kwh": <list[float]>,
     "house_hp_power": <list[float]>,
     "house_hp_soc": <list[float]>,
     "house_pv": <list[float]>,
@@ -129,6 +135,8 @@ Diese Dokumentation beschreibt die Struktur aller JSON-Dateien die vom GridKIT-P
 | `house_ev_available` | list[float] | Einzelnes EV verfügbar pro Step (96 Steps, 0.0–1.0) |
 | `house_battery_power` | list[float] | Einzelne repräsentative Batterie pro Step (96 Steps, kW) |
 | `house_battery_soc` | list[float] | Einzelne repräsentative Batterie SoC pro Step (96 Steps, 0.0–1.0) |
+| `house_battery_charge_cumulative_kwh` | list[float] | Einzelne Batterie: Kumulative geladene Energie (96 Steps, kWh) – für Full Equivalent Cycles |
+| `house_battery_discharge_cumulative_kwh` | list[float] | Einzelne Batterie: Kumulative entladene Energie (96 Steps, kWh) – für Full Equivalent Cycles |
 | `house_hp_power` | list[float] | Einzelne repräsentative Wärmepumpe pro Step (96 Steps, kW) |
 | `house_hp_soc` | list[float] | Einzelne repräsentative HP SoC pro Step (96 Steps, 0.0–1.0) |
 | `house_pv` | list[float] | Einzelne repräsentative PV-Anlage pro Step (96 Steps, kW) |

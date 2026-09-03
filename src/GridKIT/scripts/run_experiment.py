@@ -19,6 +19,8 @@ import os
 import warnings
 from pathlib import Path
 
+import numpy as np
+
 
 def _setup_paths() -> Path:
     import sys
@@ -74,6 +76,13 @@ def _timeline(env, result, label: str, penetration: float) -> dict:
         "house_ev_soc": [pf.sample_household.get("ev_soc", 0.0) for pf in tr],
         "house_battery_soc": [pf.sample_household.get("battery_soc", 0.0) for pf in tr],
         "house_hp_soc": [pf.sample_household.get("hp_soc", 0.0) for pf in tr],
+        # Battery cycle counting (cumulative energy for Full Equivalent Cycles calculation)
+        "house_battery_charge_cumulative_kwh": np.cumsum(
+            [max(0.0, pf.sample_household.get("battery_kw", 0.0)) * const.TIMESTEP_HOURS for pf in tr]
+        ).tolist(),
+        "house_battery_discharge_cumulative_kwh": np.cumsum(
+            [max(0.0, -pf.sample_household.get("battery_kw", 0.0)) * const.TIMESTEP_HOURS for pf in tr]
+        ).tolist(),
         "soc_satisfaction_rate": result.metrics.soc_satisfaction_rate,
     }
 
@@ -164,6 +173,11 @@ def main() -> None:
                 "battery_charge_kwh_std": stats.battery_charge_kwh[1],
                 "battery_discharge_kwh_mean": stats.battery_discharge_kwh[0],
                 "battery_discharge_kwh_std": stats.battery_discharge_kwh[1],
+                # Battery cycle counting (Full Equivalent Cycles nach IEEE-Standard)
+                "battery_throughput_kwh_mean": stats.battery_charge_kwh[0] + stats.battery_discharge_kwh[0],
+                "battery_throughput_kwh_std": np.sqrt(stats.battery_charge_kwh[1]**2 + stats.battery_discharge_kwh[1]**2),
+                "battery_full_cycles_mean": (stats.battery_charge_kwh[0] + stats.battery_discharge_kwh[0]) / 2.0 / const.BATTERY_CAPACITY_KWH,
+                "battery_full_cycles_std": np.sqrt(stats.battery_charge_kwh[1]**2 + stats.battery_discharge_kwh[1]**2) / 2.0 / const.BATTERY_CAPACITY_KWH,
             })
             print("  " + str(stats))
             
