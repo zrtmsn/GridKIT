@@ -156,6 +156,7 @@ def render_designer() -> None:  # pragma: no cover (UI)
     from grid_model.environment import GridEnv
     from grid_model.device_profiles import DeviceProfileProvider
     from grid_model.gridcreator_loader import ding0_archive_available
+    from map_ui.map_widget import render_map_config
     from scenarios.policies import NaiveImmediatePolicy, NaivePriceFollowPolicy
     from scenarios.runner import run_episode, run_scenario
 
@@ -168,7 +169,10 @@ def render_designer() -> None:  # pragma: no cover (UI)
             "Beispiel-Feeder (20 Haushalte)",
             "Bereich auf der Karte zeichnen",
         ])
-        if source.startswith("Beispiel"):
+        from_map = source.startswith("Bereich")
+        use_ding0 = False
+
+        if not from_map:
             if st.button("Beispiel-Feeder laden", type="primary"):
                 net = StubNetworkBuilder(path="data/feeder_20.json").build()
                 _set_network(ss, net)
@@ -188,28 +192,30 @@ def render_designer() -> None:  # pragma: no cover (UI)
             else:
                 st.caption("Rechteck auf der Karte zeichnen, dann erstellen. Nur Deutschland — "
                            "außerhalb der Archivabdeckung fällt der Build auf OSM zurück.")
-            if st.button("Aus gezeichnetem Bereich erstellen", type="primary"):
-                bounds = ss.get("drawn_bounds")
-                if not bounds:
-                    st.error("Zuerst ein Rechteck auf der Karte zeichnen.")
-                else:
-                    _build_from_bounds(st, ss, bounds, use_ding0=use_ding0)
 
-        st.header("2 · Geräte-Mix (%)")
-        pen_ev = st.slider("EV", 0, 100, 60) / 100
-        pen_bat = st.slider("Batterie", 0, 100, 40) / 100
-        pen_hp = st.slider("Wärmepumpe", 0, 100, 40) / 100
-        pen_pv = st.slider("PV", 0, 100, 80) / 100
-        if st.button("Prozentsätze auf alle Haushalte anwenden"):
-            if ss.get("network"):
-                homes = list(ss.network.household_bus_ids)
-                ss.layout = build_device_layout(homes, ev=pen_ev, battery=pen_bat,
-                                                 heat_pump=pen_hp, pv=pen_pv)
-                st.success("Layout anhand der Regler aktualisiert.")
+        # Der Kartenpfad bringt seine eigene, vollständige Gerätekonfiguration mit
+        # (Anteile + Anpassung je Haushalt), daher gibt es die Regler nur für den
+        # Beispiel-Feeder, der keinen gezeichneten Bereich hat.
+        if not from_map:
+            st.header("2 · Geräte-Mix (%)")
+            pen_ev = st.slider("EV", 0, 100, 60) / 100
+            pen_bat = st.slider("Batterie", 0, 100, 40) / 100
+            pen_hp = st.slider("Wärmepumpe", 0, 100, 40) / 100
+            pen_pv = st.slider("PV", 0, 100, 80) / 100
+            if st.button("Prozentsätze auf alle Haushalte anwenden"):
+                if ss.get("network"):
+                    homes = list(ss.network.household_bus_ids)
+                    ss.layout = build_device_layout(homes, ev=pen_ev, battery=pen_bat,
+                                                     heat_pump=pen_hp, pv=pen_pv)
+                    st.success("Layout anhand der Regler aktualisiert.")
 
-    # OSM-Zeichenkarte (nur nötig, solange noch kein Netz existiert)
-    if source.startswith("Bereich") and not ss.get("network"):
-        _draw_map(st, folium, st_folium, ss)
+    # Kartenansicht + Netzwerkkonfiguration kommen aus map_ui — eine gemeinsame
+    # Implementierung für map_ui und Dashboard statt einer zweiten eigenen Karte.
+    if from_map:
+        render_map_config(
+            build_network=_make_network_builder(st, use_ding0=use_ding0),
+            on_network_built=lambda net: _set_network(ss, net, set_layout=False),
+        )
 
     if not ss.get("network"):
         st.info("Zum Start ein Netz aus der Seitenleiste laden oder erstellen.")
@@ -220,46 +226,51 @@ def render_designer() -> None:  # pragma: no cover (UI)
     layout: dict = ss.layout
     hh_coords = {b: coords[b] for b in network.household_bus_ids if b in coords}
 
-    counts = layout_counts(layout)
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Haushalte", len(network.household_bus_ids))
-    c2.metric("EV", counts[const.DEVICE_EV])
-    c3.metric("Batterie", counts[const.DEVICE_BATTERY])
-    c4.metric("Wärmepumpe", counts[const.DEVICE_HEAT_PUMP])
-    c5.metric("PV", counts[const.DEVICE_PV])
+    # Auf dem Kartenpfad zeigt die Netzwerkkonfiguration dieselbe Zusammenfassung
+    # bereits an — hier nicht ein zweites Mal.
+    if not from_map:
+        counts = layout_counts(layout)
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Haushalte", len(network.household_bus_ids))
+        c2.metric("EV", counts[const.DEVICE_EV])
+        c3.metric("Batterie", counts[const.DEVICE_BATTERY])
+        c4.metric("Wärmepumpe", counts[const.DEVICE_HEAT_PUMP])
+        c5.metric("PV", counts[const.DEVICE_PV])
 
-    # ── 3. Interaktiver Netzgraph (Haushalt anklicken) ─────
-    st.subheader("Netz — Haushalt anklicken, um ihn zu bearbeiten")
-    n_grid_nodes = len(network.buses) - len(network.household_bus_ids)
-    st.caption(
-        f"**Nur die {len(network.household_bus_ids)} farbigen Kreise sind Haushalte, die du bearbeiten kannst.** "
-        f"Markerfarbe = Anzahl steuerbarer Geräte: ⬤ grau 0 · ⬤ blau 1 · ⬤ orange 2 · ⬤ rot 3 "
-        f"(PV wird im Popup angezeigt). Die blassen grauen Linien + ⚡-Transformator sind das "
-        f"elektrische Netzskelett ({n_grid_nodes} Leitungs-/Knotenpunkte) — nur Geometrie, keine "
-        f"Haushalte und nicht anklickbar."
-    )
-    fmap = _network_map(folium, network, coords, layout)
-    map_state = st_folium(fmap, height=520, width=None,
-                          returned_objects=["last_object_clicked"], key="net_map")
-    clicked = (map_state or {}).get("last_object_clicked")
-    if clicked and "lat" in clicked:
-        sel = nearest_household(clicked["lat"], clicked["lng"], hh_coords)
-        if sel:
-            ss.selected_bus = sel
+    # ── 3./4. Netzgraph + Editor je Haushalt ───────────────
+    # Nur für den Beispiel-Feeder: der Kartenpfad nutzt die Kartenansicht und die
+    # Haushalt-Anpassung aus map_ui, damit es nicht zwei Kartenansichten gibt.
+    if not from_map:
+        st.subheader("Netz — Haushalt anklicken, um ihn zu bearbeiten")
+        n_grid_nodes = len(network.buses) - len(network.household_bus_ids)
+        st.caption(
+            f"**Nur die {len(network.household_bus_ids)} farbigen Kreise sind Haushalte, die du bearbeiten kannst.** "
+            f"Markerfarbe = Anzahl steuerbarer Geräte: ⬤ grau 0 · ⬤ blau 1 · ⬤ orange 2 · ⬤ rot 3 "
+            f"(PV wird im Popup angezeigt). Die blassen grauen Linien + ⚡-Transformator sind das "
+            f"elektrische Netzskelett ({n_grid_nodes} Leitungs-/Knotenpunkte) — nur Geometrie, keine "
+            f"Haushalte und nicht anklickbar."
+        )
+        fmap = _network_map(folium, network, coords, layout)
+        map_state = st_folium(fmap, height=520, width=None,
+                              returned_objects=["last_object_clicked"], key="net_map")
+        clicked = (map_state or {}).get("last_object_clicked")
+        if clicked and "lat" in clicked:
+            sel = nearest_household(clicked["lat"], clicked["lng"], hh_coords)
+            if sel:
+                ss.selected_bus = sel
 
-    # ── 4. Editor je Haushalt ──────────────────────────────
-    sel = ss.get("selected_bus")
-    if sel and sel in layout:
-        st.subheader(f"Haushalt `{sel}`")
-        cfg = layout[sel]
-        e1, e2, e3, e4 = st.columns(4)
-        ev = e1.checkbox("EV", value=cfg.ev, key=f"ev_{sel}")
-        bat = e2.checkbox("Batterie", value=cfg.battery, key=f"bat_{sel}")
-        hp = e3.checkbox("Wärmepumpe", value=cfg.heat_pump, key=f"hp_{sel}")
-        pv = e4.checkbox("PV", value=cfg.pv, key=f"pv_{sel}")
-        layout[sel] = HouseholdDevices(bus_id=sel, ev=ev, battery=bat, heat_pump=hp, pv=pv)
-    else:
-        st.caption("Kein Haushalt ausgewählt — einen Marker auf der Karte oben anklicken.")
+        sel = ss.get("selected_bus")
+        if sel and sel in layout:
+            st.subheader(f"Haushalt `{sel}`")
+            cfg = layout[sel]
+            e1, e2, e3, e4 = st.columns(4)
+            ev = e1.checkbox("EV", value=cfg.ev, key=f"ev_{sel}")
+            bat = e2.checkbox("Batterie", value=cfg.battery, key=f"bat_{sel}")
+            hp = e3.checkbox("Wärmepumpe", value=cfg.heat_pump, key=f"hp_{sel}")
+            pv = e4.checkbox("PV", value=cfg.pv, key=f"pv_{sel}")
+            layout[sel] = HouseholdDevices(bus_id=sel, ev=ev, battery=bat, heat_pump=hp, pv=pv)
+        else:
+            st.caption("Kein Haushalt ausgewählt — einen Marker auf der Karte oben anklicken.")
 
     # ── 5. Simulation ausführen ────────────────────────────────
     st.subheader("3 · Simulation ausführen")
@@ -341,51 +352,56 @@ def render_designer() -> None:  # pragma: no cover (UI)
 
 
 # ── Streamlit-Hilfsfunktionen (nur UI) ──────────────────────────────
-def _build_from_bounds(st, ss, bounds, *, use_ding0: bool) -> None:  # pragma: no cover (UI)
-    """Build the drawn area: real ding0 grid when possible, OSM otherwise.
+def _make_network_builder(st, *, use_ding0: bool):  # pragma: no cover (UI)
+    """The builder injected into map_ui's map view: real ding0 grid, OSM otherwise.
 
     ding0 is tried first because it is the only source of real, individually-sized
     transformers. It covers Germany only, and only the districts present in the
     local archive, so any failure degrades to the OSM builder rather than leaving
     the user stuck — but always says so, since the two are not comparable.
     """
-    from grid_model.gridcreator_loader import (
-        Ding0Unavailable,
-        build_grid_network_from_ding0,
-    )
-    from map_ui.osm_fetcher import OsmFetchConfig, build_grid_network_from_bounds
+    def build(bounds, area_name: str) -> GridNetwork:
+        from grid_model.gridcreator_loader import (
+            Ding0Unavailable,
+            build_grid_network_from_ding0,
+        )
+        from map_ui.osm_fetcher import OsmFetchConfig, build_grid_network_from_bounds
 
-    if use_ding0:
-        try:
-            with st.spinner("Das echte ding0-NS-Netz für diesen Bereich wird extrahiert…"):
-                net = build_grid_network_from_ding0(
-                    south=bounds.south, west=bounds.west,
-                    north=bounds.north, east=bounds.east,
-                )
-            _set_network(ss, net)
-            st.success(f"ding0-Netz: {len(net.household_bus_ids)} Haushalte, "
-                       f"{len(net.transformers)} echte Transformatoren.")
-            return
-        except Ding0Unavailable as exc:
-            st.warning(f"{exc}\n\nRückfall auf OSM — ein synthetischer 160-kVA-Transformator.")
-        except Exception as exc:
-            st.warning(f"ding0-Extraktion fehlgeschlagen ({exc}). Rückfall auf OSM.")
+        if use_ding0:
+            try:
+                with st.spinner("Das echte ding0-NS-Netz für diesen Bereich wird extrahiert…"):
+                    net = build_grid_network_from_ding0(
+                        south=bounds.south, west=bounds.west,
+                        north=bounds.north, east=bounds.east,
+                    )
+                st.success(f"ding0-Netz: {len(net.household_bus_ids)} Haushalte, "
+                           f"{len(net.transformers)} echte Transformatoren.")
+                return net
+            except Ding0Unavailable as exc:
+                st.warning(f"{exc}\n\nRückfall auf OSM — ein synthetischer 160-kVA-Transformator.")
+            except Exception as exc:
+                st.warning(f"ding0-Extraktion fehlgeschlagen ({exc}). Rückfall auf OSM.")
 
-    with st.spinner("Overpass wird abgefragt (mit Mirror-Failover) und das Netz wird erstellt…"):
-        try:
-            res = build_grid_network_from_bounds(bounds, config=OsmFetchConfig())
-            _set_network(ss, res.grid_network)
-            for w in res.warnings:
-                st.warning(w)
-        except Exception as exc:
-            st.error(f"Erstellung aus OSM fehlgeschlagen — {exc}")
+        with st.spinner("Overpass wird abgefragt (mit Mirror-Failover) und das Netz wird erstellt…"):
+            res = build_grid_network_from_bounds(
+                bounds, area_name=area_name, config=OsmFetchConfig(),
+            )
+        for w in res.warnings:
+            st.warning(w)
+        return res.grid_network
+
+    return build
 
 
-def _set_network(ss, network) -> None:  # pragma: no cover
+def _set_network(ss, network, *, set_layout: bool = True) -> None:  # pragma: no cover
     ss.network = network
     ss.bus_coords = bus_coordinates(network)
     homes = list(network.household_bus_ids)
-    ss.layout = build_device_layout(homes, ev=0.6, battery=0.4, heat_pump=0.4, pv=0.8)
+    # Auf dem Kartenpfad setzt die Netzwerkkonfiguration aus map_ui das Layout
+    # unmittelbar danach — hier nur leeren, damit nie das Layout des vorherigen
+    # Netzes stehen bleibt.
+    ss.layout = (build_device_layout(homes, ev=0.6, battery=0.4, heat_pump=0.4, pv=0.8)
+                 if set_layout else {})
     ss.selected_bus = None
     # verhindert, dass Ergebnisse eines vorherigen Netzes/Layouts weiter angezeigt
     # werden, bis erneut auf "Simulation ausführen" geklickt wird
@@ -572,23 +588,6 @@ def _render_device_power_panels(timestep_results) -> None:  # pragma: no cover (
         .properties(width="container", height=320)
     )
     st.altair_chart(shared, width="stretch")
-
-
-def _draw_map(st, folium, st_folium, ss) -> None:  # pragma: no cover
-    from folium.plugins import Draw
-    m = folium.Map(location=_DEFAULT_CENTER, zoom_start=14, tiles="OpenStreetMap")
-    Draw(export=False, draw_options={"polyline": False, "circle": False, "circlemarker": False,
-                                     "marker": False, "rectangle": True, "polygon": False}).add_to(m)
-    data = st_folium(m, height=760, width=None, use_container_width=True,
-                     returned_objects=["last_active_drawing"], key="draw_map")
-    from map_ui.osm_fetcher import AreaBounds
-    drawing = (data or {}).get("last_active_drawing")
-    if drawing and drawing.get("geometry", {}).get("type") == "Polygon":
-        pts = drawing["geometry"]["coordinates"][0]
-        lons = [p[0] for p in pts]; lats = [p[1] for p in pts]
-        ss.drawn_bounds = AreaBounds(south=min(lats), west=min(lons), north=max(lats), east=max(lons))
-        st.success(f"Bereich ausgewählt (~{ss.drawn_bounds.approx_area_km2():.2f} km²). "
-                   "»Aus gezeichnetem Bereich erstellen« in der Seitenleiste anklicken.")
 
 
 def _network_map(folium, network, coords, layout):  # pragma: no cover
