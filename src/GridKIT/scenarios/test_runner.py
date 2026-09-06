@@ -34,6 +34,19 @@ def test_run_episode_populates_metrics(env):
     assert 0.0 <= m.soc_satisfaction_rate <= 1.0
 
 
+def test_run_episode_populates_hp_and_battery_metrics(env):
+    """The comparison must not be silently EV-only — HP comfort and battery cycling
+    have to actually show up in the metrics whenever the env has those devices."""
+    m = run_episode(env, NaiveImmediatePolicy(), seed=0).metrics
+    assert 0.0 <= m.hp_comfort_satisfaction_rate <= 1.0
+    assert m.battery_charge_kwh >= 0.0
+    assert m.battery_discharge_kwh >= 0.0
+    # the thermostatic HP baseline runs the compressor whenever below setpoint, and the
+    # greedy battery baseline reacts to PV/net-load every step — over a full day on this
+    # env (has both devices, nonzero base load) neither should stay silent at zero.
+    assert m.battery_charge_kwh + m.battery_discharge_kwh > 0.0
+
+
 def test_run_scenario_aggregates_over_seeds(env):
     stats = run_scenario(env, NaiveImmediatePolicy(), seeds=[0, 1], label="t")
     assert stats.n_episodes == 2

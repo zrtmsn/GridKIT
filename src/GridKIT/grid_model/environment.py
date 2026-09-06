@@ -104,10 +104,12 @@ class _Household:
         self.profiles = profiles
         self.devices = devices        # subset of controllable {ev, battery, hp} this home has
         self.has_pv = has_pv
-        # device state objects always exist; only present devices participate/act
+        # device state objects always exist; only present devices participate/act.
+        # EVState.availability comes straight from this episode's sampled profile —
+        # real pyCity occupancy data, or a stub-network fallback (see builder).
         self.ev = EVState(
             agent_id=make_agent_id(bus_id, const.DEVICE_EV), bus_id=bus_id,
-            soc=0.5, arrival_step=0, departure_step=const.EPISODE_STEPS - 1, is_connected=False,
+            soc=0.5, availability=(profiles.ev_available >= 0.5).tolist(),
         )
         self.battery = BatteryState(agent_id=make_agent_id(bus_id, const.DEVICE_BATTERY), bus_id=bus_id)
         self.hp = HPState(agent_id=make_agent_id(bus_id, const.DEVICE_HEAT_PUMP), bus_id=bus_id)
@@ -239,8 +241,6 @@ class GridEnv(GridEnvProtocol):
 
         observations: dict[str, Observation] = {}
         for hh in self._households.values():
-            if const.DEVICE_EV in hh.devices:
-                hh.ev.is_connected = hh.profiles.ev_available[0] >= 0.5
             for dev in hh.devices:
                 observations[make_agent_id(hh.bus_id, dev)] = self._observe(hh, dev)
         return observations
@@ -258,8 +258,7 @@ class GridEnv(GridEnvProtocol):
             has = hh.devices
 
             if const.DEVICE_EV in has:
-                connected = p.ev_available[t] >= 0.5
-                hh.ev.is_connected = connected
+                connected = hh.ev.is_connected_at(t)
                 ev_a = int(actions.get(make_agent_id(hh.bus_id, const.DEVICE_EV), 0))
                 ev_kw = const.ACTION_TO_KW[ev_a] if (connected and hh.ev.soc < hh.ev.target_soc) else 0.0
             else:

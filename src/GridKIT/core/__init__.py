@@ -7,6 +7,7 @@ from core.models import (
     ChargingAction,
     EpisodeMetrics,
     EVState,
+    FeederSummary,
     GridNetwork,
     LineModel,
     Observation,
@@ -22,7 +23,7 @@ from core import constants
 __all__ = [
     # models
     "BusModel", "ChargingAction", "EpisodeMetrics", "EVState",
-    "GridNetwork", "LineModel", "Observation",
+    "FeederSummary", "GridNetwork", "LineModel", "Observation",
     "PowerFlowResult", "SimResult", "StepResult",
     "TransformerModel",
     # protocols

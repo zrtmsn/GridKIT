@@ -38,6 +38,7 @@ from GridKIT.grid_model.environment import GridEnv
 from GridKIT.rl_engine import GridEnvRLlibWrapper
 from GridKIT.rl_engine.ippo_config import create_ippo_config
 from GridKIT.core import settings
+from GridKIT.training_utils import force_always_connected
 
 # Ray & RLlib imports
 import ray
@@ -71,6 +72,8 @@ def main():
 
     # Creates the GridEnv instance (internally creates its own network).
     env = GridEnv()
+    # ! TODO: remove force_always_connected once RL is adjusted to handle the new EV availability model
+    force_always_connected(env)
     network = env.network
     print(f"   Network loaded with {len(env.agent_ids)} households.")
 
@@ -87,6 +90,8 @@ def main():
     # dependency injection, so a factory is required.
     def env_creator(config):
         local_env = GridEnv()
+        # ! TODO: remove force_always_connected once RL is adjusted to handle the new EV availability model
+        force_always_connected(local_env)
         return GridEnvRLlibWrapper(env=local_env)
 
     register_env(env_name, env_creator)

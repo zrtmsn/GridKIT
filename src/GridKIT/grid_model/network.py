@@ -31,7 +31,7 @@ def build_pypsa_network(grid_network: GridNetwork) -> pypsa.Network:
                     # the power flow singular (nan flows). ~4% uk is typical for LV.
                     x = const.TRANSFORMER_REACTANCE_PU,
                     r = const.TRANSFORMER_RESISTANCE_PU)
-        
+
     slack_trafo = grid_network.transformers[0]
     network.add(
     "Generator",
@@ -60,5 +60,4 @@ def build_pypsa_network(grid_network: GridNetwork) -> pypsa.Network:
 
     return network
 
-    
 

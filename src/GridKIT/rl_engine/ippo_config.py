@@ -3,31 +3,35 @@
 # IPPO (Independent PPO) Configuration for GridKIT.
 #
 # Design Decisions:
-# - One shared policy PER device type (ev_policy / battery_policy / hp_policy):
-#   every agent of a given device type shares neural-network weights, pooling
-#   experience across households while keeping each device's action space small
-#   (agent-per-device avoids the combinatorial joint action space).
-# - Discrete Action Space, per device: ev/battery = Discrete(3), hp = Discrete(2),
-#   set explicitly on each PolicySpec. policy_mapping_fn routes by agent-id suffix.
+# - Multi-Agent with one shared policy PER DEVICE TYPE: all EV agents share
+#   "ev_policy", all battery agents share "battery_policy", all heat-pump
+#   agents share "hp_policy" (pooling experience within a device type, the way
+#   a single shared policy pools it across households). One policy across ALL
+#   device types would not work: EV/battery have 3 discrete actions, heat pump
+#   only 2 (OFF/HEAT), and the three devices act on physically different
+#   quantities — see constants.ACTION_DIM_BY_DEVICE and
+#   GridEnvRLlibWrapper.action_spaces, which already give each device type its
+#   own action space; this must route to a matching per-type policy.
+# - Discrete Action Space: each PolicySpec's action_space is explicit (not
+#   inferred), since the wrapper's action_space is heterogeneous (a per-agent
+#   Dict), so RLlib cannot infer a single space to hand every policy.
 # ─────────────────────────────────────────────────────────────────────────────
 
-import gymnasium as gym
-import numpy as np
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
+import gymnasium as gym
 
 from GridKIT.core import constants as const
 from GridKIT.core.config import settings
 from GridKIT.core.models import device_of
 
 
-def _policy_name(device: str) -> str:
-    return f"{device}_policy"
+def _policy_id(agent_id: str, *args, **kwargs) -> str:
+    """Route an agent to its device type's shared policy (e.g. "h3::hp" -> "hp_policy")."""
+    return f"{device_of(agent_id)}_policy"
 
 
-def policy_mapping_fn(agent_id, *args, **kwargs):
-    """Route each agent to the shared policy for its device type (agent_id = bus::device)."""
-    return _policy_name(device_of(agent_id))
+_OBS_SPACE = gym.spaces.Box(low=0.0, high=1.0, shape=(const.OBS_DIM_MULTIDEVICE,))
 
 
 def create_ippo_config(
@@ -62,25 +66,20 @@ def create_ippo_config(
     Returns:
         A configured ray.rllib.algorithms.ppo.PPOConfig object.
     """
-    # One shared policy PER device type (ev / battery / hp). Obs space is the
-    # uniform 10-dim Box; the action space differs by device type, so it is set
-    # explicitly on each PolicySpec.
-    obs_space = gym.spaces.Box(low=0.0, high=1.0, shape=(const.OBS_DIM_MULTIDEVICE,), dtype=np.float32)
-    policies = {
-        _policy_name(dev): PolicySpec(
-            observation_space=obs_space,
-            action_space=gym.spaces.Discrete(const.ACTION_DIM_BY_DEVICE[dev]),
-        )
-        for dev in const.CONTROLLABLE_DEVICE_TYPES
-    }
-
     return (
         PPOConfig()
         .environment(env=env_name)
         .env_runners(num_env_runners=num_env_runners)
         .multi_agent(
-            policies=policies,
-            policy_mapping_fn=policy_mapping_fn,
+            policies={
+                f"{device}_policy": PolicySpec(
+                    observation_space=_OBS_SPACE,
+                    action_space=gym.spaces.Discrete(dim),
+                )
+                for device, dim in const.ACTION_DIM_BY_DEVICE.items()
+            },
+            # Maps each agent to its device type's shared policy (see _policy_id).
+            policy_mapping_fn=_policy_id,
         )
         .training(
             lr=lr,

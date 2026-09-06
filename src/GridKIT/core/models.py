@@ -4,14 +4,15 @@
 # Modules communicate ONLY through these models — no direct
 # cross-module imports allowed.
 # ─────────────────────────────────────────────────────────────
- 
+
 from __future__ import annotations
- 
+
 from enum import IntEnum, StrEnum
 from typing import Optional
 from pydantic import BaseModel, Field, model_validator
- 
+
 from core.constants import (
+    EPISODE_STEPS,
     EV_BATTERY_CAPACITY_KWH,
     EV_TARGET_SOC,
     BATTERY_CAPACITY_KWH,
@@ -26,12 +27,12 @@ from core.constants import (
     DEVICE_HEAT_PUMP,
     CONTROLLABLE_DEVICE_TYPES,
 )
- 
- 
+
+
 # ══════════════════════════════════════════════════════════════
 # Enums
 # ══════════════════════════════════════════════════════════════
- 
+
 class ChargingAction(IntEnum):
     OFF  = 0   # 0.0 kW
     HALF = 1   # 3.7 kW
@@ -87,20 +88,20 @@ def device_of(agent_id: str) -> str:
 
 def bus_of(agent_id: str) -> str:
     return agent_id.split(AGENT_SEP, 1)[0]
- 
- 
+
+
 # ══════════════════════════════════════════════════════════════
 # Grid topology
 # ══════════════════════════════════════════════════════════════
- 
+
 class BusModel(BaseModel):
     """Single node (bus) in the distribution network."""
     bus_id: str
     v_nom_kv: float = 0.4       # nominal voltage in kV (LV grid = 0.4 kV)
     x_coord: Optional[float] = None
     y_coord: Optional[float] = None
- 
- 
+
+
 class LineModel(BaseModel):
     """Cable connecting two buses."""
     line_id: str
@@ -110,8 +111,8 @@ class LineModel(BaseModel):
     r_ohm_per_km: float         # resistance — causes active power loss
     x_ohm_per_km: float         # reactance — causes reactive power loss
     max_i_ka: float             # maximum current in kilo-amperes before overload
- 
- 
+
+
 class TransformerModel(BaseModel):
     """MV/LV transformer at the grid head."""
     trafo_id: str
@@ -120,8 +121,8 @@ class TransformerModel(BaseModel):
     s_nom_mva: float            # rated apparent power in MVA (e.g. 0.16 = 160 kVA)
     vn_hv_kv: float = 20.0     # nominal voltage high-voltage side
     vn_lv_kv: float = 0.4      # nominal voltage low-voltage side
- 
- 
+
+
 class GridNetwork(BaseModel):
     """
     Complete low-voltage network topology.
@@ -135,32 +136,56 @@ class GridNetwork(BaseModel):
     transformers: list[TransformerModel] = Field(default_factory=list)
     area_name: Optional[str] = None
     household_bus_ids: list[str] = Field(default_factory=list)  # bus IDs that are residential connection points (from GridCreator buses_df)
+    # Optional real data from GridCreator, one representative day at episode
+    # resolution (length == EPISODE_STEPS). Absent/empty for stub networks —
+    # grid_model falls back to synthetic profiles and always-connected EVs.
+    household_load_profile_kw: dict[str, list[float]] = Field(default_factory=dict)
+    ev_availability: dict[str, list[bool]] = Field(default_factory=dict)  # household_bus_id -> plugged-in per step
 
     @property
     def n_households(self) -> int:
         return len(self.household_bus_ids)
- 
- 
+
+
+class FeederSummary(BaseModel):
+    """
+    One transformer's radial feeder within a (possibly multi-transformer)
+    GridNetwork — enough for a UI to list/highlight feeder options on a map
+    without re-deriving the bus membership itself.
+    Produced by grid_model.builder.OSMNetworkBuilder.list_feeders().
+    """
+    trafo_id: str
+    household_count: int
+    bus_ids: list[str]  # every bus (household or not) reachable from this transformer
+
+
 # ══════════════════════════════════════════════════════════════
 # Household / EV state
 # ══════════════════════════════════════════════════════════════
- 
+
 class EVState(BaseModel):
     """Live state of a single EV, updated every timestep."""
     agent_id: str
     bus_id: str                          # which bus this EV is connected to
     soc: float = Field(ge=0.0, le=1.0)  # state of charge: 0.0 = empty, 1.0 = full
-    target_soc: float = EV_TARGET_SOC   # SoC the agent must reach by departure
+    target_soc: float = EV_TARGET_SOC   # SoC the agent must reach by the end of the episode
     battery_capacity_kwh: float = EV_BATTERY_CAPACITY_KWH
-    arrival_step: int  = 0              # timestep index (0–95) when EV arrives home
-    departure_step: int = 95            # timestep index (0–95) when EV must leave
-    is_connected: bool = True           # False when EV is away (before arrival / after departure)
- 
+    # Plugged-in/away per episode step — same structure as GridCreator's own
+    # Link.p_max_pu availability series (core/protocols.py / grid_model.builder).
+    # Defaults to "always connected" for networks without real availability data.
+    # Heterogeneous synthetic connection windows (grid_model.device_profiles)
+    # populate this from each household's sampled arrival/departure just like
+    # real GridCreator data would — one representation for both sources.
+    availability: list[bool] = Field(default_factory=lambda: [True] * EPISODE_STEPS)
+
     @model_validator(mode="after")
-    def departure_after_arrival(self) -> "EVState":
-        if self.departure_step <= self.arrival_step:
-            raise ValueError("departure_step must be > arrival_step")
+    def availability_matches_episode_length(self) -> "EVState":
+        if len(self.availability) != EPISODE_STEPS:
+            raise ValueError(f"availability must have exactly {EPISODE_STEPS} entries, got {len(self.availability)}")
         return self
+
+    def is_connected_at(self, step: int) -> bool:
+        return self.availability[step]
 
 
 class BatteryState(BaseModel):
@@ -260,7 +285,7 @@ def build_device_layout(
 # ══════════════════════════════════════════════════════════════
 # RL interface models
 # ══════════════════════════════════════════════════════════════
- 
+
 class Observation(BaseModel):
     """
     7-dimensional observation vector for one agent (see constants.OBS_DIM).
@@ -316,9 +341,9 @@ class Observation(BaseModel):
             self.recent_curtailment_ratio,
             self.time_of_day,
         ]
- 
- 
- 
+
+
+
 class StepResult(BaseModel):
     """Output of GridEnvProtocol.step() for one agent."""
     agent_id: str
@@ -327,11 +352,11 @@ class StepResult(BaseModel):
     done: bool
     truncated: bool = False
     info: dict = Field(default_factory=dict)   # curtailment_kw, etc.
- 
- 
+
+
 class PowerFlowResult(BaseModel):
     """
-    Outcome of one PyPSA power flow run.
+    Outcome of one power flow run (surrogate or PyPSA).
     Produced by grid_model; used to compute rewards and curtailment.
     """
     timestep: int
@@ -339,18 +364,19 @@ class PowerFlowResult(BaseModel):
     transformer_loadings_pu: dict[str, float] = Field(default_factory=dict)  # feeder_id → loading (multi-feeder grids)
     line_loadings_pu: dict[str, float]   # line_id → load fraction of rated capacity (p.u. = per unit)
     bus_voltages_pu: dict[str, float]    # bus_id → voltage as fraction of nominal (1.0 = 0.4 kV)
+    bus_load_mw: dict[str, float] = Field(default_factory=dict)  # household bus_id → actual (post-curtailment) load in MW
     curtailment_applied: bool            # True if §14a power reduction was triggered this timestep
     curtailed_power_kw: dict[str, float] = Field(default_factory=dict)  # agent_id → kW that was cut
     device_power_kw: dict[str, float] = Field(default_factory=dict)     # device type → feeder-aggregate delivered kW
                                                                         # (ev/hp ≥0 load; battery signed: + charge / − discharge; pv ≤0 generation)
     sample_household: dict[str, float] = Field(default_factory=dict)    # ONE representative home's exact state this step:
                                                                         # ev_kw, battery_kw, hp_kw, pv_kw, ev_available, ev_soc, battery_soc, hp_soc
- 
- 
+
+
 # ══════════════════════════════════════════════════════════════
 # Episode / simulation result
 # ══════════════════════════════════════════════════════════════
- 
+
 class EpisodeMetrics(BaseModel):
     """Logged at end of each evaluation episode. Not populated during training."""
     episode: int
@@ -362,6 +388,18 @@ class EpisodeMetrics(BaseModel):
     # at feed-in). A grid-friendly policy nobody would install is worthless, so the
     # adoption case needs the bill as a first-class outcome, not just as a reward term.
     mean_household_bill_eur: float = 0.0
+
+    # What the OTHER two controllable devices were actually doing — without these the
+    # scenario comparison is silently EV-only even though battery/HP run every episode.
+    # Fraction of (HP-equipped-household, step) pairs where the thermal buffer stayed at
+    # or above its comfort floor (mirrors soc_satisfaction_rate, but per-step since HP
+    # has no single terminal deadline the way an EV departure does).
+    hp_comfort_satisfaction_rate: float = 0.0
+    # Feeder-aggregate battery energy cycled over the episode (kWh) — charge and discharge
+    # kept separate rather than netted, since a battery that never moves and one that
+    # charges 5 kWh then discharges 5 kWh both net to zero but are very different behaviors.
+    battery_charge_kwh: float = 0.0
+    battery_discharge_kwh: float = 0.0
 
     # WHERE the stress was, not just how often. §14a dimming is applied per feeder, so a
     # bare event count hides whether one weak feeder caused everything or the whole grid
@@ -376,8 +414,8 @@ class EpisodeMetrics(BaseModel):
     epsilon: Optional[float] = None
     # IPPO only: mean policy entropy across all agents at episode end; None for DQN
     entropy: Optional[float] = None
- 
- 
+
+
 class SimResult(BaseModel):
     """
     Full simulation result for one episode.
@@ -386,7 +424,7 @@ class SimResult(BaseModel):
     episode: int
     network_id: str
     ev_penetration: float                # fraction of households with an EV (e.g. 0.20 = 20%)
-    timestep_results: list[PowerFlowResult] = Field(default_factory=list)  # one entry per timestep (96 total)
+    timestep_results: list[PowerFlowResult] = Field(default_factory=list)  # one entry per timestep (EPISODE_STEPS total)
     final_soc_per_agent: dict[str, float] = Field(default_factory=dict)    # agent_id → SoC at departure
     metrics: EpisodeMetrics
- 
+

@@ -26,6 +26,9 @@ def compute_episode_metrics(
     per_agent_return: dict[str, float],
     soc_satisfied: dict[str, bool],
     bill_by_household: dict[str, float] | None = None,
+    hp_comfort_satisfaction_rate: float = 0.0,
+    battery_charge_kwh: float = 0.0,
+    battery_discharge_kwh: float = 0.0,
 ) -> EpisodeMetrics:
     """Reduce one episode's per-step stream + terminal flags into EpisodeMetrics."""
     curtailment_events = sum(1 for pf in timestep_results if pf.curtailment_applied)
@@ -60,6 +63,9 @@ def compute_episode_metrics(
         curtailment_events=curtailment_events,
         transformer_peak_loading_pu=peak_loading,
         mean_household_bill_eur=float(np.mean(bills)) if bills else 0.0,
+        hp_comfort_satisfaction_rate=hp_comfort_satisfaction_rate,
+        battery_charge_kwh=battery_charge_kwh,
+        battery_discharge_kwh=battery_discharge_kwh,
         feeder_overload_steps=feeder_steps,
         feeder_peak_loading_pu=feeder_peak,
         line_overload_steps=line_steps,
@@ -82,6 +88,10 @@ def run_episode(
     final_soc: dict[str, float] = {}
     soc_satisfied: dict[str, bool] = {}
     bill_by_household: dict[str, float] = {}
+    hp_comfort_steps = 0
+    hp_total_steps = 0
+    battery_charge_kwh = 0.0
+    battery_discharge_kwh = 0.0
 
     while True:
         actions = policy.act(obs)
@@ -97,6 +107,25 @@ def run_episode(
                 bill_by_household[house] = bill_by_household.get(house, 0.0) + result.info["bill_eur"]
                 counted.add(house)
 
+        # HP comfort is also a per-household quantity shared across that household's
+        # device-agents (see bill above) — count it once per house per step.
+        counted_hp: set[str] = set()
+        for aid, result in step_results.items():
+            house = bus_of(aid)
+            if house not in counted_hp and "hp_thermal_soc" in result.info:
+                hp_total_steps += 1
+                if result.info["hp_thermal_soc"] >= const.HP_COMFORT_MIN_SOC:
+                    hp_comfort_steps += 1
+                counted_hp.add(house)
+
+        # battery power is already a feeder-aggregate on the PowerFlowResult itself
+        # (signed: + charge / − discharge) — read once per step, not per agent.
+        batt_kw = power_flow.device_power_kw.get(const.DEVICE_BATTERY, 0.0)
+        if batt_kw > 0:
+            battery_charge_kwh += batt_kw * const.TIMESTEP_HOURS
+        else:
+            battery_discharge_kwh += -batt_kw * const.TIMESTEP_HOURS
+
         for aid, result in step_results.items():
             per_agent_return[aid] += result.reward
             # SoC verdict is meaningful only for EV agents (info is shared across a
@@ -109,8 +138,10 @@ def run_episode(
         if any(r.done for r in step_results.values()):
             break
 
+    hp_comfort_rate = (hp_comfort_steps / hp_total_steps) if hp_total_steps else 0.0
     metrics = compute_episode_metrics(seed, timestep_results, per_agent_return, soc_satisfied,
-                                      bill_by_household)
+                                      bill_by_household, hp_comfort_rate,
+                                      battery_charge_kwh, battery_discharge_kwh)
     return SimResult(
         episode=seed,
         network_id=env.network.network_id,
@@ -131,6 +162,9 @@ class ScenarioStats:
     transformer_peak_loading_pu: tuple[float, float]
     mean_episode_reward: tuple[float, float]
     mean_household_bill_eur: tuple[float, float] = (0.0, 0.0)   # € per household per 24 h
+    hp_comfort_satisfaction_rate: tuple[float, float] = (0.0, 0.0)
+    battery_charge_kwh: tuple[float, float] = (0.0, 0.0)
+    battery_discharge_kwh: tuple[float, float] = (0.0, 0.0)
     # per-component stress, averaged over seeds — answers "which transformer / line was it"
     feeder_overload_steps: dict[str, tuple[float, float]] = field(default_factory=dict)
     feeder_peak_loading_pu: dict[str, tuple[float, float]] = field(default_factory=dict)
@@ -161,7 +195,9 @@ class ScenarioStats:
             f"soc_ok={ms(self.soc_satisfaction_rate):>10}  "
             f"peak_pu={ms(self.transformer_peak_loading_pu):>10}  "
             f"reward={ms(self.mean_episode_reward):>12}  "
-            f"bill={ms(self.mean_household_bill_eur):>12}{culprit}"
+            f"bill={ms(self.mean_household_bill_eur):>12}  "
+            f"hp_ok={ms(self.hp_comfort_satisfaction_rate):>10}  "
+            f"batt_kwh(+/-)={ms(self.battery_charge_kwh)}/{ms(self.battery_discharge_kwh)}{culprit}"
         )
 
 
@@ -174,6 +210,7 @@ def run_scenario(
 ) -> ScenarioStats:
     """Run `policy` over `seeds` and aggregate the per-episode metrics into mean±std."""
     curt, soc, peak, rew, bill = [], [], [], [], []
+    hp_comfort, batt_charge, batt_discharge = [], [], []
     per_episode: list[EpisodeMetrics] = []
     for seed in seeds:
         result = run_episode(env, policy, seed, ev_penetration)
@@ -184,6 +221,9 @@ def run_scenario(
         peak.append(m.transformer_peak_loading_pu)
         rew.append(m.mean_episode_reward)
         bill.append(m.mean_household_bill_eur)
+        hp_comfort.append(m.hp_comfort_satisfaction_rate)
+        batt_charge.append(m.battery_charge_kwh)
+        batt_discharge.append(m.battery_discharge_kwh)
 
     def ms(xs):
         return (float(np.mean(xs)), float(np.std(xs)))
@@ -205,6 +245,9 @@ def run_scenario(
         transformer_peak_loading_pu=ms(peak),
         mean_episode_reward=ms(rew),
         mean_household_bill_eur=ms(bill),
+        hp_comfort_satisfaction_rate=ms(hp_comfort),
+        battery_charge_kwh=ms(batt_charge),
+        battery_discharge_kwh=ms(batt_discharge),
         feeder_overload_steps=by_component("feeder_overload_steps"),
         feeder_peak_loading_pu=by_component("feeder_peak_loading_pu"),
         line_overload_steps=by_component("line_overload_steps"),

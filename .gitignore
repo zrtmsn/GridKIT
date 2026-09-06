@@ -11,15 +11,18 @@ venv/
 
 # Project outputs
 outputs/
+outputs_*/
 checkpoints/
+
+# Generated/downloaded — regenerate locally, don't commit
+cache/
+data/oberacker.json
 
 # Streamlit local files
 .streamlit/
+
 # Training run artifacts (checkpoints + per-run results; regenerate with train_run.py)
 runs/
-
-# Device-profile / Overpass caches
-cache/
 
 # Local app logs
 *.log

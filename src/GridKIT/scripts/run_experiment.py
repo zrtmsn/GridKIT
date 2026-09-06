@@ -2,15 +2,14 @@
 # ─────────────────────────────────────────────────────────────
 # Full GridKIT experiment: for each EV penetration level, train the
 # selfish congestion-aware IPPO policy (scenario 3), then evaluate
-# scenarios 1–3 over seeds and save results for the dashboard.
+# scenarios 1–3 over seeds and save results for plotting.
 #
 # Output (under --out, default outputs/):
 #   summary.json    — per (penetration, scenario) curtailment / SoC / peak (mean±std)
 #   timelines.json  — a representative 24 h episode per (penetration, scenario)
 #   checkpoints/    — trained policy per penetration
 #
-# Usage:  python -m GridKIT.scripts.train ... ; or
-#         python -m GridKIT.scripts.run_experiment [--iterations N] [--seeds M]
+# Usage:  python -m GridKIT.scripts.run_experiment [--iterations N] [--seeds M]
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -120,6 +119,13 @@ def main() -> None:
                 "soc_mean": stats.soc_satisfaction_rate[0], "soc_std": stats.soc_satisfaction_rate[1],
                 "peak_mean": stats.transformer_peak_loading_pu[0], "peak_std": stats.transformer_peak_loading_pu[1],
                 "reward_mean": stats.mean_episode_reward[0], "reward_std": stats.mean_episode_reward[1],
+                "bill_mean": stats.mean_household_bill_eur[0], "bill_std": stats.mean_household_bill_eur[1],
+                "hp_comfort_mean": stats.hp_comfort_satisfaction_rate[0],
+                "hp_comfort_std": stats.hp_comfort_satisfaction_rate[1],
+                "battery_charge_kwh_mean": stats.battery_charge_kwh[0],
+                "battery_charge_kwh_std": stats.battery_charge_kwh[1],
+                "battery_discharge_kwh_mean": stats.battery_discharge_kwh[0],
+                "battery_discharge_kwh_std": stats.battery_discharge_kwh[1],
             })
             print("  " + str(stats))
             rep = run_episode(eval_env, policy, seeds[0], ev_penetration=pen)

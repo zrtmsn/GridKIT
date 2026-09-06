@@ -172,26 +172,34 @@ def render_designer() -> None:  # pragma: no cover (UI)
         from_map = source.startswith("Bereich")
         use_ding0 = False
 
+        use_gridcreator = False
+        conda_env = "GridCreator"
+
         if not from_map:
             if st.button("Beispiel-Feeder laden", type="primary"):
                 net = StubNetworkBuilder(path="data/feeder_20.json").build()
                 _set_network(ss, net)
         else:
             have_ding0 = ding0_archive_available()
-            use_ding0 = st.checkbox(
-                "Echtes ding0-Netz (GridCreator)", value=have_ding0, disabled=not have_ding0,
-                help="Extrahiert das tatsächliche NS-Netz für das gezeichnete Rechteck aus dem "
-                     "ding0-Archiv: jeder Transformator real und individuell dimensioniert. OSM "
-                     "kann für den ganzen Bereich nur einen generischen 160-kVA-Transformator liefern.",
+            use_gridcreator = st.checkbox(
+                "GridCreator zuerst versuchen (PyPSA, live)", value=False,
+                help="Baut das Netz live über GridCreator/PyPSA in einer lokalen "
+                     "Conda-Umgebung — braucht eine bereits eingerichtete Umgebung "
+                     "und ist deutlich langsamer als die anderen beiden Quellen. "
+                     "Ohne Häkchen wird direkt mit dem ding0-Archiv (bzw. OSM) gebaut.",
             )
-            if not have_ding0:
+            if use_gridcreator:
+                conda_env = st.text_input("GridCreator Conda Environment", value="GridCreator")
+            st.caption(
+                "Reihenfolge: " + ("GridCreator (live) → " if use_gridcreator else "")
+                + "ding0-Archiv" + ("" if have_ding0 else " (nicht installiert)")
+                + " → OSM. Jede Stufe fällt bei Fehlschlag automatisch auf die nächste zurück."
+            )
+            if not have_ding0 and not use_gridcreator:
                 st.caption("⚠️ ding0-Archiv nicht installiert — Rückfall auf OSM, was einen "
                            "**einzelnen synthetischen 160-kVA-Transformator** liefert, sodass "
                            "Engpass-Ergebnisse nicht realistisch sind. Siehe README für den "
                            "Download der input.zip.")
-            else:
-                st.caption("Rechteck auf der Karte zeichnen, dann erstellen. Nur Deutschland — "
-                           "außerhalb der Archivabdeckung fällt der Build auf OSM zurück.")
 
         # Der Kartenpfad bringt seine eigene, vollständige Gerätekonfiguration mit
         # (Anteile + Anpassung je Haushalt), daher gibt es die Regler nur für den
@@ -213,7 +221,7 @@ def render_designer() -> None:  # pragma: no cover (UI)
     # Implementierung für map_ui und Dashboard statt einer zweiten eigenen Karte.
     if from_map:
         render_map_config(
-            build_network=_make_network_builder(st, use_ding0=use_ding0),
+            build_network=_make_network_builder(st, use_gridcreator=use_gridcreator, conda_env=conda_env),
             on_network_built=lambda net: _set_network(ss, net, set_layout=False),
         )
 
@@ -352,35 +360,52 @@ def render_designer() -> None:  # pragma: no cover (UI)
 
 
 # ── Streamlit-Hilfsfunktionen (nur UI) ──────────────────────────────
-def _make_network_builder(st, *, use_ding0: bool):  # pragma: no cover (UI)
-    """The builder injected into map_ui's map view: real ding0 grid, OSM otherwise.
+def _make_network_builder(st, *, use_gridcreator: bool, conda_env: str = "GridCreator"):  # pragma: no cover (UI)
+    """The builder injected into map_ui's map view: GridCreator (live) → ding0 archive → OSM.
 
-    ding0 is tried first because it is the only source of real, individually-sized
-    transformers. It covers Germany only, and only the districts present in the
-    local archive, so any failure degrades to the OSM builder rather than leaving
-    the user stuck — but always says so, since the two are not comparable.
+    GridCreator/PyPSA is the team's canonical network source but needs a local
+    conda environment, so it's opt-in and tried first only when requested. ding0
+    (real, individually-sized transformers from the local archive) is the fast
+    default; it covers Germany only, and only the districts present in the local
+    archive, so any failure degrades further to the OSM builder rather than
+    leaving the user stuck — but always says so, since none of the three are
+    comparable in realism.
     """
     def build(bounds, area_name: str) -> GridNetwork:
+        from grid_model.builder import OSMNetworkBuilder
         from grid_model.gridcreator_loader import (
             Ding0Unavailable,
             build_grid_network_from_ding0,
         )
         from map_ui.osm_fetcher import OsmFetchConfig, build_grid_network_from_bounds
 
-        if use_ding0:
+        if use_gridcreator:
             try:
-                with st.spinner("Das echte ding0-NS-Netz für diesen Bereich wird extrahiert…"):
-                    net = build_grid_network_from_ding0(
-                        south=bounds.south, west=bounds.west,
-                        north=bounds.north, east=bounds.east,
-                    )
-                st.success(f"ding0-Netz: {len(net.household_bus_ids)} Haushalte, "
-                           f"{len(net.transformers)} echte Transformatoren.")
+                with st.spinner("GridCreator/PyPSA baut das Netz live (kann einige Minuten dauern)…"):
+                    net = OSMNetworkBuilder(
+                        top=bounds.north, bottom=bounds.south,
+                        left=bounds.west, right=bounds.east,
+                        scenario=area_name, conda_env=conda_env,
+                    ).build()
+                st.success(f"GridCreator-Netz: {len(net.household_bus_ids)} Haushalte, "
+                           f"{len(net.transformers)} Transformatoren.")
                 return net
-            except Ding0Unavailable as exc:
-                st.warning(f"{exc}\n\nRückfall auf OSM — ein synthetischer 160-kVA-Transformator.")
             except Exception as exc:
-                st.warning(f"ding0-Extraktion fehlgeschlagen ({exc}). Rückfall auf OSM.")
+                st.warning(f"GridCreator-Build fehlgeschlagen ({exc}). Rückfall auf ding0-Archiv.")
+
+        try:
+            with st.spinner("Das echte ding0-NS-Netz für diesen Bereich wird extrahiert…"):
+                net = build_grid_network_from_ding0(
+                    south=bounds.south, west=bounds.west,
+                    north=bounds.north, east=bounds.east,
+                )
+            st.success(f"ding0-Netz: {len(net.household_bus_ids)} Haushalte, "
+                       f"{len(net.transformers)} echte Transformatoren.")
+            return net
+        except Ding0Unavailable as exc:
+            st.warning(f"{exc}\n\nRückfall auf OSM — ein synthetischer 160-kVA-Transformator.")
+        except Exception as exc:
+            st.warning(f"ding0-Extraktion fehlgeschlagen ({exc}). Rückfall auf OSM.")
 
         with st.spinner("Overpass wird abgefragt (mit Mirror-Failover) und das Netz wird erstellt…"):
             res = build_grid_network_from_bounds(
