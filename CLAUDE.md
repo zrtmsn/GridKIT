@@ -15,7 +15,7 @@ uv sync                                    # install deps + create .venv
 source .venv/bin/activate                  # .venv\Scripts\activate on Windows
 git submodule update --init --recursive    # fetch vendor/GridCreator (only needed for real OSM/ding0 builds)
 
-pytest                                              # full suite (108 passed, 1 skipped as of this writing, ~25s)
+pytest                                              # full suite (123 passed, 1 skipped as of this writing, ~35s)
 pytest src/GridKIT/grid_model/test_environment.py   # one file
 pytest -k battery                                   # by keyword
 
@@ -24,7 +24,8 @@ PYTHONPATH=src/GridKIT:src python -m grid_model.cli build --stub --out /tmp/net.
 PYTHONPATH=src/GridKIT:src python -m grid_model.cli plot /tmp/net.json --out-dir outputs/demo
 # full --help / more examples (OSM, ding0, add-bus, add-household, add-ev) are in grid_model/cli.py's module docstring
 
-python -m streamlit run src/GridKIT/map_ui/map_widget.py   # map UI: draw/enter a bbox → build a GridNetwork via GridCreator
+python -m streamlit run src/GridKIT/map_ui/map_widget.py   # map UI standalone: draw/enter a bbox → build a GridNetwork via GridCreator
+streamlit run src/GridKIT/scripts/app.py                    # unified app: Karte + Dashboard as one Streamlit process (see scripts/app.py below)
 ```
 
 There is no configured linter/formatter in this repo. Tests live next to the module they cover (`grid_model/test_environment.py`, not a separate `tests/` tree) and are collected by plain `pytest` because `pyproject.toml` sets `pythonpath = ["src/GridKIT", "src"]`.
@@ -42,8 +43,8 @@ src/GridKIT/
 ├── map_ui/        # Streamlit + Folium area picker → GridNetwork
 ├── rl_engine/     # RLlib IPPO training against GridEnvProtocol
 ├── scenarios/     # runs a rule-based Policy against an injected env → EpisodeMetrics
-├── dashboard/     # effectively empty (see below)
-└── scripts/       # console-script entry points; several are unimplemented stubs
+├── dashboard/     # Streamlit viewer for runs saved via core.run_store (see below)
+└── scripts/       # console-script entry points; a mix of implemented and unimplemented stubs
 ```
 
 Modules other than `core` do not import each other's internals — `rl_engine` and `scenarios` are written against `core.protocols.GridEnvProtocol` and only ever receive a concrete env (`grid_model.GridEnv`) by dependency injection, never by importing `grid_model` directly for typing/logic. Verified: `scenarios/runner.py` and `scenarios/policies.py` import only from `core`.
@@ -51,7 +52,8 @@ Modules other than `core` do not import each other's internals — `rl_engine` a
 - `core/models.py` — the shared data contract: `GridNetwork`/`BusModel`/`LineModel`/`TransformerModel` (topology), `Observation`/`StepResult`/`PowerFlowResult` (per-step env output), `HouseholdDevices` (per-house equipment layout), per-device action enums (`ChargingAction`, `BatteryAction`, `HPAction`), and the agent-id convention `f"{bus_id}::{device}"` via `make_agent_id`/`device_of`/`bus_of`.
 - `core/protocols.py` — `GridEnvProtocol` (implemented by `grid_model.GridEnv`; every other module programs only against this) and `NetworkBuilderProtocol` (implemented by `StubNetworkBuilder`/`FixedNetworkBuilder`/`OSMNetworkBuilder`).
 - `core/config.py` — one `Settings` (pydantic-settings) singleton, `from core.config import settings`, env-var/`.env`-driven; holds DQN *and* IPPO hyperparameter blocks even though only IPPO is actually implemented (see rl_engine below).
-- `core/constants.py` — every tunable number in the project (§14a floor, device ratings, reward weights with reasoning comments for why e.g. the SoC-miss penalty is quadratic, normalization bounds). Read this file before changing behavior elsewhere — most modules just reference these names.
+- `core/constants.py` — every tunable number in the project (§14a floor, device ratings, reward weights with reasoning comments for why e.g. the SoC-miss penalty is quadratic, normalization bounds). Read this file before changing behavior elsewhere — most modules just reference these names. Also holds the fixed hyperparameters for UI-launched runs (`PIPELINE_TRAINING_ITERATIONS`, `PIPELINE_EVALUATION_SEEDS`) — the map UI never exposes RL knobs to the user, so every run trains/evaluates with the same settings regardless of who clicks "start".
+- `core/run_store.py` — filesystem registry + persistence for networks/runs saved from the map UI (default root: `./runs/<run_id>/`): `config.json`, `grid_network.json`, `household_configuration.json`, `status.json` (queued/running/done/failed, progress, stamped `updated` time), and once training finishes, `summary.json`/`timelines.json`/`checkpoints/`. This is the shared contract between `map_ui` (writes it), `scripts/train_run.py` (writes status/results into it), and `dashboard/` (reads it, and can `delete_run`) — none of those three import each other, only this. A `running` status untouched for `STALE_AFTER_SECONDS` (10 min) is flagged `stale`: every training iteration touches `status.json`, so a live run updates far more often than that — a stale entry is almost certainly a process an OS OOM-killed (a SIGKILL can't be caught to mark itself `failed`), not real progress.
 
 ### grid_model — the only module that touches grid physics
 
@@ -68,7 +70,7 @@ Modules other than `core` do not import each other's internals — `rl_engine` a
 
 ### map_ui — two independent OSM paths, only one wired to the UI
 
-- `map_widget.py` — the actual Streamlit app (`python -m streamlit run src/GridKIT/map_ui/map_widget.py`). Draw/enter a bounding box → calls `grid_model.builder.OSMNetworkBuilder` (the GridCreator-conda-subprocess path above) → shows the resulting network.
+- `map_widget.py` — the actual Streamlit app. Its page body is `render_map_ui()` (no `st.set_page_config`, so it composes into `scripts/app.py`'s multi-page nav); `main()` wraps it with page config for standalone use (`python -m streamlit run src/GridKIT/map_ui/map_widget.py`). Draw/enter a bounding box → calls `grid_model.builder.OSMNetworkBuilder` (the GridCreator-conda-subprocess path above) → shows the resulting network → configure households → `show_training_section()` saves the network + household config via `core.run_store` and, on "Speichern & Training starten", launches `scripts/train_run.py` as a detached subprocess (blocked while another run is `RUNNING`/non-stale — see `core/run_store.py` above, concurrent Ray processes have been observed to exhaust memory). Progress/results are then read in `dashboard/`, not here. Note: household config has no battery/PV concept yet — every household saved this way trains with `battery=False, pv=False` regardless (see `scripts/train_run.py` below).
 - `osm_fetcher.py` — a second, self-contained network builder (`build_grid_network_from_bounds`) that hits the Overpass API directly with `requests` and parses nodes/ways/buildings itself, with no GridCreator/conda dependency. Exported from `map_ui/__init__.py` and covered by its own tests, but **`map_widget.py` does not call it** — only `AreaBounds` is imported from this file into the widget. Treat it as a standalone/alternate path, not dead code, but don't assume it's what the UI produces.
 
 ### rl_engine — only IPPO is implemented
@@ -90,10 +92,12 @@ Modules other than `core` do not import each other's internals — `rl_engine` a
 
 ### scripts and dashboard — mixed implemented/stub
 
-- `run_experiment.py` — the one fully wired end-to-end script: for each EV penetration level in `core.constants.EV_PENETRATION_LEVELS`, trains IPPO, then evaluates it plus both rule-based baselines via `scenarios.runner`, writing `summary.json`/`timelines.json`/checkpoints. Patches `sys.path`/cwd itself at the top (see the two-import-styles note above).
+- `run_experiment.py` — the one fully wired end-to-end **research** script: for each EV penetration level in `core.constants.EV_PENETRATION_LEVELS`, trains IPPO, then evaluates it plus both rule-based baselines via `scenarios.runner`, writing `summary.json`/`timelines.json`/checkpoints under `outputs_*/`. Patches `sys.path`/cwd itself at the top (see the two-import-styles note above). Separate from, and not wired into, the `run_store`-based UI pipeline below.
 - `plot_results.py` — reads `run_experiment.py`'s output and produces plots (not exercised here; see the file directly for details).
-- `app.py:main`, `train.py:main` — both `raise NotImplementedError`; not usable despite being registered as `gridkit-app`/`gridkit-train` console scripts in `pyproject.toml`.
-- `dashboard/` — effectively empty: `__init__.py` is 0 bytes. A `report.py` existed previously (a stale `.pyc` remains in `__pycache__`) but has been deleted from the working tree.
+- `train_run.py` — the **UI-launched** training script (distinct from `run_experiment.py` above): trains+evaluates one `core.run_store` run in the background. Launched detached by `map_ui.map_widget._launch_training()` as `python -m GridKIT.scripts.train_run --run-dir runs/<id>`; loads that run's `grid_network.json`/`household_configuration.json`, converts the latter to a `core.models.HouseholdDevices` layout via `household_devices_from_config()` (pure/import-light, unit-tested on its own — silently drops battery/PV and any `load_scaling_by_bus` entries, since neither has a home in the map-ui schema or `HouseholdDevices` yet), trains IPPO with `core.constants.PIPELINE_TRAINING_ITERATIONS` iterations restricted to only the device types actually present (an empty `battery_policy` with zero agents routed to it makes RLlib's new API stack fail with "Could not find or derive any act-space" — see `create_ippo_config(device_types=...)`), then evaluates RL + both rule-based baselines the same way `run_experiment.py` does and writes results via `run_store.save_results()`. Catches every exception (including `KeyboardInterrupt`/`SystemExit`) to mark the run `FAILED` before exiting — the one case it can't catch is a SIGKILL, which only shows up as a `stale` run (see `core/run_store.py`).
+- `app.py` — now the unified Streamlit entry point (`streamlit run src/GridKIT/scripts/app.py`): composes `map_ui.map_widget.render_map_ui` ("Karte") and `dashboard.app.render_dashboard` ("Dashboard") as two `st.Page`s under one `st.navigation`, so building a network and checking on its training doesn't need two separate processes/tabs. Allowed to import across `map_ui`/`dashboard` (unlike those modules themselves) because it's an orchestrator, not a shared module.
+- `train.py:main` — still `raises NotImplementedError`; not usable despite being registered as the `gridkit-train` console script in `pyproject.toml`.
+- `dashboard/app.py` — `render_dashboard()`: a pure viewer over `core.run_store` — lists every saved run (name, status, progress, household count, whether results exist), lets you pick one, shows its summary/timeline plots once done, and can delete a run. Never launches or writes to a run's training itself, so it's safe to leave open/refreshing while `train_run.py` writes to the same run in the background. Composable the same way as `map_widget.render_map_ui` (`render_dashboard()` has no `st.set_page_config`; standalone use is `streamlit run src/GridKIT/dashboard/app.py`).
 
 ## Gitignored / regenerate-locally paths
 
