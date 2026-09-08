@@ -41,6 +41,7 @@ def remove_bus(network: GridNetwork, bus_id: str) -> GridNetwork:
         "household_bus_ids": [b for b in network.household_bus_ids if b != bus_id],
         "household_load_profile_kw": {k: v for k, v in network.household_load_profile_kw.items() if k != bus_id},
         "ev_availability": {k: v for k, v in network.ev_availability.items() if k != bus_id},
+        "household_devices": {k: v for k, v in network.household_devices.items() if k != bus_id},
     })
 
 

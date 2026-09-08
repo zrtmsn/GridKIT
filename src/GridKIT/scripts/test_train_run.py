@@ -14,11 +14,32 @@ def test_household_devices_from_config_maps_ev_and_hp():
     assert layout["h2"].ev is True and layout["h2"].heat_pump is False
 
 
-def test_household_devices_from_config_battery_and_pv_always_off():
+def test_household_devices_from_config_battery_and_pv_default_off_when_absent():
+    # old saved configs (or networks with no GridCreator device data) have no
+    # battery_bus_ids/pv_bus_ids keys at all — must default to off, not KeyError.
     config = _config(ev_ids=["h0"], hp_ids=["h0"])
     layout = household_devices_from_config(config, ["h0"])
     assert layout["h0"].battery is False
     assert layout["h0"].pv is False
+    assert layout["h0"].battery_kwh is None
+    assert layout["h0"].pv_kwp is None
+
+
+def test_household_devices_from_config_maps_battery_and_pv():
+    config = {
+        "resolved": {
+            "ev_bus_ids": [], "heat_pump_bus_ids": [],
+            "battery_bus_ids": ["h0"], "pv_bus_ids": ["h0", "h1"],
+            "pv_kwp_by_bus": {"h0": 6.5, "h1": 4.0},
+            "battery_kwh_by_bus": {"h0": 12.0},
+        }
+    }
+    layout = household_devices_from_config(config, ["h0", "h1"])
+
+    assert layout["h0"].battery is True and layout["h0"].battery_kwh == 12.0
+    assert layout["h0"].pv is True and layout["h0"].pv_kwp == 6.5
+    assert layout["h1"].battery is False and layout["h1"].battery_kwh is None
+    assert layout["h1"].pv is True and layout["h1"].pv_kwp == 4.0
 
 
 def test_household_devices_from_config_covers_every_household_bus_id():

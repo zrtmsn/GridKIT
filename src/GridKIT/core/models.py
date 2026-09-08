@@ -141,6 +141,12 @@ class GridNetwork(BaseModel):
     # grid_model falls back to synthetic profiles and always-connected EVs.
     household_load_profile_kw: dict[str, list[float]] = Field(default_factory=dict)
     ev_availability: dict[str, list[bool]] = Field(default_factory=dict)  # household_bus_id -> plugged-in per step
+    # Optional real per-household device assignment (ownership + capacity)
+    # from GridCreator's own gcp_assignment/gcp_fill step (see
+    # grid_model.builder.OSMNetworkBuilder). Absent/empty for stub and
+    # ding0-direct networks — map_ui/household_config.py falls back to its
+    # random-share model in that case.
+    household_devices: dict[str, "HouseholdDevices"] = Field(default_factory=dict)
 
     @property
     def n_households(self) -> int:
@@ -229,7 +235,8 @@ class HouseholdDevices(BaseModel):
     battery: bool = False
     heat_pump: bool = False
     pv: bool = False
-    pv_kwp: Optional[float] = None   # optional PV size override (else provider-sampled)
+    pv_kwp: Optional[float] = None       # optional PV size override (else provider-sampled)
+    battery_kwh: Optional[float] = None  # optional battery capacity override (else BATTERY_CAPACITY_KWH)
 
     @property
     def controllable(self) -> list[str]:

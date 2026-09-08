@@ -46,10 +46,13 @@ def _setup_paths() -> None:
 def household_devices_from_config(config: dict, household_bus_ids: list[str]) -> dict:
     """Convert a map_ui household_configuration.json dict into a device layout.
 
-    Known gaps in that schema as of map_ui/household_config.py — not bugs in
+    ev/heat_pump/battery/pv ownership and pv_kwp/battery_kwh capacities come
+    from `resolved.*` — either GridCreator's real per-household assignment or
+    the scenario-assumption fallback, whichever map_ui/household_config.py
+    resolved for this network (see its `build_household_configuration`).
+
+    Known gap in that schema as of map_ui/household_config.py — not a bug in
     this converter, just not there yet on the map_ui side:
-      - no battery / PV concept at all -> every household comes back with
-        battery=False, pv=False regardless of what the UI shows.
       - "load_scaling_by_bus" (a per-household consumption multiplier) has no
         home in HouseholdDevices/GridEnv yet (only a per-EPISODE global
         multiplier exists — core.constants.LOAD_MULTIPLIER_MIN/MAX) — read
@@ -60,8 +63,16 @@ def household_devices_from_config(config: dict, household_bus_ids: list[str]) ->
     resolved = config.get("resolved", {})
     ev_ids = set(resolved.get("ev_bus_ids", []))
     hp_ids = set(resolved.get("heat_pump_bus_ids", []))
+    battery_ids = set(resolved.get("battery_bus_ids", []))
+    pv_ids = set(resolved.get("pv_bus_ids", []))
+    pv_kwp_by_bus = resolved.get("pv_kwp_by_bus", {})
+    battery_kwh_by_bus = resolved.get("battery_kwh_by_bus", {})
     return {
-        bus_id: HouseholdDevices(bus_id=bus_id, ev=bus_id in ev_ids, heat_pump=bus_id in hp_ids)
+        bus_id: HouseholdDevices(
+            bus_id=bus_id, ev=bus_id in ev_ids, heat_pump=bus_id in hp_ids,
+            battery=bus_id in battery_ids, battery_kwh=battery_kwh_by_bus.get(bus_id),
+            pv=bus_id in pv_ids, pv_kwp=pv_kwp_by_bus.get(bus_id),
+        )
         for bus_id in household_bus_ids
     }
 

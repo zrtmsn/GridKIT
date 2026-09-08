@@ -24,6 +24,7 @@ from map_ui.household_config import (
     build_household_configuration,
     choice_index_from_bool,
     default_scenario_assumptions,
+    gridcreator_defaults,
     json_dumps_pretty,
 )
 from map_ui.network_visualization import show_network_visualization
@@ -488,12 +489,24 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
     household_overrides: dict[str, dict[str, Any]] = st.session_state["household_overrides"]
     saved_assumptions: dict[str, Any] = st.session_state["scenario_assumptions"]
 
+    uses_gridcreator_defaults = bool(gridcreator_defaults(network))
+
     st.markdown("### Szenario-Annahmen für das Gebiet")
 
-    st.info(
-        "Diese Werte werden nicht automatisch aus OSM erkannt, "
-        "sondern als Annahmen für das Szenario verwendet."
-    )
+    if uses_gridcreator_defaults:
+        st.info(
+            "Für dieses Netz liegen reale GridCreator-Gerätedaten vor (EV/Wärmepumpe/"
+            "Batterie/PV). Diese werden automatisch als Standardwerte je Haushalt "
+            "verwendet — die Szenario-Anteile unten sind für dieses Netz inaktiv. "
+            "Einzelne Haushalte können weiterhin unten manuell angepasst werden."
+        )
+    else:
+        st.info(
+            "Für dieses Netz liegen keine realen GridCreator-Gerätedaten vor "
+            "(z. B. ding0-Direktimport oder Stub-Netz). EV/Wärmepumpe folgen daher "
+            "den Szenario-Anteilen unten; Batterie/PV sind ohne manuelle Anpassung "
+            "standardmäßig aus."
+        )
 
     st.caption(
         "Die folgenden Eingabefelder sind zunächst ein Entwurf. "
@@ -512,6 +525,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
         step=5,
         help="Annahme für den Anteil der Haushalte, die ein Elektrofahrzeug besitzen sollen.",
         key=f"draft_ev_share_percent_{widget_suffix}",
+        disabled=uses_gridcreator_defaults,
     )
 
     draft_heat_pump_share_percent = high_col2.slider(
@@ -522,6 +536,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
         step=5,
         help="Annahme für den Anteil der Haushalte, die eine Wärmepumpe besitzen sollen.",
         key=f"draft_heat_pump_share_percent_{widget_suffix}",
+        disabled=uses_gridcreator_defaults,
     )
 
     draft_global_load_scaling_factor = high_col3.number_input(
@@ -588,23 +603,48 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
     current_override = household_overrides.get(selected_household, {})
     household_widget_suffix = st.session_state["household_config_version"]
 
-    low_col1, low_col2, low_col3 = st.columns(3)
+    def _auto_help(device_label: str, share_percent: int | None) -> str:
+        if uses_gridcreator_defaults:
+            return f"Automatisch = Zuordnung aus GridCreator für diesen Haushalt ({device_label})."
+        if share_percent is not None:
+            return f"Automatisch = {share_percent}% Szenario-Anteil ({device_label}), zufällig verteilt."
+        return f"Automatisch = aus (kein Szenario-Anteil für {device_label})."
+
+    low_col1, low_col2, low_col3, low_col4, low_col5 = st.columns(5)
 
     ev_choice = low_col1.selectbox(
         "EV für diesen Haushalt",
-        options=["Automatisch aus Szenario-Annahmen", "Ja", "Nein"],
+        options=["Automatisch (Standard)", "Ja", "Nein"],
         index=choice_index_from_bool(current_override.get("has_ev")),
         key=f"ev_choice_{selected_household}_{household_widget_suffix}",
+        help=_auto_help("EV", saved_ev_share_percent),
     )
 
     heat_pump_choice = low_col2.selectbox(
         "WP für diesen Haushalt",
-        options=["Automatisch aus Szenario-Annahmen", "Ja", "Nein"],
+        options=["Automatisch (Standard)", "Ja", "Nein"],
         index=choice_index_from_bool(current_override.get("has_heat_pump")),
         key=f"heat_pump_choice_{selected_household}_{household_widget_suffix}",
+        help=_auto_help("Wärmepumpe", saved_heat_pump_share_percent),
     )
 
-    load_factor_mode = low_col3.selectbox(
+    battery_choice = low_col3.selectbox(
+        "Batterie für diesen Haushalt",
+        options=["Automatisch (Standard)", "Ja", "Nein"],
+        index=choice_index_from_bool(current_override.get("has_battery")),
+        key=f"battery_choice_{selected_household}_{household_widget_suffix}",
+        help=_auto_help("Batterie", None),
+    )
+
+    pv_choice = low_col4.selectbox(
+        "PV für diesen Haushalt",
+        options=["Automatisch (Standard)", "Ja", "Nein"],
+        index=choice_index_from_bool(current_override.get("has_pv")),
+        key=f"pv_choice_{selected_household}_{household_widget_suffix}",
+        help=_auto_help("PV", None),
+    )
+
+    load_factor_mode = low_col5.selectbox(
         "Verbrauchsfaktor-Modus",
         options=["Automatisch aus Szenario-Annahmen", "Individuell festlegen"],
         index=1 if "load_scaling_factor" in current_override else 0,
@@ -615,7 +655,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
         ),
     )
 
-    individual_load_scaling_factor = low_col3.number_input(
+    individual_load_scaling_factor = low_col5.number_input(
         "Individueller Verbrauchsfaktor",
         min_value=0.1,
         max_value=5.0,
@@ -637,12 +677,20 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
 
         ev_override = bool_from_choice(ev_choice)
         heat_pump_override = bool_from_choice(heat_pump_choice)
+        battery_override = bool_from_choice(battery_choice)
+        pv_override = bool_from_choice(pv_choice)
 
         if ev_override is not None:
             new_override["has_ev"] = ev_override
 
         if heat_pump_override is not None:
             new_override["has_heat_pump"] = heat_pump_override
+
+        if battery_override is not None:
+            new_override["has_battery"] = battery_override
+
+        if pv_override is not None:
+            new_override["has_pv"] = pv_override
 
         if load_factor_mode == "Individuell festlegen":
             new_override["load_scaling_factor"] = float(individual_load_scaling_factor)
@@ -682,11 +730,13 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
 
     resolved = household_configuration["resolved"]
 
-    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5, summary_col6 = st.columns(6)
     summary_col1.metric("Haushalte gesamt", len(household_ids))
     summary_col2.metric("Haushalte mit EV", len(resolved["ev_bus_ids"]))
     summary_col3.metric("Haushalte mit WP", len(resolved["heat_pump_bus_ids"]))
-    summary_col4.metric("Individuelle Anpassungen", len(household_overrides))
+    summary_col4.metric("Haushalte mit Batterie", len(resolved["battery_bus_ids"]))
+    summary_col5.metric("Haushalte mit PV", len(resolved["pv_bus_ids"]))
+    summary_col6.metric("Individuelle Anpassungen", len(household_overrides))
 
     with st.expander("household_configuration.json anzeigen"):
         st.json(household_configuration)
