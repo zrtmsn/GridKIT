@@ -36,6 +36,7 @@ import pandas as pd
 import streamlit as st
 
 from dashboard.auslastung import render_auslastung
+from dashboard.training import render_training
 
 OUTPUT_DIR = Path(os.environ.get("GRIDKIT_OUTPUT_DIR", "outputs"))
 EPISODE_START_HOUR = 12
@@ -182,11 +183,15 @@ def render_results(summary, timelines, network=None) -> None:
         st.info("Für diese Auswahl liegen noch keine Ergebnisse vor.")
         return
 
-    tab_last, tab_vergleich = st.tabs(["Netzauslastung", "Szenarienvergleich"])
+    tab_last, tab_vergleich, tab_training = st.tabs(
+        ["Netzauslastung", "Szenarienvergleich", "Training"]
+    )
     with tab_last:
         render_auslastung(timelines or [])
     with tab_vergleich:
         _render_comparison(summary, timelines, network)
+    with tab_training:
+        render_training(OUTPUT_DIR / "checkpoints")
 
 
 def _render_comparison(summary, timelines, network=None) -> None:

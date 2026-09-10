@@ -51,6 +51,41 @@ SERIES_LABELS_DE = {
     "line": "max. Leitungsauslastung",
 }
 
+# ── Gerätetypen: kategorial ──────────────────────────────────
+#: Backend-Schlüssel → deutsche Anzeige. Die Schlüssel sind Datenwerte
+#: (core.constants.DEVICE_*) und bleiben englisch.
+DEVICE_LABELS_DE = {
+    "ev": "EV",
+    "battery": "Batterie",
+    "hp": "Wärmepumpe",
+    "pv": "PV",
+}
+DEVICE_COLORS = {
+    "ev": "#457b9d",
+    "battery": "#2a9d8f",
+    "hp": "#e63946",
+    "pv": "#e9c46a",
+}
+
+#: RLlib-Policy-ID → Gerätetyp. Eine Policy je steuerbarem Gerät, geteilt über
+#: alle Haushalte — daher gibt es keine PV-Policy (PV ist exogen, nicht steuerbar).
+POLICY_DEVICES = {
+    "ev_policy": "ev",
+    "battery_policy": "battery",
+    "hp_policy": "hp",
+}
+
+
+def policy_label(policy_id: str) -> str:
+    """German display label for an RLlib policy id ('ev_policy' → 'EV')."""
+    return DEVICE_LABELS_DE.get(POLICY_DEVICES.get(policy_id, ""), policy_id)
+
+
+def policy_color(policy_id: str) -> str:
+    """Colour for an RLlib policy id, matching its device type elsewhere."""
+    return DEVICE_COLORS.get(POLICY_DEVICES.get(policy_id, ""), "#6c757d")
+
+
 # ── Szenario: rein kategorial ────────────────────────────────
 SCENARIO_ORDER = [
     "1: flat / immediate",
