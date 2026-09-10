@@ -38,6 +38,7 @@ import streamlit as st
 from dashboard.auslastung import render_auslastung
 from dashboard.geraete import render_geraete
 from dashboard.training import render_training
+from dashboard.ueberblick import render_ueberblick
 
 OUTPUT_DIR = Path(os.environ.get("GRIDKIT_OUTPUT_DIR", "outputs"))
 EPISODE_START_HOUR = 12
@@ -184,9 +185,11 @@ def render_results(summary, timelines, network=None) -> None:
         st.info("Für diese Auswahl liegen noch keine Ergebnisse vor.")
         return
 
-    tab_last, tab_geraete, tab_vergleich, tab_training = st.tabs(
-        ["Netzauslastung", "Geräte & Haushalte", "Szenarienvergleich", "Training"]
+    tab_ueberblick, tab_last, tab_geraete, tab_vergleich, tab_training = st.tabs(
+        ["Überblick", "Netzauslastung", "Geräte & Haushalte", "Szenarienvergleich", "Training"]
     )
+    with tab_ueberblick:
+        render_ueberblick(summary, timelines)
     with tab_last:
         render_auslastung(timelines or [])
     with tab_geraete:
