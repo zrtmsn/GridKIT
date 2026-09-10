@@ -122,22 +122,20 @@ def main() -> None:
         def env_factory(cfg=None, _pen=pen):
             return GridEnvRLlibWrapper(env=GridEnv(ev_penetration=_pen, builder=StubNetworkBuilder(path=network_path)))
 
-        trainer = Trainer(env_factory=env_factory, config_func=create_ippo_config)
-        trainer.run(num_episodes=args.iterations, cleanup=False)
-        
-        # Save iteration metrics to output directory
         checkpoint_dir = out / "checkpoints" / f"pen_{int(pen * 100)}"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        trainer = Trainer(env_factory=env_factory, config_func=create_ippo_config)
+        # Write iteration_metrics.json straight into this penetration's checkpoint dir.
+        # It used to go to a temp file and be copied back from a hardcoded "/tmp/..."
+        # path, which does not exist on Windows — so the copy silently did nothing and
+        # the dashboard's training tab never found any metrics.
+        trainer.run(num_episodes=args.iterations, cleanup=False, metrics_dir=checkpoint_dir)
+
         trainer.save_checkpoint(str(checkpoint_dir.resolve()))
-        
-        # Copy iteration metrics from temp dir to output dir
-        import shutil
-        temp_log_dir = Path("/tmp/gridkit_rl_logs")
-        temp_metrics_file = temp_log_dir / "iteration_metrics_raw.json"
-        if temp_metrics_file.exists():
-            metrics_out_file = checkpoint_dir / "iteration_metrics.json"
-            shutil.copy(temp_metrics_file, metrics_out_file)
-            print(f"  Saved iteration metrics → {metrics_out_file}")
-        
+        print(f"  Saved iteration metrics → {checkpoint_dir / 'iteration_metrics.json'}")
+
+
         adapter = RLlibPolicyAdapter(trainer.get_policy_modules())
 
         eval_env = GridEnv(ev_penetration=pen, builder=StubNetworkBuilder(path=network_path))

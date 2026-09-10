@@ -60,6 +60,7 @@ class Trainer:
         num_episodes: int = settings.rllib_default_num_episodes,
         callback: Optional[TrainingCallback] = None,
         cleanup: bool = True,
+        metrics_dir=None,
     ) -> List[TrainingResult]:
         """
         Run the training loop.
@@ -69,6 +70,10 @@ class Trainer:
             callback: Optional callback for progress updates.
             cleanup: If True, stop the algorithm and Ray when done. Pass False to
                 keep the trained policy alive for evaluation (get_policy_module).
+            metrics_dir: Where to write `iteration_metrics.json`. Pass the run's own
+                directory so several runs (e.g. one per penetration level) each keep
+                their own metrics — without it they all land on the same temp path
+                and overwrite each other.
 
         Returns:
             List of TrainingResult objects, one per iteration.
@@ -108,16 +113,16 @@ class Trainer:
         
         # Save raw RLlib results to JSON file after training completes
         if raw_rllib_results:
-            self._save_raw_iteration_results(raw_rllib_results)
+            self._save_raw_iteration_results(raw_rllib_results, metrics_dir)
 
         if cleanup:
             self.stop()
         return results
     
-    def _save_raw_iteration_results(self, raw_results: List[dict]) -> None:
+    def _save_raw_iteration_results(self, raw_results: List[dict], metrics_dir=None) -> None:
         """
         Save raw RLlib result dicts to JSON file.
-        
+
         Analogous to logging in GridEnvRLlibWrapper:
         - Writes data directly without building Python objects
         - Called once at end of training (after all iterations complete)
@@ -129,12 +134,18 @@ class Trainer:
         import json
         from pathlib import Path
         import tempfile
-        
-        log_dir = Path(tempfile.gettempdir()) / "gridkit_rl_logs"
+
+        if metrics_dir is not None:
+            log_dir = Path(metrics_dir)
+            # the name the dashboard and DATENSTRUKTUR_DOKUMENTATION.md expect
+            filename = "iteration_metrics.json"
+        else:
+            log_dir = Path(tempfile.gettempdir()) / "gridkit_rl_logs"
+            filename = "iteration_metrics_raw.json"
+
         log_dir.mkdir(parents=True, exist_ok=True)
-        
-        output_file = log_dir / "iteration_metrics_raw.json"
-        
+        output_file = log_dir / filename
+
         with open(output_file, 'w') as f:
             json.dump(raw_results, f, indent=2, default=str)
 

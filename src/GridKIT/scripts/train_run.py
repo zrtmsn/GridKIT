@@ -81,7 +81,8 @@ def main() -> None:
                               message=f"iter {iteration}/{iterations} · reward {reward:.1f}", root=root)
 
         trainer = Trainer(env_factory=env_factory, config_func=create_ippo_config)
-        trainer.run(num_episodes=iterations, callback=_StatusCallback(), cleanup=False)
+        trainer.run(num_episodes=iterations, callback=_StatusCallback(), cleanup=False,
+                    metrics_dir=run_path)
 
         rs.set_status(run_id, state=rs.RUNNING, progress=1.0, iteration=iterations,
                       total_iters=iterations, message="evaluating scenarios", root=root)
