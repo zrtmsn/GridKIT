@@ -17,7 +17,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
+
+# ── path bootstrap (so `streamlit run` finds the packages) ──
+# Needed because this file is run directly as a script, not imported as part of
+# the package: without it `from dashboard...` below fails unless PYTHONPATH
+# happens to be set outside. Same bootstrap as scripts/grid_designer.py.
+_PKG_DIR = Path(__file__).resolve().parent.parent   # src/GridKIT/
+_SRC_DIR = _PKG_DIR.parent                          # src/
+for _p in (str(_PKG_DIR), str(_SRC_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import matplotlib.pyplot as plt
 import numpy as np
