@@ -29,7 +29,7 @@ os.chdir(project_root)
 
 # Sets PYTHONPATH and working directory for all Ray workers.
 # Both src/ and GridKIT/ paths are included for compatibility with different import styles.
-os.environ["PYTHONPATH"] = f"{script_dir}:{src_dir}"
+os.environ["PYTHONPATH"] = f"{script_dir}{os.pathsep}{src_dir}"
 os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"  # Prevents Ray from changing the working directory
 
 # Imports modules cleanly.
@@ -57,7 +57,7 @@ def main():
             log_to_driver=False,
             runtime_env={
                 "env_vars": {
-                    "PYTHONPATH": f"{script_dir}:{src_dir}",
+                    "PYTHONPATH": f"{script_dir}{os.pathsep}{src_dir}",
                 },
                 "working_dir": str(project_root),
             }

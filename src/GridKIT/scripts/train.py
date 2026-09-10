@@ -22,7 +22,7 @@ def _setup_paths() -> None:
         if p not in sys.path:
             sys.path.insert(0, p)
     os.chdir(src_dir.parent)                               # project root (for stub_network.json)
-    os.environ["PYTHONPATH"] = f"{script_dir}:{src_dir}"
+    os.environ["PYTHONPATH"] = f"{script_dir}{os.pathsep}{src_dir}"
     os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"
 
 

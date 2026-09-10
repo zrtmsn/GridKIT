@@ -31,7 +31,7 @@ def _setup_paths() -> Path:
             sys.path.insert(0, p)
     root = src_dir.parent
     os.chdir(root)
-    os.environ["PYTHONPATH"] = f"{script_dir}:{src_dir}"
+    os.environ["PYTHONPATH"] = f"{script_dir}{os.pathsep}{src_dir}"
     os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"
     return root
 

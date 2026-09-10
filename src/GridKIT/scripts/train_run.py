@@ -26,7 +26,7 @@ def _setup_paths() -> None:
     for p in (str(src_dir), str(script_dir)):
         if p not in sys.path:
             sys.path.insert(0, p)
-    os.environ["PYTHONPATH"] = f"{script_dir}:{src_dir}"
+    os.environ["PYTHONPATH"] = f"{script_dir}{os.pathsep}{src_dir}"
     os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"
 
 

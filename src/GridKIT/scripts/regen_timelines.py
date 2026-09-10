@@ -23,7 +23,7 @@ def _setup_paths() -> None:
         if p not in sys.path:
             sys.path.insert(0, p)
     os.chdir(src_dir.parent)
-    os.environ["PYTHONPATH"] = f"{script_dir}:{src_dir}"
+    os.environ["PYTHONPATH"] = f"{script_dir}{os.pathsep}{src_dir}"
 
 
 def _load_adapter(ckpt_dir: str, devices):

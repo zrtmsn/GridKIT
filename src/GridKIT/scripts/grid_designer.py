@@ -32,7 +32,7 @@ _SRC_DIR = _SCRIPT_DIR.parent                           # src/
 for _p in (str(_SCRIPT_DIR), str(_SRC_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
-os.environ.setdefault("PYTHONPATH", f"{_SCRIPT_DIR}:{_SRC_DIR}")
+os.environ.setdefault("PYTHONPATH", f"{_SCRIPT_DIR}{os.pathsep}{_SRC_DIR}")
 
 import numpy as np
 
