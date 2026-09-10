@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from dashboard import theme
+from dashboard.controls import scenario_penetration_picker
 from dashboard.export import download_pair
 
 EPISODE_START_HOUR = 12
@@ -321,15 +322,10 @@ def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") 
         st.info("Keine Zeitreihen vorhanden — zuerst ein Experiment ausführen.")
         return
 
-    scenarios = [s for s in theme.SCENARIO_ORDER if any(t.get("scenario") == s for t in timelines)]
-    scenarios += [s for s in dict.fromkeys(t.get("scenario") for t in timelines) if s not in scenarios]
-    penetrations = sorted({float(t.get("penetration", 0.0)) for t in timelines})
-
-    col_a, col_b = st.columns(2)
-    scenario = col_a.selectbox("Szenario", scenarios, format_func=theme.scenario_label,
-                               key=f"{key}_scenario")
-    penetration = col_b.selectbox("EV-Anteil", penetrations, index=len(penetrations) - 1,
-                                  format_func=lambda p: f"{p:.0%}", key=f"{key}_pen")
+    scenario, penetration = scenario_penetration_picker(timelines, key)
+    if scenario is None:
+        st.info("Keine auswertbaren Zeitreihen vorhanden.")
+        return
 
     timeline = select_timeline(timelines, scenario, penetration)
     if timeline is None:

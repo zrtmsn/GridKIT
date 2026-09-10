@@ -28,14 +28,33 @@ from typing import Any
 import pandas as pd
 
 from dashboard import theme
+from dashboard.controls import PENETRATION_STATE
 from dashboard.export import download_pair
 
 METRICS_FILENAME = "iteration_metrics.json"
 
 
+def _sync_penetration(widget_key: str) -> None:  # pragma: no cover (UI callback)
+    """Write this tab's pick back to the EV-Anteil the other tabs read."""
+    import streamlit as st
+
+    picked = penetration_of(st.session_state[widget_key])
+    if picked is not None:
+        st.session_state[PENETRATION_STATE] = picked
+
+
 # ══════════════════════════════════════════════════════════════
 # Reine Helfer (kein Streamlit — unit-testbar)
 # ══════════════════════════════════════════════════════════════
+def penetration_of(directory_name: str) -> float | None:
+    """'pen_20' → 0.2, so the training tab can share the other tabs' EV-Anteil."""
+    tail = directory_name.removeprefix("pen_")
+    try:
+        return int(tail) / 100.0
+    except ValueError:
+        return None
+
+
 def find_metric_files(checkpoints_dir: str | Path) -> dict[str, Path]:
     """{'pen_20': path, …} for every penetration that has metrics on disk.
 
@@ -209,10 +228,25 @@ def render_training(checkpoints_dir: str | Path, key: str = "training") -> None:
         )
         return
 
+    # Share the EV-Anteil with the other tabs: switching to 60 % on the
+    # utilisation tab should show the 60 % training run here, not whatever this
+    # tab was left on.
     names = list(files)
-    chosen = st.selectbox("EV-Anteil", names,
-                          format_func=lambda n: f"{n.removeprefix('pen_')} %",
-                          key=f"{key}_pen")
+    by_penetration = {penetration_of(n): n for n in names if penetration_of(n) is not None}
+    shared = st.session_state.get(PENETRATION_STATE)
+    widget_key = f"{key}_pen"
+    if shared in by_penetration:
+        st.session_state[widget_key] = by_penetration[shared]
+
+    chosen = st.selectbox(
+        "EV-Anteil", names,
+        format_func=lambda n: (f"{p:.0%}" if (p := penetration_of(n)) is not None else n),
+        key=widget_key,
+        on_change=_sync_penetration, args=(widget_key,),
+        help="Anteil der Haushalte mit Elektroauto. Gilt für alle Reiter.",
+    )
+    if (picked := penetration_of(chosen)) is not None:
+        st.session_state[PENETRATION_STATE] = picked
     records = load_metrics(files[chosen])
     if not records:
         st.warning("Die Metrikdatei ist leer oder nicht lesbar.")

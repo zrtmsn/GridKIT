@@ -36,6 +36,7 @@ import pandas as pd
 import streamlit as st
 
 from dashboard.auslastung import render_auslastung
+from dashboard.controls import scenario_penetration_picker
 from dashboard.geraete import render_geraete
 from dashboard.training import render_training
 from dashboard.ueberblick import render_ueberblick
@@ -70,10 +71,24 @@ def _de(scenario: str) -> str:
 
 
 def _load(name: str):
+    """Read one result file; None when it is missing, unreadable or malformed.
+
+    A run killed mid-write leaves truncated JSON behind, and that used to take
+    the whole dashboard down with a raw parser traceback. Returning None lets
+    each view say what is missing instead.
+    """
     path = OUTPUT_DIR / name
     if not path.exists():
         return None
-    return json.loads(path.read_text())
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        st.error(
+            f"`{name}` konnte nicht gelesen werden ({type(exc).__name__}). "
+            "Die Datei ist vermutlich unvollständig — das passiert, wenn ein Lauf "
+            "abgebrochen wurde. Experiment erneut ausführen."
+        )
+        return None
 
 
 def _hours_axis(n: int) -> np.ndarray:
@@ -185,6 +200,8 @@ def render_results(summary, timelines, network=None) -> None:
         st.info("Für diese Auswahl liegen noch keine Ergebnisse vor.")
         return
 
+    _render_glossary()
+
     tab_ueberblick, tab_last, tab_geraete, tab_vergleich, tab_training = st.tabs(
         ["Überblick", "Netzauslastung", "Geräte & Haushalte", "Szenarienvergleich", "Training"]
     )
@@ -198,6 +215,31 @@ def render_results(summary, timelines, network=None) -> None:
         _render_comparison(summary, timelines, network)
     with tab_training:
         render_training(OUTPUT_DIR / "checkpoints")
+
+
+def _render_glossary() -> None:
+    """Die Begriffe, ohne die keine Zahl auf dieser Seite lesbar ist."""
+    with st.expander("Wie lese ich das? — Begriffe in einem Satz"):
+        left, right = st.columns(2)
+        left.markdown(
+            "**Auslastung (%)** — Belastung im Verhältnis zur Nennleistung. "
+            "100 % heißt genau ausgelastet, darüber ist Überlast.\n\n"
+            "**Transformator vs. Leitung** — beide können überlasten. Im "
+            "Niederspannungsnetz erreicht meist das **Kabel** zuerst seine "
+            "Grenze, während der Transformator noch entspannt aussieht.\n\n"
+            "**EV-Anteil** — wie viele Haushalte ein Elektroauto haben. "
+            "Der Härtegrad des Tests."
+        )
+        right.markdown(
+            "**§14a EnWG** — erlaubt dem Netzbetreiber, steuerbare Geräte "
+            "gedrosselt zu betreiben, wenn das Netz sonst überlastet. Ein "
+            "„Eingriff“ ist eine Viertelstunde, in der das passiert.\n\n"
+            "**Ladestand (SoC)** — Füllstand von Autobatterie oder Speicher, "
+            "0 bis 1.\n\n"
+            "**Szenarien** — die Regelstrategie: *konstant/sofort* lädt ohne "
+            "Rücksicht, *preisorientiert* wartet auf günstigen Strom, "
+            "*eigennütziges RL* ist die gelernte Strategie."
+        )
 
 
 def _render_comparison(summary, timelines, network=None) -> None:
@@ -249,13 +291,12 @@ def _render_comparison(summary, timelines, network=None) -> None:
     if timelines:
         st.header("Eine repräsentative 24-h-Episode")
         tdf = pd.DataFrame(timelines)
-        c1, c2 = st.columns(2)
-        sel_pen = c1.selectbox("EV-Anteil", penetrations, format_func=lambda p: f"{p:.0%}")
-        avail = [s for s in SCENARIO_ORDER if s in tdf[tdf["penetration"] == sel_pen]["scenario"].values]
-        sel_scen = c2.selectbox("Szenario", avail, format_func=_de)
+        sel_scen, sel_pen = scenario_penetration_picker(timelines, "vergleich")
 
         row = tdf[(tdf["penetration"] == sel_pen) & (tdf["scenario"] == sel_scen)]
-        if not row.empty:
+        if row.empty:
+            st.info("Für diese Kombination liegt keine Episode vor.")
+        else:
             rec = row.iloc[0]
             hours = _hours_axis(len(rec["transformer_loading"]))
 

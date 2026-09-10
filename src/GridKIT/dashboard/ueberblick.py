@@ -220,6 +220,12 @@ def render_ueberblick(summary: list[dict[str, Any]],
               help="Kombinationen aus Szenario und EV-Anteil mit Überlast")
 
     # ── Matrix ────────────────────────────────────────────────
+    st.caption(
+        "Gilt für das simulierte Netz, nicht für Niederspannungsnetze allgemein: "
+        "ein schwach ausgelegtes Testnetz überlastet früh, ein kräftiges hält deutlich "
+        "mehr aus. Aussagekräftig ist der **Vergleich der Szenarien untereinander**."
+    )
+
     st.subheader("Szenario × EV-Anteil")
     st.caption(
         "Höchste Auslastung je Kombination, in Prozent — der schlechtere Wert aus "
