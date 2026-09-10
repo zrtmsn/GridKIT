@@ -24,6 +24,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from dashboard.auslastung import render_auslastung
+
 OUTPUT_DIR = Path(os.environ.get("GRIDKIT_OUTPUT_DIR", "outputs"))
 EPISODE_START_HOUR = 12
 TIMESTEP_HOURS = 0.25
@@ -169,6 +171,15 @@ def render_results(summary, timelines, network=None) -> None:
         st.info("Für diese Auswahl liegen noch keine Ergebnisse vor.")
         return
 
+    tab_last, tab_vergleich = st.tabs(["Netzauslastung", "Szenarienvergleich"])
+    with tab_last:
+        render_auslastung(timelines or [])
+    with tab_vergleich:
+        _render_comparison(summary, timelines, network)
+
+
+def _render_comparison(summary, timelines, network=None) -> None:
+    """Der bisherige Szenarienvergleich — unverändert, nur in einen Reiter verschoben."""
     df = pd.DataFrame(summary)
     penetrations = sorted(df["penetration"].unique())
 

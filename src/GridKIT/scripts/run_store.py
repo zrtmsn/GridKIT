@@ -126,7 +126,11 @@ def list_runs(root: str | Path = DEFAULT_ROOT) -> list[dict]:
                     "iteration": st.get("iteration", 0),
                     "message": st.get("message", ""),
                     "has_results": (d / "summary.json").exists()})
-    out.sort(key=lambda r: r.get("created", ""), reverse=True)
+    # run_id breaks ties: `created` has only second resolution, so two runs started
+    # in the same second compare equal and the stable sort would fall back to the
+    # directory order — alphabetical, i.e. oldest first, the exact opposite of what
+    # this returns. run_id is "run_%Y%m%d_%H%M%S", so it sorts chronologically as text.
+    out.sort(key=lambda r: (r.get("created", ""), r.get("run_id", "")), reverse=True)
     return out
 
 
