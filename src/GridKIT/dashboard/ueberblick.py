@@ -21,6 +21,7 @@ import pandas as pd
 
 from dashboard import theme
 from dashboard.auslastung import select_timeline
+from dashboard.export import download_pair
 
 #: Order of severity, worst first — used to reduce many combinations to one verdict.
 _SEVERITY = ["kritisch", "grenzbereich", "warnung", "gut"]
@@ -226,6 +227,10 @@ def render_ueberblick(summary: list[dict[str, Any]],
         "einzelnen Kombination im Reiter **Netzauslastung**."
     )
     st.altair_chart(_matrix_chart(frame), width="stretch")
+    download_pair(
+        frame.drop(columns=["scenario"]).rename(columns={"status": "Bewertung"}),
+        "Überblick", f"{key}_matrix", label="Alle Kombinationen als Tabelle",
+    )
 
     if frame["Kabel"].isna().all():
         st.caption(

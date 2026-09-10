@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from dashboard import theme
+from dashboard.export import download_pair
 
 EPISODE_START_HOUR = 12
 TIMESTEP_HOURS = 0.25
@@ -368,6 +369,7 @@ def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") 
         "kann eine deutliche thermische Verletzung im Strang verdecken."
     )
     st.altair_chart(_daily_profile_chart(timeline), width="stretch")
+    download_pair(utilization_frame(timeline), "Tagesverlauf", f"{key}_profil")
 
     gap = head["line_peak_percent"] - head["trafo_peak_percent"]
     if gap > 20:
@@ -388,6 +390,7 @@ def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") 
         )
         st.altair_chart(_overload_chart(timeline), width="stretch")
         st.dataframe(table, width="stretch", hide_index=True)
+        download_pair(table, "Überlast-Matrix", f"{key}_ueberlast")
 
     # ── Dauerlinie ────────────────────────────────────────────
     st.subheader("Auslastungsdauerlinie")
@@ -396,3 +399,5 @@ def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") 
         "über einer Grenze lagen. Bezieht sich auf die stärkstbelastete Leitung."
     )
     st.altair_chart(_duration_chart(timeline), width="stretch")
+    download_pair(duration_curve(timeline.get("max_line_loading") or []),
+                  "Dauerlinie", f"{key}_dauerlinie")

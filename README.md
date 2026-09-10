@@ -170,18 +170,25 @@ network is sane before committing to a full training run.
 Interactive web UI for exploring training results:
 
 ```bash
-streamlit run src/GridKIT/dashboard_prototype/app.py
+streamlit run src/GridKIT/dashboard/app.py
 ```
 
-Opens at `http://localhost:8502`. The dashboard provides:
+Reads `outputs/` by default; point `$GRIDKIT_OUTPUT_DIR` at another run directory
+to view that one instead. The dashboard provides:
 
 | Tab | Description |
 |-----|-------------|
-| 🗺️ Overload Map | Interactive Folium map showing overloaded lines/transformers per timestep |
-| 📊 Metrics | Static PNG charts from `plot_results` (curtailment, SoC, rewards, device power) |
-| 🎯 Training | Interactive Plotly charts showing RLlib training metrics (rewards, loss, entropy) |
+| Überblick | The verdict across every scenario × penetration: worst loading, the EV share at which the first scenario overloads, and the highest share at which none do |
+| Netzauslastung | Quarter-hour utilisation — transformer and cable together, overload matrix, load duration curve |
+| Geräte & Haushalte | Energy per device type, battery cycles, and one household in detail (EV / battery / heat pump, with an approximated indoor temperature) |
+| Szenarienvergleich | Curtailment and SoC across penetration levels, plus the overload map |
+| Training | Reward convergence and per-policy entropy from `iteration_metrics.json` |
 
-**Requirements:** Training must be completed first (§3) to generate `summary.json`, `timelines.json`, and `iteration_metrics.json`.
+Every chart offers its underlying table as CSV (semicolon + decimal comma, so
+German Excel opens it directly) or JSON.
+
+**Requirements:** Training must be completed first (§3) to generate `summary.json`,
+`timelines.json`, and `iteration_metrics.json`.
 
 ---
 
@@ -194,7 +201,7 @@ src/GridKIT/
 ├── map_ui/               # Streamlit + Folium: build a network, configure households
 ├── rl_engine/            # RLlib IPPO training against core.protocols.GridEnvProtocol
 ├── scenarios/            # rule-based baseline policies + the episode/scenario runner
-├── dashboard_prototype/  # Streamlit dashboard: explore training results interactively
+├── dashboard/            # Streamlit dashboard: explore training results interactively
 └── scripts/              # entry points: run_experiment (train), plot_results (headless plots)
 ```
 

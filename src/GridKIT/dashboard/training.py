@@ -28,6 +28,7 @@ from typing import Any
 import pandas as pd
 
 from dashboard import theme
+from dashboard.export import download_pair
 
 METRICS_FILENAME = "iteration_metrics.json"
 
@@ -245,6 +246,7 @@ def render_training(checkpoints_dir: str | Path, key: str = "training") -> None:
         "heißt, die Policy ist noch stark vom Zufall der Episode abhängig."
     )
     st.altair_chart(_return_chart(return_frame(records)), width="stretch")
+    download_pair(return_frame(records), "Reward-Konvergenz", f"{key}_return")
 
     entropy = entropy_frame(records)
     if not entropy.empty:
@@ -256,3 +258,4 @@ def render_training(checkpoints_dir: str | Path, key: str = "training") -> None:
             "bereits entschieden, während die übrigen noch suchen."
         )
         st.altair_chart(_entropy_chart(entropy), width="stretch")
+        download_pair(entropy, "Entropie", f"{key}_entropie")

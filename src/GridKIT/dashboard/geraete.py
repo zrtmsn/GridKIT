@@ -24,6 +24,7 @@ import pandas as pd
 
 from dashboard import theme
 from dashboard.auslastung import format_hour, hours_axis
+from dashboard.export import download_pair
 
 # ── Innenraumtemperatur: Annahmen, nicht Simulation ──────────
 # The environment models the heat pump as a thermal buffer (house inertia) and
@@ -337,6 +338,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
         "die lädt und wieder entlädt, ergeben im Mittel beide null."
     )
     st.altair_chart(_device_power_chart(timeline), width="stretch")
+    download_pair(device_power_frame(timeline), "Geräteleistung", f"{key}_leistung")
 
     # ── Szenarienvergleich der Gerätekennzahlen ───────────────
     table = scenario_devices(summary or [], penetration)
@@ -349,6 +351,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
             }, na_rep="—"),
             width="stretch", hide_index=True,
         )
+        download_pair(table, "Gerätekennzahlen", f"{key}_kennzahlen")
 
     # ── Ein Haushalt im Detail ────────────────────────────────
     st.subheader("Ein repräsentativer Haushalt")
@@ -356,6 +359,8 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
     if frame.empty:
         st.info("Für diesen Lauf wurden keine Haushaltsdetails aufgezeichnet.")
         return
+    download_pair(frame, "Haushalt", f"{key}_haushalt",
+                  label="Alle Reihen dieses Haushalts")
 
     ev_tab, batt_tab, hp_tab = st.tabs(["EV", "Batterie", "Wärmepumpe"])
 
