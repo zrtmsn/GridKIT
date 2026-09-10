@@ -36,6 +36,60 @@ def _setup_paths() -> Path:
     return root
 
 
+def summary_record(stats, label: str, penetration: float) -> dict:
+    """One row of summary.json, from an aggregated ScenarioStats.
+
+    Shared by both producers on purpose. run_experiment.py (batch sweep) and
+    train_run.py (the web app's background training) each used to build this
+    dict inline, and the two had drifted into different schemas: the batch path
+    wrote HP comfort and the battery figures, the web-app path wrote the
+    feeder/line breakdown, and neither was a superset. A dashboard tile fed by
+    either group was therefore empty for exactly half the runs, depending on
+    how they had been started. This returns the union, so both paths write the
+    same fields.
+    """
+    import core.constants as const
+
+    charge_mean, charge_std = stats.battery_charge_kwh
+    discharge_mean, discharge_std = stats.battery_discharge_kwh
+    throughput_mean = charge_mean + discharge_mean
+    # charge and discharge are aggregated separately, so their spreads combine
+    # in quadrature rather than adding
+    throughput_std = float(np.sqrt(charge_std ** 2 + discharge_std ** 2))
+    line_peaks = [v[0] for v in stats.line_peak_loading_pu.values()]
+    worst = stats.worst_feeder()
+
+    return {
+        "penetration": penetration,
+        "scenario": label,
+        "curtailment_mean": stats.curtailment_events[0], "curtailment_std": stats.curtailment_events[1],
+        "soc_mean": stats.soc_satisfaction_rate[0], "soc_std": stats.soc_satisfaction_rate[1],
+        "peak_mean": stats.transformer_peak_loading_pu[0], "peak_std": stats.transformer_peak_loading_pu[1],
+        "reward_mean": stats.mean_episode_reward[0], "reward_std": stats.mean_episode_reward[1],
+        # the adoption test: a grid-friendly policy nobody would install is worthless
+        "bill_mean": stats.mean_household_bill_eur[0], "bill_std": stats.mean_household_bill_eur[1],
+        # without these the scenario comparison is silently EV-only, even though
+        # heat pump and battery run in every episode
+        "hp_comfort_mean": stats.hp_comfort_satisfaction_rate[0],
+        "hp_comfort_std": stats.hp_comfort_satisfaction_rate[1],
+        "battery_charge_kwh_mean": charge_mean, "battery_charge_kwh_std": charge_std,
+        "battery_discharge_kwh_mean": discharge_mean, "battery_discharge_kwh_std": discharge_std,
+        "battery_throughput_kwh_mean": throughput_mean, "battery_throughput_kwh_std": throughput_std,
+        # Full Equivalent Cycles: throughput over both legs against one full capacity
+        "battery_full_cycles_mean": throughput_mean / 2.0 / const.BATTERY_CAPACITY_KWH,
+        "battery_full_cycles_std": throughput_std / 2.0 / const.BATTERY_CAPACITY_KWH,
+        # where the stress actually was — the cable usually binds before the transformer
+        "line_peak_max": max(line_peaks, default=0.0),
+        "n_lines_overloaded": len(stats.line_overload_steps),
+        "worst_feeder": worst[0] if worst else None,
+        "worst_feeder_steps": worst[1] if worst else 0.0,
+        "feeder_overload_steps": {k: v[0] for k, v in stats.feeder_overload_steps.items()},
+        "feeder_peak_loading_pu": {k: v[0] for k, v in stats.feeder_peak_loading_pu.items()},
+        "line_overload_steps": {k: v[0] for k, v in stats.line_overload_steps.items()},
+        "line_peak_loading_pu": {k: v[0] for k, v in stats.line_peak_loading_pu.items()},
+    }
+
+
 def _timeline(env, result, label: str, penetration: float) -> dict:
     # Imported here, not at module level: _setup_paths() puts the source roots on
     # sys.path at call time, so a top-level import would run too early. (The
@@ -163,26 +217,7 @@ def main() -> None:
             # LOGGING STUFFE 2: Aggregierte Metriken zur summary-Liste hinzufügen
             # ════════════════════════════════════════════════════════════════
             # Diese Daten landen später in summary.json (für Bar-Charts)
-            summary.append({
-                "penetration": pen,
-                "scenario": label,
-                "curtailment_mean": stats.curtailment_events[0], "curtailment_std": stats.curtailment_events[1],
-                "soc_mean": stats.soc_satisfaction_rate[0], "soc_std": stats.soc_satisfaction_rate[1],
-                "peak_mean": stats.transformer_peak_loading_pu[0], "peak_std": stats.transformer_peak_loading_pu[1],
-                "reward_mean": stats.mean_episode_reward[0], "reward_std": stats.mean_episode_reward[1],
-                "bill_mean": stats.mean_household_bill_eur[0], "bill_std": stats.mean_household_bill_eur[1],
-                "hp_comfort_mean": stats.hp_comfort_satisfaction_rate[0],
-                "hp_comfort_std": stats.hp_comfort_satisfaction_rate[1],
-                "battery_charge_kwh_mean": stats.battery_charge_kwh[0],
-                "battery_charge_kwh_std": stats.battery_charge_kwh[1],
-                "battery_discharge_kwh_mean": stats.battery_discharge_kwh[0],
-                "battery_discharge_kwh_std": stats.battery_discharge_kwh[1],
-                # Battery cycle counting (Full Equivalent Cycles nach IEEE-Standard)
-                "battery_throughput_kwh_mean": stats.battery_charge_kwh[0] + stats.battery_discharge_kwh[0],
-                "battery_throughput_kwh_std": np.sqrt(stats.battery_charge_kwh[1]**2 + stats.battery_discharge_kwh[1]**2),
-                "battery_full_cycles_mean": (stats.battery_charge_kwh[0] + stats.battery_discharge_kwh[0]) / 2.0 / const.BATTERY_CAPACITY_KWH,
-                "battery_full_cycles_std": np.sqrt(stats.battery_charge_kwh[1]**2 + stats.battery_discharge_kwh[1]**2) / 2.0 / const.BATTERY_CAPACITY_KWH,
-            })
+            summary.append(summary_record(stats, label, pen))
             print("  " + str(stats))
             
             # ════════════════════════════════════════════════════════════════

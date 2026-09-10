@@ -49,7 +49,7 @@ def main() -> None:
         import core.constants as const
         from core.models import GridNetwork  # noqa: F401
         from scripts.grid_designer import StaticBuilder
-        from scripts.run_experiment import _timeline
+        from scripts.run_experiment import _timeline, summary_record
         from GridKIT.grid_model.environment import GridEnv
         from GridKIT.grid_model.device_profiles import DeviceProfileProvider
         from GridKIT.rl_engine import (
@@ -102,30 +102,10 @@ def main() -> None:
         for label, policy in scenarios.items():
             env = GridEnv(builder=StaticBuilder(network), device_layout=layout, profile_provider=provider)
             stats = run_scenario(env, policy, seeds, label=label, ev_penetration=pen_label)
-            # line peak is reported alongside the transformer peak because in a real LV
-            # grid the cable binds first: Oberacker's transformers sit near 0.6 pu while
-            # feeder-head cables hit 1.09 pu, so the transformer figure alone reads
-            # "comfortable" through an actual thermal violation.
-            line_peaks = [v[0] for v in stats.line_peak_loading_pu.values()]
-            worst = stats.worst_feeder()
-            summary.append({
-                "penetration": pen_label, "scenario": label,
-                "curtailment_mean": stats.curtailment_events[0], "curtailment_std": stats.curtailment_events[1],
-                "soc_mean": stats.soc_satisfaction_rate[0], "soc_std": stats.soc_satisfaction_rate[1],
-                "peak_mean": stats.transformer_peak_loading_pu[0], "peak_std": stats.transformer_peak_loading_pu[1],
-                "reward_mean": stats.mean_episode_reward[0], "reward_std": stats.mean_episode_reward[1],
-                # the adoption test: a grid-friendly policy nobody would install is worthless
-                "bill_mean": stats.mean_household_bill_eur[0], "bill_std": stats.mean_household_bill_eur[1],
-                # where the stress actually was
-                "line_peak_max": max(line_peaks, default=0.0),
-                "n_lines_overloaded": len(stats.line_overload_steps),
-                "worst_feeder": worst[0] if worst else None,
-                "worst_feeder_steps": worst[1] if worst else 0.0,
-                "feeder_overload_steps": {k: v[0] for k, v in stats.feeder_overload_steps.items()},
-                "feeder_peak_loading_pu": {k: v[0] for k, v in stats.feeder_peak_loading_pu.items()},
-                "line_overload_steps": {k: v[0] for k, v in stats.line_overload_steps.items()},
-                "line_peak_loading_pu": {k: v[0] for k, v in stats.line_peak_loading_pu.items()},
-            })
+            # Same record as the batch sweep writes — including HP comfort and the
+            # battery figures, which this path used to omit, leaving those dashboard
+            # tiles empty for every run started from the web app.
+            summary.append(summary_record(stats, label, pen_label))
             env = GridEnv(builder=StaticBuilder(network), device_layout=layout, profile_provider=provider)
             rep = run_episode(env, policy, seeds[0], ev_penetration=pen_label)
             timelines.append(_timeline(env, rep, label, pen_label))
