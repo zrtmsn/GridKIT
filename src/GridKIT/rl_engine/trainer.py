@@ -83,9 +83,15 @@ class Trainer:
         if callback is None:
             callback = DefaultCallback(total=num_episodes)
 
+        # Collect raw RLlib result dicts during training
         results = []
+        raw_rllib_results = []
+        
         for i in range(num_episodes):
             result = self._algo.train()
+            
+            # Store raw RLlib result dict for later saving
+            raw_rllib_results.append(result)
 
             training_result = TrainingResult(
                 iteration=i + 1,
@@ -99,10 +105,38 @@ class Trainer:
                 training_result.episode_return_mean,
                 training_result.episode_len_mean
             )
+        
+        # Save raw RLlib results to JSON file after training completes
+        if raw_rllib_results:
+            self._save_raw_iteration_results(raw_rllib_results)
 
         if cleanup:
             self.stop()
         return results
+    
+    def _save_raw_iteration_results(self, raw_results: List[dict]) -> None:
+        """
+        Save raw RLlib result dicts to JSON file.
+        
+        Analogous to logging in GridEnvRLlibWrapper:
+        - Writes data directly without building Python objects
+        - Called once at end of training (after all iterations complete)
+        - Data will be loaded and transformed to objects by MetricsBuilder later
+        
+        Args:
+            raw_results: List of raw RLlib result dicts from algo.train()
+        """
+        import json
+        from pathlib import Path
+        import tempfile
+        
+        log_dir = Path(tempfile.gettempdir()) / "gridkit_rl_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        output_file = log_dir / "iteration_metrics_raw.json"
+        
+        with open(output_file, 'w') as f:
+            json.dump(raw_results, f, indent=2, default=str)
 
     def get_policy_module(self, policy_id: str):
         """Return one trained RLModule by policy id (e.g. 'ev_policy')."""

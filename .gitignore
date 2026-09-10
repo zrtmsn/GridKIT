@@ -26,3 +26,6 @@ runs/
 
 # Local app logs
 *.log
+
+# CLI scratch output (grid_model.cli --out network.json)
+/network.json
