@@ -37,6 +37,12 @@ def _setup_paths() -> Path:
 
 
 def _timeline(env, result, label: str, penetration: float) -> dict:
+    # Imported here, not at module level: _setup_paths() puts the source roots on
+    # sys.path at call time, so a top-level import would run too early. (The
+    # cumulative-battery lines below used `const` without this and always raised
+    # NameError — main()'s own import is a local, not visible in this function.)
+    import core.constants as const
+
     tr = result.timestep_results
     return {
         "penetration": penetration,
