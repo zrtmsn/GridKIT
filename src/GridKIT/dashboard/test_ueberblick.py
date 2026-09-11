@@ -5,6 +5,7 @@ from dashboard.ueberblick import (
     breaking_point,
     cable_peak_pu,
     headline_numbers,
+    overload_hours,
     overview_frame,
     safe_ceiling,
     scenario_ranking,
@@ -167,3 +168,73 @@ def test_headline_of_an_empty_run_is_safe():
 def test_headline_survives_rows_without_any_loading():
     frame = overview_frame([{"scenario": "a", "penetration": 0.2}])
     assert headline_numbers(frame)["status"] is None
+
+
+# ── Dauer statt Spitze: was die Szenarien wirklich trennt ────
+def test_overload_hours_uses_the_longest_affected_element():
+    # max, not sum: two cables over the limit in the same quarter hour is one
+    # overloaded quarter hour, not two
+    record = _row("a", 0.6, 1.2,
+                  line_overload_steps={"service_0": 8.0, "service_5": 36.0},
+                  feeder_overload_steps={"feeder_1": 3.0})
+    assert overload_hours(record) == 9.0        # 36 steps x 0.25 h
+
+
+def test_overload_hours_covers_feeders_as_well_as_lines():
+    record = _row("a", 0.6, 1.2, feeder_overload_steps={"feeder_1": 12.0})
+    assert overload_hours(record) == 3.0
+
+
+def test_overload_hours_falls_back_to_the_episode_for_older_runs():
+    record = _row("a", 0.6, 1.2)
+    timelines = [{"scenario": "a", "penetration": 0.6,
+                  "max_line_loading": [1.5, 1.5, 0.4, 1.5],
+                  "transformer_loading": [0.5] * 4}]
+    assert overload_hours(record, timelines) == 0.75     # 3 steps
+
+
+def test_overload_hours_is_none_without_any_source():
+    assert overload_hours(_row("a", 0.6, 1.2), []) is None
+
+
+def test_overload_hours_of_a_clean_run_is_zero_not_none():
+    record = _row("a", 0.2, 0.5, line_overload_steps={}, feeder_overload_steps={})
+    timelines = [{"scenario": "a", "penetration": 0.2,
+                  "max_line_loading": [0.4] * 4, "transformer_loading": [0.3] * 4}]
+    assert overload_hours(record, timelines) == 0.0
+
+
+def test_ranking_orders_by_duration_not_peak():
+    # the case that motivated this: one weak cable pins every peak to ~2.0, so
+    # ranking on peak would order the scenarios essentially at random, while
+    # the time spent in overload separates them clearly
+    frame = overview_frame([
+        _row("rl", 0.6, 0.78, line_peak_max=1.98, line_overload_steps={"s": 36.0}),
+        _row("flat", 0.6, 1.02, line_peak_max=2.00, line_overload_steps={"s": 42.0}),
+    ])
+    assert scenario_ranking(frame, 0.6)["scenario"].tolist() == ["rl", "flat"]
+
+
+def test_ranking_still_works_when_no_duration_is_available():
+    frame = overview_frame([_row("hard", 0.6, 1.5), _row("soft", 0.6, 0.4)])
+    assert scenario_ranking(frame, 0.6)["scenario"].tolist() == ["soft", "hard"]
+
+
+def test_headline_names_the_longest_overload_not_the_highest_reading():
+    frame = overview_frame([
+        # highest peak, but brief
+        _row("spiky", 0.6, 0.80, line_peak_max=2.80, line_overload_steps={"s": 4.0}),
+        # lower peak, but overloaded far longer — this is the one to name
+        _row("long", 0.4, 1.05, line_peak_max=1.20, line_overload_steps={"s": 40.0}),
+    ])
+    head = headline_numbers(frame)
+    assert head["worst_hours"] == 10.0
+    assert head["worst_hours_scenario"] == "long"
+    assert head["worst_hours_penetration"] == 0.4
+    # the peak is still reported, just no longer the headline
+    assert head["worst_peak"] == 2.80
+
+
+def test_headline_hours_are_absent_when_no_run_records_them():
+    frame = overview_frame([_row("a", 0.6, 1.2)])
+    assert headline_numbers(frame)["worst_hours"] is None
