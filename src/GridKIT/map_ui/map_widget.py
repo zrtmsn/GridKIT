@@ -26,6 +26,7 @@ from map_ui.household_config import (
     default_scenario_assumptions,
     gridcreator_defaults,
     json_dumps_pretty,
+    select_households_by_share,
 )
 from map_ui.network_visualization import show_network_visualization
 from map_ui.osm_fetcher import AreaBounds
@@ -603,6 +604,28 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
     current_override = household_overrides.get(selected_household, {})
     household_widget_suffix = st.session_state["household_config_version"]
 
+    # What "Automatisch" actually resolves to for THIS household — shown
+    # directly in the option label (not just a hover tooltip) so it's visible
+    # without opening the dropdown. Ignores any override on this bus, since
+    # the point is to show what applies when there ISN'T one.
+    gc_devices = gridcreator_defaults(network)
+    gc_for_household = gc_devices.get(selected_household)
+    if uses_gridcreator_defaults:
+        default_ev = bool(getattr(gc_for_household, "ev", False))
+        default_heat_pump = bool(getattr(gc_for_household, "heat_pump", False))
+        default_battery = bool(getattr(gc_for_household, "battery", False))
+        default_pv = bool(getattr(gc_for_household, "pv", False))
+    else:
+        default_ev = selected_household in select_households_by_share(
+            household_ids, saved_ev_share_percent, seed=saved_selection_seed, salt="ev")
+        default_heat_pump = selected_household in select_households_by_share(
+            household_ids, saved_heat_pump_share_percent, seed=saved_selection_seed, salt="heat_pump")
+        default_battery = False   # no share slider for battery/pv — off without GridCreator data
+        default_pv = False
+
+    def _auto_label(default_value: bool) -> str:
+        return f"Automatisch (aktuell: {'Ja' if default_value else 'Nein'})"
+
     def _auto_help(device_label: str, share_percent: int | None) -> str:
         if uses_gridcreator_defaults:
             return f"Automatisch = Zuordnung aus GridCreator für diesen Haushalt ({device_label})."
@@ -614,7 +637,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
 
     ev_choice = low_col1.selectbox(
         "EV für diesen Haushalt",
-        options=["Automatisch (Standard)", "Ja", "Nein"],
+        options=[_auto_label(default_ev), "Ja", "Nein"],
         index=choice_index_from_bool(current_override.get("has_ev")),
         key=f"ev_choice_{selected_household}_{household_widget_suffix}",
         help=_auto_help("EV", saved_ev_share_percent),
@@ -622,7 +645,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
 
     heat_pump_choice = low_col2.selectbox(
         "WP für diesen Haushalt",
-        options=["Automatisch (Standard)", "Ja", "Nein"],
+        options=[_auto_label(default_heat_pump), "Ja", "Nein"],
         index=choice_index_from_bool(current_override.get("has_heat_pump")),
         key=f"heat_pump_choice_{selected_household}_{household_widget_suffix}",
         help=_auto_help("Wärmepumpe", saved_heat_pump_share_percent),
@@ -630,7 +653,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
 
     battery_choice = low_col3.selectbox(
         "Batterie für diesen Haushalt",
-        options=["Automatisch (Standard)", "Ja", "Nein"],
+        options=[_auto_label(default_battery), "Ja", "Nein"],
         index=choice_index_from_bool(current_override.get("has_battery")),
         key=f"battery_choice_{selected_household}_{household_widget_suffix}",
         help=_auto_help("Batterie", None),
@@ -638,7 +661,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
 
     pv_choice = low_col4.selectbox(
         "PV für diesen Haushalt",
-        options=["Automatisch (Standard)", "Ja", "Nein"],
+        options=[_auto_label(default_pv), "Ja", "Nein"],
         index=choice_index_from_bool(current_override.get("has_pv")),
         key=f"pv_choice_{selected_household}_{household_widget_suffix}",
         help=_auto_help("PV", None),
