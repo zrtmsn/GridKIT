@@ -81,7 +81,3 @@ def download_pair(frame: pd.DataFrame, basename: str, key: str,
             file_name=filename(basename, "json"), mime="application/json",
             key=f"{key}_json", width="stretch",
         )
-        st.caption(
-            f"CSV mit Semikolon und Dezimalkomma, so öffnet Excel die Datei "
-            f"direkt richtig. {len(frame)} Zeilen."
-        )
