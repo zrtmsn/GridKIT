@@ -339,7 +339,12 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
     # ── Szenarienvergleich der Gerätekennzahlen ───────────────
     table = scenario_devices(summary or [], penetration)
     if not table.empty and table.drop(columns=["Szenario"]).notna().any().any():
-        st.subheader(f"Gerätekennzahlen bei {penetration:.0%} Ausstattungsgrad")
+        # Naming the Ausstattungsgrad only helps when there is another one to
+        # tell it apart from; with a single configuration it reads as a filter
+        # the reader cannot change.
+        swept = len({float(r.get("penetration", 0.0)) for r in (summary or [])}) > 1
+        st.subheader(f"Gerätekennzahlen bei {penetration:.0%} Ausstattungsgrad" if swept
+                     else "Gerätekennzahlen je Szenario")
         st.dataframe(
             table.style.format({
                 "EV-Ziel erreicht": "{:.0%}", "WP-Komfort": "{:.0%}",
