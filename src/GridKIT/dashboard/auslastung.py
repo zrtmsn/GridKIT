@@ -310,7 +310,10 @@ def _overload_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
             color=alt.value(theme.STATUS_COLORS["kritisch"]),
             tooltip=[alt.Tooltip("Element:N"), alt.Tooltip("Typ:N"), alt.Tooltip("Uhrzeit:N")],
         )
-        .properties(width="container", height=max(80, 20 * len(order)))
+        # Per-row step rather than a pixel total, for the same reason as the
+        # overview matrix: a pixel height loses against the container fit and
+        # the rows collapse into each other.
+        .properties(width="container", height=alt.Step(22))
     )
 
 

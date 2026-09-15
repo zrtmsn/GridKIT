@@ -236,7 +236,12 @@ def _matrix_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     labels = base.mark_text(fontWeight="bold", fontSize=13, color="white").encode(
         text=alt.Text("Beschriftung:N"),
     )
-    return (cells + labels).properties(width="container", height=42 * max(1, len(order)))
+    # Height as a per-row STEP, not a pixel total. A pixel height competes with
+    # the container fit Streamlit applies for the width, and the rows lose: four
+    # scenarios collapse into one strip of overlapping labels. A step tells
+    # Vega-Lite to size the chart from the data instead, so every row keeps its
+    # 42 px whatever the container does.
+    return (cells + labels).properties(width="container", height=alt.Step(42))
 
 
 def render_ueberblick(summary: list[dict[str, Any]],
