@@ -224,7 +224,7 @@ def render_training(checkpoints_dir: str | Path, key: str = "training") -> None:
     if not files:
         st.info(
             f"Keine `{METRICS_FILENAME}` gefunden. Sie entsteht beim Training unter "
-            "`checkpoints/pen_*/` — zuerst ein Experiment ausführen."
+            "`checkpoints/pen_*/`. Zuerst ein Experiment ausführen."
         )
         return
 
@@ -264,11 +264,11 @@ def render_training(checkpoints_dir: str | Path, key: str = "training") -> None:
     if entropies:
         quietest = min(entropies, key=entropies.get)
         c3.metric("Niedrigste Entropie", theme.policy_label(quietest),
-                  help=f"{entropies[quietest]:.3f} — diese Policy exploriert am wenigsten")
+                  help=f"{entropies[quietest]:.3f}; diese Policy exploriert am wenigsten")
 
     if conv["iterations"] < 10:
         st.warning(
-            f"Nur {conv['iterations']} Iterationen — zu wenig, um aus dem Verlauf auf "
+            f"Nur {conv['iterations']} Iterationen, zu wenig, um aus dem Verlauf auf "
             "die Qualität der Policy zu schließen. Für belastbare Aussagen mit den "
             "voreingestellten 40 Iterationen trainieren."
         )
@@ -276,7 +276,7 @@ def render_training(checkpoints_dir: str | Path, key: str = "training") -> None:
     st.subheader("Reward-Konvergenz")
     st.caption(
         "Linie: mittlerer Episoden-Return je Iteration. Fläche: Spanne zwischen "
-        "schlechtester und bester Episode derselben Iteration — eine breite Spanne "
+        "schlechtester und bester Episode derselben Iteration. Eine breite Spanne "
         "heißt, die Policy ist noch stark vom Zufall der Episode abhängig."
     )
     st.altair_chart(_return_chart(return_frame(records)), width="stretch")

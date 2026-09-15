@@ -305,7 +305,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
     from dashboard.auslastung import select_timeline
 
     if not timelines:
-        st.info("Keine Zeitreihen vorhanden — zuerst ein Experiment ausführen.")
+        st.info("Keine Zeitreihen vorhanden. Zuerst ein Experiment ausführen.")
         return
 
     scenario, penetration = scenario_penetration_picker(timelines, key)
@@ -330,7 +330,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
     st.subheader("Leistung je Gerätetyp")
     st.caption(
         "Alle Haushalte zusammen. Die Batterie ist **vorzeichenbehaftet**: positiv lädt, "
-        "negativ speist ins Haus zurück — eine Batterie, die sich nie bewegt, und eine, "
+        "negativ speist ins Haus zurück. Eine Batterie, die sich nie bewegt, und eine, "
         "die lädt und wieder entlädt, ergeben im Mittel beide null."
     )
     st.altair_chart(_device_power_chart(timeline), width="stretch")
@@ -344,7 +344,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
             table.style.format({
                 "EV-Ziel erreicht": "{:.0%}", "WP-Komfort": "{:.0%}",
                 "Batterie-Durchsatz (kWh)": "{:.1f}", "Vollzyklen": "{:.2f}",
-            }, na_rep="—"),
+            }, na_rep=theme.NO_VALUE),
             width="stretch", hide_index=True,
         )
         download_pair(table, "Gerätekennzahlen", f"{key}_kennzahlen")
@@ -374,7 +374,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
             soc_chart, energy_chart = charts
             st.altair_chart(soc_chart, width="stretch")
             st.caption(
-                "Kumulierte Energie beider Richtungen — die Grundlage der äquivalenten "
+                "Kumulierte Energie beider Richtungen, die Grundlage der äquivalenten "
                 "Vollzyklen, die das Szenario oben ausweist."
             )
             st.altair_chart(energy_chart, width="stretch")

@@ -87,7 +87,9 @@ def test_peak_moment_reports_value_and_clock_time():
 
 
 def test_peak_moment_handles_empty():
-    assert peak_moment([]) == (0.0, "—")
+    # the placeholder is spelled out rather than a dash: a dash in a numeric
+    # column also reads as a minus or as a measured zero
+    assert peak_moment([]) == (0.0, theme.NO_VALUE)
 
 
 # ── Dauerlinie ───────────────────────────────────────────────

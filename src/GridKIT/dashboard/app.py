@@ -85,7 +85,7 @@ def _load(name: str):
     except (OSError, ValueError) as exc:
         st.error(
             f"`{name}` konnte nicht gelesen werden ({type(exc).__name__}). "
-            "Die Datei ist vermutlich unvollständig — das passiert, wenn ein Lauf "
+            "Die Datei ist vermutlich unvollständig; das passiert, wenn ein Lauf "
             "abgebrochen wurde. Experiment erneut ausführen."
         )
         return None
@@ -131,7 +131,7 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
     from streamlit_folium import st_folium
 
     if network is None or not getattr(network, "buses", None):
-        st.info("Kein gespeichertes Netz für diesen Lauf — die Überlastungskarte benötigt `network.json`.")
+        st.info("Kein gespeichertes Netz für diesen Lauf. Die Überlastungskarte benötigt `network.json`.")
         return
 
     rows = [r for r in summary if r.get("line_peak_loading_pu")]
@@ -170,18 +170,18 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
         n_over += trips > 0
         folium.PolyLine(
             [a, b], color=color, weight=weight, opacity=0.95,
-            tooltip=f"{ln.line_id} — Spitzenwert {pu:.2f} p.u." + (f", {trips:.1f} Schritte überlastet" if trips else ""),
+            tooltip=f"{ln.line_id}: Spitzenwert {pu:.2f} p.u." + (f", {trips:.1f} Schritte überlastet" if trips else ""),
         ).add_to(m)
 
     for t in network.transformers:
         tb = coords.get(t.lv_bus)
         if tb:
             folium.Marker(tb, icon=folium.Icon(color="black", icon="bolt", prefix="fa"),
-                          tooltip=f"{t.trafo_id} — {t.s_nom_mva*1000:.0f} kVA").add_to(m)
+                          tooltip=f"{t.trafo_id}: {t.s_nom_mva*1000:.0f} kVA").add_to(m)
 
     worst = max(peaks.values()) if peaks else 0.0
     st.caption(
-        f"**{_de(chosen)}** — schlechtestes Kabel {worst:.2f} p.u. · {n_over} Kabel über der Nennlast. "
+        f"**{_de(chosen)}:** schlechtestes Kabel {worst:.2f} p.u. · {n_over} Kabel über der Nennlast. "
         "🟥 >1,0 überlastet · 🟧 >0,9 · 🟨 >0,7 · 🟩 belastet, aber unauffällig · grau = unter Warnschwelle. "
         "⚡ = Transformator. Zum Anzeigen des Spitzenwerts über ein Segment fahren."
     )
@@ -219,24 +219,24 @@ def render_results(summary, timelines, network=None) -> None:
 
 def _render_glossary() -> None:
     """Die Begriffe, ohne die keine Zahl auf dieser Seite lesbar ist."""
-    with st.expander("Wie lese ich das? — Begriffe in einem Satz"):
+    with st.expander("Wie lese ich das? Begriffe in einem Satz"):
         left, right = st.columns(2)
         left.markdown(
-            "**Auslastung (%)** — Belastung im Verhältnis zur Nennleistung. "
+            "**Auslastung (%)**: Belastung im Verhältnis zur Nennleistung. "
             "100 % heißt genau ausgelastet, darüber ist Überlast.\n\n"
-            "**Transformator vs. Leitung** — beide können überlasten. Im "
+            "**Transformator vs. Leitung**: beide können überlasten. Im "
             "Niederspannungsnetz erreicht meist das **Kabel** zuerst seine "
             "Grenze, während der Transformator noch entspannt aussieht.\n\n"
-            "**EV-Anteil** — wie viele Haushalte ein Elektroauto haben. "
+            "**EV-Anteil**: wie viele Haushalte ein Elektroauto haben. "
             "Der Härtegrad des Tests."
         )
         right.markdown(
-            "**§14a EnWG** — erlaubt dem Netzbetreiber, steuerbare Geräte "
+            "**§14a EnWG**: erlaubt dem Netzbetreiber, steuerbare Geräte "
             "gedrosselt zu betreiben, wenn das Netz sonst überlastet. Ein "
             "„Eingriff“ ist eine Viertelstunde, in der das passiert.\n\n"
-            "**Ladestand (SoC)** — Füllstand von Autobatterie oder Speicher, "
+            "**Ladestand (SoC)**: Füllstand von Autobatterie oder Speicher, "
             "0 bis 1.\n\n"
-            "**Szenarien** — die Regelstrategie: *konstant/sofort* lädt ohne "
+            "**Szenarien**: die Regelstrategie. *konstant/sofort* lädt ohne "
             "Rücksicht, *preisorientiert* wartet auf günstigen Strom, "
             "*eigennütziges RL* ist die gelernte Strategie."
         )
@@ -279,7 +279,7 @@ def _render_comparison(summary, timelines, network=None) -> None:
     st.pyplot(fig)
 
     # ── 2. SoC-Zielerreichung (die Kosten aus Kundensicht) ──────────
-    st.header("SoC-Zielerreichung — wurden Kund:innen rechtzeitig geladen?")
+    st.header("SoC-Zielerreichung: wurden Kund:innen rechtzeitig geladen?")
     pivot = df.pivot_table(index="penetration", columns="scenario", values="soc_mean")
     pivot = pivot.reindex(columns=[s for s in SCENARIO_ORDER if s in pivot.columns])
     pivot.columns = [_de(c) for c in pivot.columns]
@@ -364,7 +364,7 @@ def _render_comparison(summary, timelines, network=None) -> None:
 
             # ── ein repräsentativer Haushalt: exakte Geräteleistung + EV-Verfügbarkeit + SoC ──
             if "house_ev_power" in rec and rec["house_ev_power"] is not None:
-                st.subheader("Ein einzelner repräsentativer Haushalt — exakte Geräteleistung")
+                st.subheader("Ein einzelner repräsentativer Haushalt: exakte Geräteleistung")
                 st.caption(
                     "Die Geräteentscheidungen eines einzelnen Haushalts (nicht die Feeder-Summe "
                     "oben). Das schattierte Band markiert, wann das EV zu Hause / angesteckt ist; "
@@ -408,13 +408,13 @@ def _render_comparison(summary, timelines, network=None) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="GridKIT — §14a bei Multi-Geräte-Flexibilität", layout="wide")
-    st.title("GridKIT — hält die §14a-Abregelung mit EV + Batterie + Wärmepumpe + PV stand?")
+    st.set_page_config(page_title="GridKIT: §14a bei Multi-Geräte-Flexibilität", layout="wide")
+    st.title("GridKIT: Hält die §14a-Abregelung mit EV + Batterie + Wärmepumpe + PV stand?")
     st.caption(
         "Jeder Haushalt betreibt drei steuerbare Geräte-Agenten (EV, Batterie, Wärmepumpe) "
         "sowie eine exogene Dach-PV-Anlage, auf Basis realer, wetterabhängiger Profile "
         "(GridCreator/pyCity). Der Mechanismus wird unter vereinfachten Annahmen gezeigt "
-        "(Ersatz-Lastfluss) — ein relativer Vergleich, keine Prognose."
+        "(Ersatz-Lastfluss). Ein relativer Vergleich, keine Prognose."
     )
     summary = _load("summary.json")
     timelines = _load("timelines.json")

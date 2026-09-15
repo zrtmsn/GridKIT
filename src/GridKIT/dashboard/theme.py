@@ -35,6 +35,11 @@ STATUS_LABELS_DE = {key: label for _, _, key, label, _ in LOAD_BANDS}
 #: Schwelle, mit der run_experiment.py overloaded_lines/-_transformers füllt.
 OVERLOAD_PU = 1.0
 
+#: Anzeige für einen Wert, den dieser Lauf nicht enthält. Ausgeschrieben statt
+#: als Strich: ein Gedankenstrich in einer Zahlenspalte lässt sich auch als
+#: Minus oder als gemessene Null lesen, "keine Angabe" nicht.
+NO_VALUE = "k. A."
+
 #: Achsenobergrenze in Prozent, wenn die Daten nicht höher reichen. Leitungen
 #: erreichen in schwachen Netzen dreistellige Werte, daher nur ein Minimum.
 LOAD_SCALE_MIN_PERCENT = 120.0

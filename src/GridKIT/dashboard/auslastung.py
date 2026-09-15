@@ -97,7 +97,7 @@ def hours_above(values: Iterable[float], threshold_pu: float = theme.OVERLOAD_PU
 def peak_moment(values: Sequence[float]) -> tuple[float, str]:
     """(peak in percent, clock time it occurred) — empty input gives (0.0, "—")."""
     if len(values) == 0:
-        return 0.0, "—"
+        return 0.0, theme.NO_VALUE
     arr = np.asarray([float(v) for v in values])
     idx = int(np.argmax(arr))
     return float(arr[idx]) * 100.0, format_hour(float(hours_axis(len(arr))[idx]))
@@ -319,7 +319,7 @@ def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") 
     import streamlit as st
 
     if not timelines:
-        st.info("Keine Zeitreihen vorhanden — zuerst ein Experiment ausführen.")
+        st.info("Keine Zeitreihen vorhanden. Zuerst ein Experiment ausführen.")
         return
 
     scenario, penetration = scenario_penetration_picker(timelines, key)
@@ -339,15 +339,15 @@ def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") 
     hours_over = f"{head['hours_over']:.2f}".replace(".", ",")
     if head["status"] == "kritisch":
         st.error(
-            f"**Überlast** — Spitze {head['line_peak_percent']:.0f} % um {head['line_peak_at']} Uhr"
+            f"**Überlast:** Spitze {head['line_peak_percent']:.0f} % um {head['line_peak_at']} Uhr"
             + (f", schlimmstes Element `{worst}`" if worst else "")
             + f". Insgesamt {hours_over} h über 100 %."
         )
     elif head["status"] == "grenzbereich":
-        st.warning(f"**Grenzbereich** — Spitze {head['line_peak_percent']:.0f} % um "
+        st.warning(f"**Grenzbereich:** Spitze {head['line_peak_percent']:.0f} % um "
                    f"{head['line_peak_at']} Uhr, aber keine Überschreitung.")
     else:
-        st.success(f"**Unkritisch** — Spitze {head['line_peak_percent']:.0f} % um "
+        st.success(f"**Unkritisch:** Spitze {head['line_peak_percent']:.0f} % um "
                    f"{head['line_peak_at']} Uhr.")
 
     c1, c2, c3, c4 = st.columns(4)
@@ -381,7 +381,7 @@ def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") 
         st.success("Kein Element war in diesem Lauf über seiner Nennleistung.")
     else:
         st.caption(
-            "Binär — überlastet oder nicht. Abgestufte Farben bräuchten die Auslastung "
+            "Binär: überlastet oder nicht. Abgestufte Farben bräuchten die Auslastung "
             "je Element, die der Export derzeit nicht enthält."
         )
         st.altair_chart(_overload_chart(timeline), width="stretch")

@@ -204,7 +204,8 @@ def _matrix_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     # makes the matrix look uniform when the scenarios are in fact far apart.
     has_hours = data["Dauer"].notna().any()
     data["Beschriftung"] = (
-        data["Dauer"].map(lambda h: "—" if pd.isna(h) else f"{h:.2f}".replace(".", ",") + " h")
+        data["Dauer"].map(lambda h: theme.NO_VALUE if pd.isna(h)
+                          else f"{h:.2f}".replace(".", ",") + " h")
         if has_hours else data["Prozent"].map(lambda p: f"{p:.0f}%")
     )
     data["Stunden"] = data["Dauer"]
@@ -244,7 +245,7 @@ def render_ueberblick(summary: list[dict[str, Any]],
     import streamlit as st
 
     if not summary:
-        st.info("Keine Ergebnisse vorhanden — zuerst ein Experiment ausführen.")
+        st.info("Keine Ergebnisse vorhanden. Zuerst ein Experiment ausführen.")
         return
 
     frame = overview_frame(summary, timelines)
@@ -259,10 +260,10 @@ def render_ueberblick(summary: list[dict[str, Any]],
     if hours is not None:
         where = (f"{head['worst_hours_scenario']} bei "
                  f"{head['worst_hours_penetration']:.0%} EV-Anteil")
-        worst_text = f"am längsten überlastet: {hours:.2f} h".replace(".", ",") + f" — {where}"
+        worst_text = f"am längsten überlastet: {hours:.2f} h".replace(".", ",") + f" bei {where}"
     else:
         where = f"{head['worst_scenario']} bei {head['worst_penetration']:.0%} EV-Anteil"
-        worst_text = f"Spitze {peak_percent:.0f} % — {where}"
+        worst_text = f"Spitze {peak_percent:.0f} % bei {where}"
 
     if head["status"] == "kritisch":
         ceiling = head["safe_ceiling"]
@@ -273,10 +274,11 @@ def render_ueberblick(summary: list[dict[str, Any]],
                "Schon beim niedrigsten geprüften EV-Anteil kommt es zur Überlast.")
         )
     elif head["status"] == "grenzbereich":
-        st.warning(f"**Grenzwertig.** Höchste Auslastung {peak_percent:.0f} % — {where}. "
+        st.warning(f"**Grenzwertig.** Höchste Auslastung {peak_percent:.0f} % bei {where}. "
                    "Keine Überschreitung, aber ohne Reserve.")
     else:
-        st.success(f"**Das Netz hält durch.** Höchste Auslastung {peak_percent:.0f} % — {where}.")
+        st.success(f"**Das Netz hält durch.** Höchste Auslastung {peak_percent:.0f} % "
+                   f"bei {where}.")
 
     c1, c2, c3, c4 = st.columns(4)
     if hours is not None:
@@ -288,9 +290,11 @@ def render_ueberblick(summary: list[dict[str, Any]],
         c2.metric("Überlast ab", f"{head['breaking_point']:.0%} EV",
                   help="Niedrigster EV-Anteil, bei dem irgendein Szenario über 100 % geht")
     else:
-        c2.metric("Überlast ab", "—", help="Kein geprüfter EV-Anteil führt zur Überlast")
-    c3.metric("Sicher bis", f"{head['safe_ceiling']:.0%} EV" if head["safe_ceiling"] is not None else "—",
-              help="Höchster EV-Anteil, bei dem KEIN Szenario über 100 % geht")
+        c2.metric("Überlast ab", "nie", help="Kein geprüfter EV-Anteil führt zur Überlast")
+    c3.metric("Sicher bis",
+              f"{head['safe_ceiling']:.0%} EV" if head["safe_ceiling"] is not None else "keiner",
+              help="Höchster EV-Anteil, bei dem KEIN Szenario über 100 % geht. "
+                   "„keiner“ heißt: schon der niedrigste geprüfte Anteil überlastet.")
     c4.metric("Betroffene Fälle", f"{head['n_over']} / {head['n_total']}",
               help="Kombinationen aus Szenario und EV-Anteil mit Überlast")
 
@@ -305,7 +309,7 @@ def render_ueberblick(summary: list[dict[str, Any]],
     st.caption(
         "**Wie lange** das am längsten betroffene Element über seiner Grenze lag. "
         "Die Farbe zeigt die Schwere der Spitze (schlechterer Wert aus Transformator "
-        "und Kabel), die Zahl die Dauer — beim Überfahren stehen beide. Die Dauer "
+        "und Kabel), die Zahl die Dauer; beim Überfahren stehen beide. Die Dauer "
         "steht vorn, weil ein einzelner schwacher Strang in jedem Szenario "
         "annähernd dieselbe Spitze erzeugt und die Szenarien dann gleich aussehen, "
         "obwohl sie es nicht sind. Details im Reiter **Netzauslastung**."
@@ -318,7 +322,7 @@ def render_ueberblick(summary: list[dict[str, Any]],
 
     if frame["Kabel"].isna().all():
         st.caption(
-            "ℹ️ Dieser Lauf enthält keine gemittelte Kabelspitze (`line_peak_max`) — "
+            "ℹ️ Dieser Lauf enthält keine gemittelte Kabelspitze (`line_peak_max`); "
             "gezeigt wird der Transformatorwert. Läufe ab der vereinheitlichten "
             "summary.json enthalten beide."
         )
@@ -332,7 +336,7 @@ def render_ueberblick(summary: list[dict[str, Any]],
             "Sortiert nach Dauer der Überlast, kürzeste zuerst. Trafo und Kabel "
             "stehen getrennt: sie können weit auseinanderliegen, und ein Szenario, "
             "das den Transformator entlastet, muss nicht auch das Kabel entlasten. "
-            "**EV-Ziel erreicht** ist die Gegenrechnung — Netzentlastung, die "
+            "**EV-Ziel erreicht** ist die Gegenrechnung: Netzentlastung, die "
             "niemand mitmacht, weil das Auto morgens leer ist, hilft nicht."
         )
         table = ranking[["Szenario", "Dauer", "Trafo", "Kabel", "curtailment", "soc"]].rename(
@@ -345,11 +349,11 @@ def render_ueberblick(summary: list[dict[str, Any]],
             })
         st.dataframe(
             table.style.format({
-                "Überlast (h)": lambda v: "—" if pd.isna(v) else f"{v:.2f} h".replace(".", ","),
-                "Trafo-Spitze": lambda v: "—" if pd.isna(v) else f"{v * 100:.0f} %",
-                "Kabel-Spitze": lambda v: "—" if pd.isna(v) else f"{v * 100:.0f} %",
-                "§14a-Eingriffe": lambda v: "—" if pd.isna(v) else f"{v:.1f}",
-                "EV-Ziel erreicht": lambda v: "—" if pd.isna(v) else f"{v:.0%}",
+                "Überlast (h)": lambda v: theme.NO_VALUE if pd.isna(v) else f"{v:.2f} h".replace(".", ","),
+                "Trafo-Spitze": lambda v: theme.NO_VALUE if pd.isna(v) else f"{v * 100:.0f} %",
+                "Kabel-Spitze": lambda v: theme.NO_VALUE if pd.isna(v) else f"{v * 100:.0f} %",
+                "§14a-Eingriffe": lambda v: theme.NO_VALUE if pd.isna(v) else f"{v:.1f}",
+                "EV-Ziel erreicht": lambda v: theme.NO_VALUE if pd.isna(v) else f"{v:.0%}",
             }),
             width="stretch", hide_index=True,
         )
