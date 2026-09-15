@@ -71,28 +71,39 @@ def scenario_penetration_picker(timelines: list[dict[str, Any]], key: str,
     # Streamlit uses that and ignores index entirely — which is why syncing
     # through index alone leaves the other tabs on their old selection.
     ss[scenario_widget] = ss[SCENARIO_STATE]
-    ss[penetration_widget] = ss[PENETRATION_STATE]
 
-    col_a, col_b = st.columns(2)
-    scenario = col_a.selectbox(
+    # A run built from one drawn area has exactly one device configuration, so
+    # there is nothing to pick: the selector would be a control that cannot
+    # change anything. Only a batch sweep over several shares needs it.
+    single = len(penetrations) == 1
+    if single:
+        columns = [st.container()]
+    else:
+        ss[penetration_widget] = ss[PENETRATION_STATE]
+        columns = list(st.columns(2))
+
+    scenario = columns[0].selectbox(
         "Szenario", scenarios,
         format_func=theme.scenario_label,
         key=scenario_widget,
         on_change=_sync, args=(scenario_widget, SCENARIO_STATE),
         help="Die Regelstrategie der Haushaltsgeräte. Gilt für alle Reiter.",
     )
-    penetration = col_b.selectbox(
-        "Ausstattungsgrad", penetrations,
-        format_func=lambda p: f"{p:.0%}",
-        key=penetration_widget,
-        on_change=_sync, args=(penetration_widget, PENETRATION_STATE),
-        help=(
-            "Anteil der Haushalte mit flexiblen Geräten. Im Batch-Experiment "
-            "bekommen genau diese Haushalte die volle Ausstattung (E-Auto, "
-            "Batterie, Wärmepumpe und PV), die übrigen keines davon. "
-            "Gilt für alle Reiter."
-        ),
-    )
+    if single:
+        penetration = penetrations[0]
+    else:
+        penetration = columns[1].selectbox(
+            "Ausstattungsgrad", penetrations,
+            format_func=lambda p: f"{p:.0%}",
+            key=penetration_widget,
+            on_change=_sync, args=(penetration_widget, PENETRATION_STATE),
+            help=(
+                "Anteil der Haushalte mit flexiblen Geräten. Im Batch-Experiment "
+                "bekommen genau diese Haushalte die volle Ausstattung (E-Auto, "
+                "Batterie, Wärmepumpe und PV), die übrigen keines davon. "
+                "Gilt für alle Reiter."
+            ),
+        )
     ss[SCENARIO_STATE] = scenario
     ss[PENETRATION_STATE] = penetration
     return scenario, penetration

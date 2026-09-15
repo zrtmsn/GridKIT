@@ -244,6 +244,48 @@ def _matrix_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     return (cells + labels).properties(width="container", height=alt.Step(42))
 
 
+def _scenario_bars(frame: pd.DataFrame):  # pragma: no cover (UI)
+    """Overload duration per scenario, for a run with a single device configuration.
+
+    A one-column grid is a bad way to compare four values: the eye reads length
+    far better than it reads a number inside a coloured square, and with one
+    Ausstattungsgrad there is no second dimension left for the grid to carry.
+    """
+    import altair as alt
+
+    data = frame.dropna(subset=["Spitze"]).copy()
+    data["Stunden"] = data["Dauer"]
+    data["Prozent"] = data["Spitze"] * 100.0
+    data["Bewertung"] = data["status"].map(theme.STATUS_LABELS_DE)
+    data["Beschriftung"] = data["Dauer"].map(
+        lambda h: theme.NO_VALUE if pd.isna(h) else f"{h:.2f}".replace(".", ",") + " h"
+    )
+    present = [k for k in _SEVERITY if k in set(data["status"])]
+    # gentlest first, so the best scenario sits at the top of the list
+    order = list(data.sort_values("Dauer", na_position="last")["Szenario"])
+
+    base = alt.Chart(data).encode(
+        y=alt.Y("Szenario:N", title=None, sort=order),
+        x=alt.X("Stunden:Q", title="Stunden über der Grenze"),
+    )
+    bars = base.mark_bar(height=22, cornerRadiusEnd=3).encode(
+        color=alt.Color("status:N",
+                        scale=alt.Scale(domain=present,
+                                        range=[theme.STATUS_COLORS[k] for k in present]),
+                        legend=alt.Legend(title="Bewertung", orient="top")),
+        tooltip=[alt.Tooltip("Szenario:N"),
+                 alt.Tooltip("Stunden:Q", format=".2f", title="Überlast (h)"),
+                 alt.Tooltip("Prozent:Q", format=".0f", title="Spitze (%)"),
+                 alt.Tooltip("Trafo:Q", format=".2f", title="Trafo (p.u.)"),
+                 alt.Tooltip("Bewertung:N")],
+    )
+    labels = base.mark_text(align="left", dx=5, fontWeight="bold", fontSize=12).encode(
+        text=alt.Text("Beschriftung:N"),
+        color=alt.value(theme.SERIES_COLORS["transformer"]),
+    )
+    return (bars + labels).properties(width="container", height=alt.Step(38))
+
+
 def render_ueberblick(summary: list[dict[str, Any]],
                       timelines: list[dict[str, Any]] | None = None,
                       key: str = "ueberblick") -> None:  # pragma: no cover (UI)
@@ -260,49 +302,64 @@ def render_ueberblick(summary: list[dict[str, Any]],
         st.info("Die Ergebnisse enthalten keine Auslastungswerte.")
         return
 
+    # A run built from one drawn area has a single device configuration. The
+    # figures that range OVER the Ausstattungsgrad ("overload from", "safe up
+    # to") then have nothing to range over and would state a threshold from one
+    # data point. Only a batch sweep earns them.
+    swept = frame["penetration"].nunique() > 1
+
     # ── Urteil ────────────────────────────────────────────────
     peak_percent = head["worst_peak"] * 100.0
     hours = head["worst_hours"]
+    scenario_name = head["worst_hours_scenario"] if hours is not None else head["worst_scenario"]
+    share = head["worst_hours_penetration"] if hours is not None else head["worst_penetration"]
+    where = scenario_name if not swept else f"{scenario_name} bei {share:.0%} Ausstattungsgrad"
+
     if hours is not None:
-        where = (f"{head['worst_hours_scenario']} bei "
-                 f"{head['worst_hours_penetration']:.0%} Ausstattungsgrad")
-        worst_text = f"am längsten überlastet: {hours:.2f} h".replace(".", ",") + f" bei {where}"
+        worst_text = (f"am längsten überlastet: {hours:.2f} h".replace(".", ",")
+                      + f" — {where}")
     else:
-        where = f"{head['worst_scenario']} bei {head['worst_penetration']:.0%} Ausstattungsgrad"
-        worst_text = f"Spitze {peak_percent:.0f} % bei {where}"
+        worst_text = f"Spitze {peak_percent:.0f} % — {where}"
 
     if head["status"] == "kritisch":
         ceiling = head["safe_ceiling"]
-        st.error(
-            f"**Das Netz hält nicht durch.** {worst_text.capitalize()}. "
-            + (f"Bis einschließlich {ceiling:.0%} Ausstattungsgrad bleibt jedes Szenario im Rahmen."
-               if ceiling is not None else
-               "Schon beim niedrigsten geprüften Ausstattungsgrad kommt es zur Überlast.")
-        )
+        tail = ""
+        if swept:
+            tail = (f" Bis einschließlich {ceiling:.0%} Ausstattungsgrad bleibt jedes "
+                    "Szenario im Rahmen." if ceiling is not None else
+                    " Schon beim niedrigsten geprüften Ausstattungsgrad kommt es zur Überlast.")
+        st.error(f"**Das Netz hält nicht durch.** {worst_text.capitalize()}.{tail}")
     elif head["status"] == "grenzbereich":
-        st.warning(f"**Grenzwertig.** Höchste Auslastung {peak_percent:.0f} % bei {where}. "
+        st.warning(f"**Grenzwertig.** Höchste Auslastung {peak_percent:.0f} % — {where}. "
                    "Keine Überschreitung, aber ohne Reserve.")
     else:
-        st.success(f"**Das Netz hält durch.** Höchste Auslastung {peak_percent:.0f} % "
-                   f"bei {where}.")
+        st.success(f"**Das Netz hält durch.** Höchste Auslastung {peak_percent:.0f} % — {where}.")
 
-    c1, c2, c3, c4 = st.columns(4)
+    tiles = st.columns(4 if swept else 3)
     if hours is not None:
-        c1.metric("Längste Überlast", f"{hours:.2f} h".replace(".", ","),
-                  help=f"{where} · höchste Auslastung insgesamt {peak_percent:.0f} %")
+        tiles[0].metric("Längste Überlast", f"{hours:.2f} h".replace(".", ","),
+                        help=f"{where} · höchste Auslastung insgesamt {peak_percent:.0f} %")
     else:
-        c1.metric("Höchste Auslastung", f"{peak_percent:.0f} %", help=where)
-    if head["breaking_point"] is not None:
-        c2.metric("Überlast ab", f"{head['breaking_point']:.0%} EV",
-                  help="Niedrigster Ausstattungsgrad, bei dem irgendein Szenario über 100 % geht")
+        tiles[0].metric("Höchste Auslastung", f"{peak_percent:.0f} %", help=where)
+
+    if swept:
+        tiles[1].metric(
+            "Überlast ab",
+            f"{head['breaking_point']:.0%}" if head["breaking_point"] is not None else "nie",
+            help="Niedrigster Ausstattungsgrad, bei dem irgendein Szenario über 100 % geht",
+        )
+        tiles[2].metric(
+            "Sicher bis",
+            f"{head['safe_ceiling']:.0%}" if head["safe_ceiling"] is not None else "keiner",
+            help="Höchster Ausstattungsgrad, bei dem KEIN Szenario über 100 % geht",
+        )
+        tiles[3].metric("Betroffene Fälle", f"{head['n_over']} / {head['n_total']}",
+                        help="Kombinationen aus Szenario und Ausstattungsgrad mit Überlast")
     else:
-        c2.metric("Überlast ab", "nie", help="Kein geprüfter Ausstattungsgrad führt zur Überlast")
-    c3.metric("Sicher bis",
-              f"{head['safe_ceiling']:.0%} EV" if head["safe_ceiling"] is not None else "keiner",
-              help="Höchster Ausstattungsgrad, bei dem KEIN Szenario über 100 % geht. "
-                   "„keiner“ heißt: schon der niedrigste geprüfte Anteil überlastet.")
-    c4.metric("Betroffene Fälle", f"{head['n_over']} / {head['n_total']}",
-              help="Kombinationen aus Szenario und Ausstattungsgrad mit Überlast")
+        tiles[1].metric("Höchste Auslastung", f"{peak_percent:.0f} %",
+                        help="Schlechterer Wert aus Transformator und Kabel")
+        tiles[2].metric("Betroffene Szenarien", f"{head['n_over']} / {head['n_total']}",
+                        help="Szenarien, in denen etwas über 100 % ging")
 
     # ── Matrix ────────────────────────────────────────────────
     st.caption(
@@ -311,19 +368,20 @@ def render_ueberblick(summary: list[dict[str, Any]],
         "mehr aus. Aussagekräftig ist der **Vergleich der Szenarien untereinander**."
     )
 
-    st.subheader("Szenario × Ausstattungsgrad")
+    st.subheader("Szenario × Ausstattungsgrad" if swept else "Überlast je Szenario")
     st.caption(
         "**Wie lange** das am längsten betroffene Element über seiner Grenze lag. "
         "Die Farbe zeigt die Schwere der Spitze (schlechterer Wert aus Transformator "
-        "und Kabel), die Zahl die Dauer; beim Überfahren stehen beide. Die Dauer "
-        "steht vorn, weil ein einzelner schwacher Strang in jedem Szenario "
+        "und Kabel), die Länge bzw. Zahl die Dauer; beim Überfahren stehen beide. "
+        "Die Dauer steht vorn, weil ein einzelner schwacher Strang in jedem Szenario "
         "annähernd dieselbe Spitze erzeugt und die Szenarien dann gleich aussehen, "
         "obwohl sie es nicht sind. Details im Reiter **Netzauslastung**."
     )
-    st.altair_chart(_matrix_chart(frame), width="stretch")
+    st.altair_chart(_matrix_chart(frame) if swept else _scenario_bars(frame), width="stretch")
     download_pair(
         frame.drop(columns=["scenario"]).rename(columns={"status": "Bewertung"}),
-        "Überblick", f"{key}_matrix", label="Alle Kombinationen als Tabelle",
+        "Überblick", f"{key}_matrix",
+        label="Alle Kombinationen als Tabelle" if swept else "Alle Szenarien als Tabelle",
     )
 
     if frame["Kabel"].isna().all():
@@ -337,7 +395,8 @@ def render_ueberblick(summary: list[dict[str, Any]],
     hardest = frame["penetration"].max()
     ranking = scenario_ranking(frame, hardest)
     if not ranking.empty:
-        st.subheader(f"Szenarien bei {hardest:.0%} Ausstattungsgrad")
+        st.subheader(f"Szenarien bei {hardest:.0%} Ausstattungsgrad" if swept
+                     else "Die Szenarien im Vergleich")
         st.caption(
             "Sortiert nach Dauer der Überlast, kürzeste zuerst. Trafo und Kabel "
             "stehen getrennt: sie können weit auseinanderliegen, und ein Szenario, "

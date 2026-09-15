@@ -1,6 +1,6 @@
 # dashboard/test_app.py
 import core.constants as const
-from GridKIT.dashboard.app import _LOAD_COLORS, _load_style
+from GridKIT.dashboard.vergleich import _LOAD_COLORS, _load_style
 
 
 def test_overloaded_cable_is_red_and_thickest():
