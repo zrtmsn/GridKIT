@@ -6,6 +6,7 @@ import core.constants as const
 from core.models import (
     BatteryAction,
     ChargingAction,
+    HouseholdDevices,
     HPAction,
     Observation,
     PowerFlowResult,
@@ -140,6 +141,34 @@ def test_battery_charge_raises_soc_discharge_lowers():
     assert s1 > s0
     env.step(_actions(env, batt=BatteryAction.DISCHARGE))
     assert env._households[bus].battery.soc < s1
+
+
+def test_battery_uses_custom_capacity_from_household_devices():
+    # a HouseholdDevices.battery_kwh override (e.g. GridCreator's real
+    # per-household `storage` value) must reach BatteryState.capacity_kwh,
+    # not just the fixed BATTERY_CAPACITY_KWH constant.
+    from grid_model.builder import StubNetworkBuilder
+
+    stub_net = StubNetworkBuilder().build()
+    bus = stub_net.household_bus_ids[0]
+    custom_kwh = 3.0
+    layout = {bus: HouseholdDevices(bus_id=bus, battery=True, battery_kwh=custom_kwh)}
+
+    env = _env(device_layout=layout)
+    env.reset(seed=0)
+
+    assert env._households[bus].battery.capacity_kwh == custom_kwh
+
+    # Same physics, smaller denominator → a smaller battery fills faster at
+    # the same charge power.
+    dt = const.TIMESTEP_MINUTES / 60
+    soc_custom, _ = battery_step(0.5, BatteryAction.CHARGE, capacity_kwh=custom_kwh,
+                                  max_power_kw=const.BATTERY_MAX_POWER_KW,
+                                  efficiency=const.BATTERY_EFFICIENCY, dt=dt)
+    soc_default, _ = battery_step(0.5, BatteryAction.CHARGE, capacity_kwh=const.BATTERY_CAPACITY_KWH,
+                                   max_power_kw=const.BATTERY_MAX_POWER_KW,
+                                   efficiency=const.BATTERY_EFFICIENCY, dt=dt)
+    assert soc_custom > soc_default
 
 
 def test_pv_export_earns_feed_in_positive_reward():

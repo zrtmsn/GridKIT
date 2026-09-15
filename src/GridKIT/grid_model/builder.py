@@ -12,6 +12,7 @@ import pypsa
 
 import core.constants as const
 from core import BusModel, FeederSummary, GridNetwork, LineModel, TransformerModel, settings
+from core.models import HouseholdDevices
 from core.protocols import NetworkBuilderProtocol
 
 EV_BUS_SUFFIX = "_E_Car"
@@ -31,6 +32,10 @@ def _first_episode_day(series: pd.Series) -> list[float]:
     xp = np.arange(24) * steps_per_hour
     x = np.arange(const.EPISODE_STEPS)
     return np.interp(x, xp, hourly).tolist()
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
 
 
 class StubNetworkBuilder(NetworkBuilderProtocol):
@@ -173,6 +178,9 @@ class OSMNetworkBuilder(NetworkBuilderProtocol):
             },
             ev_availability={
                 b: a for b, a in network.ev_availability.items() if b in bus_ids
+            },
+            household_devices={
+                b: d for b, d in network.household_devices.items() if b in bus_ids
             },
         )
 
@@ -360,6 +368,33 @@ buses_df.to_csv(os.path.join(output_dir, 'buses.csv'))
                 availability = _first_episode_day(grid.links_t.p_max_pu[charge_link])
                 ev_availability[bus] = [bool(round(v)) for v in availability]
 
+        # Real per-household device assignment from GridCreator's own
+        # gcp_assignment/gcp_fill step (see _run_gridcreator's driver
+        # script above) — Power_solar/storage/Power_E_car/Power_HP are
+        # written into buses_df for every bus, 0 meaning "none".
+        buses_df_by_str_id = buses_df.set_axis(buses_df.index.astype(str))
+        household_devices: dict[str, HouseholdDevices] = {}
+        for bus in household_bus_ids:
+            row = buses_df_by_str_id.loc[bus]
+            pv_kw = float(row.get("Power_solar", 0.0) or 0.0)
+            storage_kwh = float(row.get("storage", 0.0) or 0.0)
+            ev_kw = float(row.get("Power_E_car", 0.0) or 0.0)
+            hp_kw = float(row.get("Power_HP", 0.0) or 0.0)
+            household_devices[bus] = HouseholdDevices(
+                bus_id=bus,
+                ev=ev_kw > 0,
+                heat_pump=hp_kw > 0,
+                pv=pv_kw > 0,
+                pv_kwp=(
+                    _clamp(pv_kw, const.PV_PEAK_KWP_MIN, const.PV_PEAK_KWP_MAX) if pv_kw > 0 else None
+                ),
+                battery=storage_kwh > 0,
+                battery_kwh=(
+                    _clamp(storage_kwh, const.BATTERY_CAPACITY_KWH_MIN, const.BATTERY_CAPACITY_KWH_MAX)
+                    if storage_kwh > 0 else None
+                ),
+            )
+
         return GridNetwork(
             network_id=self.scenario,
             buses=buses,
@@ -369,4 +404,5 @@ buses_df.to_csv(os.path.join(output_dir, 'buses.csv'))
             household_bus_ids=household_bus_ids,
             household_load_profile_kw=household_load_profile_kw,
             ev_availability=ev_availability,
+            household_devices=household_devices,
         )

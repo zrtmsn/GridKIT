@@ -174,7 +174,12 @@ PV_PEAK_KWP_MIN: float = 3.0        # per-household PV size sampled from [MIN, M
 PV_PEAK_KWP_MAX: float = 10.0
 
 # ── Battery (home storage) ───────────────────────────────────
-BATTERY_CAPACITY_KWH: float = 10.0  # typical home battery (e.g. ~1–2 EV-equivalent hours)
+BATTERY_CAPACITY_KWH: float = 10.0  # typical home battery (e.g. ~1–2 EV-equivalent hours); fallback when no real per-household capacity is known
+# Clamp range for GridCreator's real per-household `storage` value (itself
+# derived from assigned PV size, see vendored functions.py::storage()) —
+# same rationale as PV_PEAK_KWP_MIN/MAX above.
+BATTERY_CAPACITY_KWH_MIN: float = 3.0
+BATTERY_CAPACITY_KWH_MAX: float = 20.0
 BATTERY_MAX_POWER_KW: float = 5.0   # charge/discharge power at CHARGE/DISCHARGE
 BATTERY_EFFICIENCY: float = 0.95    # one-way (round-trip ≈ 0.90)
 BATTERY_INITIAL_SOC: float = 0.5
