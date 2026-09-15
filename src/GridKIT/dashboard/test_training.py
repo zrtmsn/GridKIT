@@ -4,11 +4,13 @@ import json
 from dashboard import theme
 from dashboard.training import (
     METRICS_FILENAME,
+    SINGLE_RUN,
     convergence,
     entropy_frame,
     final_entropy,
     find_metric_files,
     load_metrics,
+    penetration_of,
     return_frame,
 )
 
@@ -29,25 +31,48 @@ def _record(iteration, mean, lo=None, hi=None, entropies=None):
 
 
 # ── Dateien finden ───────────────────────────────────────────
-def test_find_metric_files_picks_up_each_penetration(tmp_path):
-    for pen in ("pen_20", "pen_40"):
-        d = tmp_path / pen
-        d.mkdir()
+def _sweep(root, *pens):
+    """Batch-experiment layout: checkpoints/pen_XX/iteration_metrics.json."""
+    for pen in pens:
+        d = root / "checkpoints" / pen
+        d.mkdir(parents=True)
         (d / METRICS_FILENAME).write_text("[]", encoding="utf-8")
+
+
+def test_find_metric_files_picks_up_each_penetration(tmp_path):
+    _sweep(tmp_path, "pen_20", "pen_40")
     assert sorted(find_metric_files(tmp_path)) == ["pen_20", "pen_40"]
 
 
 def test_find_metric_files_skips_penetrations_without_metrics(tmp_path):
     # an interrupted sweep leaves a checkpoint dir with no metrics file
-    (tmp_path / "pen_20").mkdir()
-    done = tmp_path / "pen_40"
-    done.mkdir()
-    (done / METRICS_FILENAME).write_text("[]", encoding="utf-8")
+    (tmp_path / "checkpoints" / "pen_20").mkdir(parents=True)
+    _sweep(tmp_path, "pen_40")
     assert list(find_metric_files(tmp_path)) == ["pen_40"]
 
 
 def test_find_metric_files_on_missing_dir_is_empty(tmp_path):
     assert find_metric_files(tmp_path / "nope") == {}
+
+
+def test_finds_metrics_of_a_run_started_from_the_map(tmp_path):
+    # train_run.py trains one device layout and writes the metrics at the run
+    # root, with no pen_* level — the training tab used to come up empty for
+    # exactly the runs a user creates by drawing an area
+    (tmp_path / METRICS_FILENAME).write_text("[]", encoding="utf-8")
+    (tmp_path / "checkpoints").mkdir()
+    assert list(find_metric_files(tmp_path)) == [SINGLE_RUN]
+
+
+def test_a_sweep_wins_over_a_stray_root_file(tmp_path):
+    _sweep(tmp_path, "pen_20")
+    (tmp_path / METRICS_FILENAME).write_text("[]", encoding="utf-8")
+    assert list(find_metric_files(tmp_path)) == ["pen_20"]
+
+
+def test_single_run_key_has_no_penetration():
+    # nothing in its path says which share it was, so the tab must not pretend
+    assert penetration_of(SINGLE_RUN) is None
 
 
 def test_load_metrics_of_corrupt_file_is_empty_not_an_exception(tmp_path):

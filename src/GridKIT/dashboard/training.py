@@ -55,20 +55,35 @@ def penetration_of(directory_name: str) -> float | None:
         return None
 
 
-def find_metric_files(checkpoints_dir: str | Path) -> dict[str, Path]:
-    """{'pen_20': path, …} for every penetration that has metrics on disk.
+#: Key used when a directory holds the metrics of a single run rather than a sweep.
+SINGLE_RUN = "run"
+
+
+def find_metric_files(output_dir: str | Path) -> dict[str, Path]:
+    """{'pen_20': path, …} for every training run with metrics under `output_dir`.
+
+    Covers both producers, because they lay their output out differently:
+      * the batch sweep writes checkpoints/pen_{20,40,60}/iteration_metrics.json,
+      * a run started from the map writes one iteration_metrics.json at the run
+        root, since it trains a single device layout.
+    The single-run case is keyed SINGLE_RUN; it has no penetration in its path.
 
     Missing files are simply absent from the result: a sweep can be interrupted
-    part-way, and the ones already trained should still be viewable.
+    part-way, and the levels already trained should still be viewable.
     """
-    base = Path(checkpoints_dir)
+    base = Path(output_dir)
     if not base.is_dir():
         return {}
-    found = {}
-    for directory in sorted(base.glob("pen_*")):
+
+    found: dict[str, Path] = {}
+    for directory in sorted((base / "checkpoints").glob("pen_*")):
         candidate = directory / METRICS_FILENAME
         if candidate.is_file():
             found[directory.name] = candidate
+
+    single = base / METRICS_FILENAME
+    if not found and single.is_file():
+        found[SINGLE_RUN] = single
     return found
 
 
@@ -216,42 +231,48 @@ def _entropy_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     )
 
 
-def render_training(checkpoints_dir: str | Path, key: str = "training") -> None:  # pragma: no cover (UI)
+def render_training(output_dir: str | Path, key: str = "training") -> None:  # pragma: no cover (UI)
     """Der Training-Reiter: Reward-Konvergenz und Entropie je Policy."""
     import streamlit as st
 
-    files = find_metric_files(checkpoints_dir)
+    files = find_metric_files(output_dir)
     if not files:
         st.info(
-            f"Keine `{METRICS_FILENAME}` gefunden. Sie entsteht beim Training unter "
-            "`checkpoints/pen_*/`. Zuerst ein Experiment ausführen."
+            f"Keine `{METRICS_FILENAME}` gefunden. Sie entsteht beim Training — "
+            f"beim Batch-Experiment unter `checkpoints/pen_*/`, bei einem Lauf aus "
+            f"der Karte direkt im Lauf-Ordner. Zuerst ein Training ausführen."
         )
         return
 
-    # Share the Ausstattungsgrad with the other tabs: switching to 60 % on the
-    # utilisation tab should show the 60 % training run here, not whatever this
-    # tab was left on.
     names = list(files)
-    by_penetration = {penetration_of(n): n for n in names if penetration_of(n) is not None}
-    shared = st.session_state.get(PENETRATION_STATE)
-    widget_key = f"{key}_pen"
-    if shared in by_penetration:
-        st.session_state[widget_key] = by_penetration[shared]
+    if names == [SINGLE_RUN]:
+        # A run from the map trains one device layout, so there is nothing to
+        # choose between; a selector with a single entry would be noise.
+        chosen = SINGLE_RUN
+    else:
+        # Share the Ausstattungsgrad with the other tabs: switching to 60 % on the
+        # utilisation tab should show the 60 % training run here, not whatever this
+        # tab was left on.
+        by_penetration = {penetration_of(n): n for n in names if penetration_of(n) is not None}
+        shared = st.session_state.get(PENETRATION_STATE)
+        widget_key = f"{key}_pen"
+        if shared in by_penetration:
+            st.session_state[widget_key] = by_penetration[shared]
 
-    chosen = st.selectbox(
-        "Ausstattungsgrad", names,
-        format_func=lambda n: (f"{p:.0%}" if (p := penetration_of(n)) is not None else n),
-        key=widget_key,
-        on_change=_sync_penetration, args=(widget_key,),
-        help=(
-            "Anteil der Haushalte mit flexiblen Geräten. Im Batch-Experiment "
-            "bekommen genau diese Haushalte die volle Ausstattung (E-Auto, "
-            "Batterie, Wärmepumpe und PV), die übrigen keines davon. "
-            "Gilt für alle Reiter."
-        ),
-    )
-    if (picked := penetration_of(chosen)) is not None:
-        st.session_state[PENETRATION_STATE] = picked
+        chosen = st.selectbox(
+            "Ausstattungsgrad", names,
+            format_func=lambda n: (f"{p:.0%}" if (p := penetration_of(n)) is not None else n),
+            key=widget_key,
+            on_change=_sync_penetration, args=(widget_key,),
+            help=(
+                "Anteil der Haushalte mit flexiblen Geräten. Im Batch-Experiment "
+                "bekommen genau diese Haushalte die volle Ausstattung (E-Auto, "
+                "Batterie, Wärmepumpe und PV), die übrigen keines davon. "
+                "Gilt für alle Reiter."
+            ),
+        )
+        if (picked := penetration_of(chosen)) is not None:
+            st.session_state[PENETRATION_STATE] = picked
     records = load_metrics(files[chosen])
     if not records:
         st.warning("Die Metrikdatei ist leer oder nicht lesbar.")

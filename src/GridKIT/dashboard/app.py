@@ -214,7 +214,7 @@ def render_results(summary, timelines, network=None) -> None:
     with tab_vergleich:
         _render_comparison(summary, timelines, network)
     with tab_training:
-        render_training(OUTPUT_DIR / "checkpoints")
+        render_training(OUTPUT_DIR)
 
 
 def _render_glossary() -> None:
