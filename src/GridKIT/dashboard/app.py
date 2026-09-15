@@ -410,8 +410,8 @@ def _render_comparison(summary, timelines, network=None) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="GridKIT: §14a bei Multi-Geräte-Flexibilität", layout="wide")
-    st.title("GridKIT: Hält die §14a-Abregelung mit EV + Batterie + Wärmepumpe + PV stand?")
+    st.set_page_config(page_title="GridKIT Dashboard", layout="wide")
+    st.title("GridKIT Dashboard")
     st.caption(
         "Jeder Haushalt betreibt drei steuerbare Geräte-Agenten (EV, Batterie, Wärmepumpe) "
         "sowie eine exogene Dach-PV-Anlage, auf Basis realer, wetterabhängiger Profile "
