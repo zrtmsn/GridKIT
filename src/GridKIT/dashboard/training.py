@@ -35,7 +35,7 @@ METRICS_FILENAME = "iteration_metrics.json"
 
 
 def _sync_penetration(widget_key: str) -> None:  # pragma: no cover (UI callback)
-    """Write this tab's pick back to the EV-Anteil the other tabs read."""
+    """Write this tab's pick back to the Ausstattungsgrad the other tabs read."""
     import streamlit as st
 
     picked = penetration_of(st.session_state[widget_key])
@@ -47,7 +47,7 @@ def _sync_penetration(widget_key: str) -> None:  # pragma: no cover (UI callback
 # Reine Helfer (kein Streamlit — unit-testbar)
 # ══════════════════════════════════════════════════════════════
 def penetration_of(directory_name: str) -> float | None:
-    """'pen_20' → 0.2, so the training tab can share the other tabs' EV-Anteil."""
+    """'pen_20' → 0.2, so the training tab can share the other tabs' Ausstattungsgrad."""
     tail = directory_name.removeprefix("pen_")
     try:
         return int(tail) / 100.0
@@ -228,7 +228,7 @@ def render_training(checkpoints_dir: str | Path, key: str = "training") -> None:
         )
         return
 
-    # Share the EV-Anteil with the other tabs: switching to 60 % on the
+    # Share the Ausstattungsgrad with the other tabs: switching to 60 % on the
     # utilisation tab should show the 60 % training run here, not whatever this
     # tab was left on.
     names = list(files)
@@ -239,11 +239,16 @@ def render_training(checkpoints_dir: str | Path, key: str = "training") -> None:
         st.session_state[widget_key] = by_penetration[shared]
 
     chosen = st.selectbox(
-        "EV-Anteil", names,
+        "Ausstattungsgrad", names,
         format_func=lambda n: (f"{p:.0%}" if (p := penetration_of(n)) is not None else n),
         key=widget_key,
         on_change=_sync_penetration, args=(widget_key,),
-        help="Anteil der Haushalte mit Elektroauto. Gilt für alle Reiter.",
+        help=(
+            "Anteil der Haushalte mit flexiblen Geräten. Im Batch-Experiment "
+            "bekommen genau diese Haushalte die volle Ausstattung (E-Auto, "
+            "Batterie, Wärmepumpe und PV), die übrigen keines davon. "
+            "Gilt für alle Reiter."
+        ),
     )
     if (picked := penetration_of(chosen)) is not None:
         st.session_state[PENETRATION_STATE] = picked

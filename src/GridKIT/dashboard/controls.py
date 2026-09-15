@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────
 # Gemeinsame Auswahl über alle Reiter hinweg.
 #
-# Szenario und EV-Anteil are picked on more than one tab. Streamlit refuses to
+# Szenario und Ausstattungsgrad are picked on more than one tab. Streamlit refuses to
 # reuse a widget key, so each tab needs its own widget — but a user who selects
 # "eigennütziges RL bei 60 %" on one tab and finds another tab still showing a
 # different scenario has been silently shown two different runs side by side.
@@ -44,7 +44,7 @@ def _sync(widget_key: str, shared_key: str) -> None:  # pragma: no cover (UI cal
 
 def scenario_penetration_picker(timelines: list[dict[str, Any]], key: str,
                                 ) -> tuple[str | None, float | None]:  # pragma: no cover (UI)
-    """Render the shared Szenario / EV-Anteil pickers; return the current choice.
+    """Render the shared Szenario / Ausstattungsgrad pickers; return the current choice.
 
     `key` only namespaces this tab's widgets — the selected value itself lives
     in session state shared by every tab.
@@ -82,11 +82,16 @@ def scenario_penetration_picker(timelines: list[dict[str, Any]], key: str,
         help="Die Regelstrategie der Haushaltsgeräte. Gilt für alle Reiter.",
     )
     penetration = col_b.selectbox(
-        "EV-Anteil", penetrations,
+        "Ausstattungsgrad", penetrations,
         format_func=lambda p: f"{p:.0%}",
         key=penetration_widget,
         on_change=_sync, args=(penetration_widget, PENETRATION_STATE),
-        help="Anteil der Haushalte mit Elektroauto. Gilt für alle Reiter.",
+        help=(
+            "Anteil der Haushalte mit flexiblen Geräten. Im Batch-Experiment "
+            "bekommen genau diese Haushalte die volle Ausstattung (E-Auto, "
+            "Batterie, Wärmepumpe und PV), die übrigen keines davon. "
+            "Gilt für alle Reiter."
+        ),
     )
     ss[SCENARIO_STATE] = scenario
     ss[PENETRATION_STATE] = penetration

@@ -227,7 +227,9 @@ def _render_glossary() -> None:
             "**Transformator vs. Leitung**: beide können überlasten. Im "
             "Niederspannungsnetz erreicht meist das **Kabel** zuerst seine "
             "Grenze, während der Transformator noch entspannt aussieht.\n\n"
-            "**EV-Anteil**: wie viele Haushalte ein Elektroauto haben. "
+            "**Ausstattungsgrad**: Anteil der Haushalte mit flexiblen Geräten. Im "
+            "Batch-Experiment bekommen genau diese Haushalte die volle Ausstattung "
+            "(E-Auto, Batterie, Wärmepumpe, PV), die übrigen keines davon. "
             "Der Härtegrad des Tests."
         )
         right.markdown(
@@ -251,8 +253,8 @@ def _render_comparison(summary, timelines, network=None) -> None:
         st.header("Wo das Netz überlastet war")
         render_overload_map(network, summary)
 
-    # ── 1. Abregelungsvergleich über den EV-Anteil ──────────
-    st.header("§14a-Eingriffe nach Szenario und EV-Anteil")
+    # ── 1. Abregelungsvergleich über den Ausstattungsgrad ──────────
+    st.header("§14a-Eingriffe nach Szenario und Ausstattungsgrad")
     st.write(
         "Zeitschritte pro 24-h-Episode, in denen die §14a-Abregelung ausgelöst wurde "
         "(Mittelwert ± Std. über die Seeds). Die Geschichte dahinter: naives "
@@ -272,7 +274,7 @@ def _render_comparison(summary, timelines, network=None) -> None:
                label=_de(scen), color=SCENARIO_COLORS.get(scen, None))
     ax.set_xticks(x + width * (len(scenarios) - 1) / 2)
     ax.set_xticklabels([f"{p:.0%}" for p in penetrations])
-    ax.set_xlabel("EV-Anteil")
+    ax.set_xlabel("Ausstattungsgrad")
     ax.set_ylabel("§14a-Eingriffe / Episode")
     ax.legend(fontsize=8, loc="upper left")
     ax.grid(axis="y", alpha=0.3)
@@ -313,7 +315,7 @@ def _render_comparison(summary, timelines, network=None) -> None:
             axa.set_ylim(0, 1.4)
             axa.legend(fontsize=8, ncol=2)
             axa.grid(alpha=0.3)
-            axa.set_title(f"{_de(sel_scen)} @ {sel_pen:.0%} EV-Anteil")
+            axa.set_title(f"{_de(sel_scen)} @ {sel_pen:.0%} Ausstattungsgrad")
 
             # Preis + PV-Erzeugung (warum Eigenverbrauch vs. Einspeisung eine Rolle spielt)
             axb.plot(hours, rec["price"], label="Preis (€/kWh)", color="#2a9d8f")

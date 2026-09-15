@@ -71,7 +71,9 @@ def test_status_uses_the_transformer_when_it_is_the_worse_one():
 def test_overview_frame_translates_scenario_labels():
     frame = overview_frame([_row("3: selfish RL", 0.2, 0.4)])
     assert frame["Szenario"].iloc[0] == "3: eigennütziges RL"
-    assert frame["EV-Anteil"].iloc[0] == "20%"
+    # "Ausstattungsgrad", not "EV-Anteil": the value drives all four devices,
+    # not just the car (see GridEnv's joint penetration knob)
+    assert frame["Ausstattungsgrad"].iloc[0] == "20%"
 
 
 def test_overview_frame_of_nothing_is_empty_but_typed():

@@ -339,7 +339,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
     # ── Szenarienvergleich der Gerätekennzahlen ───────────────
     table = scenario_devices(summary or [], penetration)
     if not table.empty and table.drop(columns=["Szenario"]).notna().any().any():
-        st.subheader(f"Gerätekennzahlen bei {penetration:.0%} EV-Anteil")
+        st.subheader(f"Gerätekennzahlen bei {penetration:.0%} Ausstattungsgrad")
         st.dataframe(
             table.style.format({
                 "EV-Ziel erreicht": "{:.0%}", "WP-Komfort": "{:.0%}",

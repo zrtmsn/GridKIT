@@ -105,7 +105,7 @@ def overview_frame(summary: list[dict[str, Any]],
             "scenario": scenario,
             "Szenario": theme.scenario_label(scenario),
             "penetration": penetration,
-            "EV-Anteil": f"{penetration:.0%}",
+            "Ausstattungsgrad": f"{penetration:.0%}",
             "Trafo": trafo_pu,
             "Kabel": cable_pu,
             "Spitze": worst,
@@ -114,7 +114,7 @@ def overview_frame(summary: list[dict[str, Any]],
             "curtailment": record.get("curtailment_mean"),
             "soc": record.get("soc_mean"),
         })
-    return pd.DataFrame(rows, columns=["scenario", "Szenario", "penetration", "EV-Anteil",
+    return pd.DataFrame(rows, columns=["scenario", "Szenario", "penetration", "Ausstattungsgrad",
                                        "Trafo", "Kabel", "Spitze", "Dauer", "status",
                                        "curtailment", "soc"])
 
@@ -213,7 +213,8 @@ def _matrix_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     order = [theme.scenario_label(s) for s in scenarios] or list(data["Szenario"])
 
     base = alt.Chart(data).encode(
-        x=alt.X("EV-Anteil:N", title="EV-Anteil", sort=sorted(set(data["EV-Anteil"]))),
+        x=alt.X("Ausstattungsgrad:N", title="Ausstattungsgrad",
+                sort=sorted(set(data["Ausstattungsgrad"]))),
         y=alt.Y("Szenario:N", title=None, sort=order),
     )
     cells = base.mark_rect(stroke="white", strokeWidth=2).encode(
@@ -226,7 +227,7 @@ def _matrix_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
                               labelExpr="datum.label"),
         ),
         opacity=alt.value(0.85),
-        tooltip=[alt.Tooltip("Szenario:N"), alt.Tooltip("EV-Anteil:N"),
+        tooltip=[alt.Tooltip("Szenario:N"), alt.Tooltip("Ausstattungsgrad:N"),
                  alt.Tooltip("Stunden:Q", format=".2f", title="Überlast (h)"),
                  alt.Tooltip("Prozent:Q", format=".0f", title="Spitze (%)"),
                  alt.Tooltip("Trafo:Q", format=".2f", title="Trafo (p.u.)"),
@@ -241,7 +242,7 @@ def _matrix_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
 def render_ueberblick(summary: list[dict[str, Any]],
                       timelines: list[dict[str, Any]] | None = None,
                       key: str = "ueberblick") -> None:  # pragma: no cover (UI)
-    """Der Überblick-Reiter: das Urteil über alle Szenarien und EV-Anteile."""
+    """Der Überblick-Reiter: das Urteil über alle Szenarien und Ausstattungsgrade."""
     import streamlit as st
 
     if not summary:
@@ -259,19 +260,19 @@ def render_ueberblick(summary: list[dict[str, Any]],
     hours = head["worst_hours"]
     if hours is not None:
         where = (f"{head['worst_hours_scenario']} bei "
-                 f"{head['worst_hours_penetration']:.0%} EV-Anteil")
+                 f"{head['worst_hours_penetration']:.0%} Ausstattungsgrad")
         worst_text = f"am längsten überlastet: {hours:.2f} h".replace(".", ",") + f" bei {where}"
     else:
-        where = f"{head['worst_scenario']} bei {head['worst_penetration']:.0%} EV-Anteil"
+        where = f"{head['worst_scenario']} bei {head['worst_penetration']:.0%} Ausstattungsgrad"
         worst_text = f"Spitze {peak_percent:.0f} % bei {where}"
 
     if head["status"] == "kritisch":
         ceiling = head["safe_ceiling"]
         st.error(
             f"**Das Netz hält nicht durch.** {worst_text.capitalize()}. "
-            + (f"Bis einschließlich {ceiling:.0%} EV-Anteil bleibt jedes Szenario im Rahmen."
+            + (f"Bis einschließlich {ceiling:.0%} Ausstattungsgrad bleibt jedes Szenario im Rahmen."
                if ceiling is not None else
-               "Schon beim niedrigsten geprüften EV-Anteil kommt es zur Überlast.")
+               "Schon beim niedrigsten geprüften Ausstattungsgrad kommt es zur Überlast.")
         )
     elif head["status"] == "grenzbereich":
         st.warning(f"**Grenzwertig.** Höchste Auslastung {peak_percent:.0f} % bei {where}. "
@@ -288,15 +289,15 @@ def render_ueberblick(summary: list[dict[str, Any]],
         c1.metric("Höchste Auslastung", f"{peak_percent:.0f} %", help=where)
     if head["breaking_point"] is not None:
         c2.metric("Überlast ab", f"{head['breaking_point']:.0%} EV",
-                  help="Niedrigster EV-Anteil, bei dem irgendein Szenario über 100 % geht")
+                  help="Niedrigster Ausstattungsgrad, bei dem irgendein Szenario über 100 % geht")
     else:
-        c2.metric("Überlast ab", "nie", help="Kein geprüfter EV-Anteil führt zur Überlast")
+        c2.metric("Überlast ab", "nie", help="Kein geprüfter Ausstattungsgrad führt zur Überlast")
     c3.metric("Sicher bis",
               f"{head['safe_ceiling']:.0%} EV" if head["safe_ceiling"] is not None else "keiner",
-              help="Höchster EV-Anteil, bei dem KEIN Szenario über 100 % geht. "
+              help="Höchster Ausstattungsgrad, bei dem KEIN Szenario über 100 % geht. "
                    "„keiner“ heißt: schon der niedrigste geprüfte Anteil überlastet.")
     c4.metric("Betroffene Fälle", f"{head['n_over']} / {head['n_total']}",
-              help="Kombinationen aus Szenario und EV-Anteil mit Überlast")
+              help="Kombinationen aus Szenario und Ausstattungsgrad mit Überlast")
 
     # ── Matrix ────────────────────────────────────────────────
     st.caption(
@@ -305,7 +306,7 @@ def render_ueberblick(summary: list[dict[str, Any]],
         "mehr aus. Aussagekräftig ist der **Vergleich der Szenarien untereinander**."
     )
 
-    st.subheader("Szenario × EV-Anteil")
+    st.subheader("Szenario × Ausstattungsgrad")
     st.caption(
         "**Wie lange** das am längsten betroffene Element über seiner Grenze lag. "
         "Die Farbe zeigt die Schwere der Spitze (schlechterer Wert aus Transformator "
@@ -331,7 +332,7 @@ def render_ueberblick(summary: list[dict[str, Any]],
     hardest = frame["penetration"].max()
     ranking = scenario_ranking(frame, hardest)
     if not ranking.empty:
-        st.subheader(f"Szenarien bei {hardest:.0%} EV-Anteil")
+        st.subheader(f"Szenarien bei {hardest:.0%} Ausstattungsgrad")
         st.caption(
             "Sortiert nach Dauer der Überlast, kürzeste zuerst. Trafo und Kabel "
             "stehen getrennt: sie können weit auseinanderliegen, und ein Szenario, "
