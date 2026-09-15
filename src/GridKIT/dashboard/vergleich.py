@@ -219,18 +219,25 @@ def _scenario_scale(frame: pd.DataFrame):  # pragma: no cover (UI)
                      range=[theme.SCENARIO_COLORS.get(s, "#6c757d") for s in present])
 
 
-def _metric_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
-    """One small chart per metric, scenarios as bars in the scenario palette."""
+def _metric_chart(frame: pd.DataFrame, kennzahl: str):  # pragma: no cover (UI)
+    """One metric, the scenarios as bars in the scenario palette.
+
+    One chart per metric rather than one faceted chart, because `width:
+    "container"` only applies to single-view and layered specs — inside a facet
+    or concat the child views cannot size themselves and render empty until the
+    viewer opens them fullscreen.
+    """
     import altair as alt
 
+    data = frame[frame["Kennzahl"] == kennzahl]
     scale = _scenario_scale(frame)
     order = list(scale.domain)
-    base = alt.Chart(frame).encode(
-        y=alt.Y("Szenario:N", title=None, sort=order, axis=alt.Axis(labels=False, ticks=False)),
+    base = alt.Chart(data).encode(
+        y=alt.Y("Szenario:N", title=None, sort=order),
     )
-    bars = base.mark_bar(height=18, cornerRadiusEnd=3).encode(
-        x=alt.X("Wert:Q", title=None),
-        color=alt.Color("Szenario:N", scale=scale, legend=alt.Legend(title=None, orient="bottom")),
+    bars = base.mark_bar(height=20, cornerRadiusEnd=3).encode(
+        x=alt.X("Wert:Q", title=data["Einheit"].iloc[0] if not data.empty else None),
+        color=alt.Color("Szenario:N", scale=scale, legend=None),
         tooltip=[alt.Tooltip("Szenario:N"), alt.Tooltip("Kennzahl:N"),
                  alt.Tooltip("Wert:Q", format=".2f"),
                  alt.Tooltip("Streuung:Q", format=".2f", title="± Streuung"),
@@ -238,62 +245,70 @@ def _metric_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     )
     # the spread over the seeds: a gap narrower than these whiskers is noise
     spread = base.mark_rule(strokeWidth=1.6, color=theme.SERIES_COLORS["transformer"],
-                            opacity=0.75).encode(
+                            opacity=0.8).encode(
         x=alt.X("untere:Q", title=None), x2="obere:Q",
     ).transform_calculate(
         untere="max(0, datum.Wert - datum.Streuung)",
         obere="datum.Wert + datum.Streuung",
     )
-    return (bars + spread).properties(width="container", height=alt.Step(26)).facet(
-        row=alt.Row("Kennzahl:N", title=None, sort=[m[1] for m in METRICS],
-                    header=alt.Header(labelAngle=0, labelAlign="left", labelFontWeight="bold")),
-    ).resolve_scale(x="independent")
+    labels = base.mark_text(align="left", dx=6, fontSize=11,
+                            color=theme.SERIES_COLORS["transformer"]).encode(
+        x=alt.X("obere:Q", title=None), text=alt.Text("Wert:Q", format=".2f"),
+    ).transform_calculate(obere="datum.Wert + datum.Streuung")
+    return (bars + spread + labels).properties(width="container", height=alt.Step(30))
 
 
-def _episode_chart(frame: pd.DataFrame, curtailed: pd.DataFrame):  # pragma: no cover (UI)
-    """The representative day: loading, price, PV and device power, stacked."""
+#: (Gruppe, y-Titel, {Reihe: Farbe}, Höhe, Grenzlinie) — je ein eigenes Diagramm.
+EPISODE_PANELS: tuple[tuple[str, str, dict[str, str], int, float | None], ...] = (
+    ("Auslastung", "Auslastung (%)",
+     {"Trafo-Auslastung": theme.SERIES_COLORS["transformer"],
+      "max. Leitungsauslastung": theme.SERIES_COLORS["line"]}, 220, 100.0),
+    ("Leistung", "Leistung (kW)",
+     {"EV": theme.DEVICE_COLORS["ev"], "Batterie": theme.DEVICE_COLORS["battery"],
+      "Wärmepumpe": theme.DEVICE_COLORS["hp"], "PV-Erzeugung": theme.DEVICE_COLORS["pv"]}, 220, None),
+    ("Preis", "Preis (€/kWh)", {"Strompreis": theme.SERIES_COLORS["line"]}, 150, None),
+)
+
+
+def _episode_panel(frame: pd.DataFrame, curtailed: pd.DataFrame,
+                   group: str, y_title: str, colors: dict[str, str],
+                   height: int, rule: float | None):  # pragma: no cover (UI)
+    """One panel of the representative day.
+
+    Separate charts rather than one vconcat: `width: "container"` applies only
+    to single-view and layered specs, so a concatenated child cannot size to the
+    page and renders empty at normal width.
+    """
     import altair as alt
 
-    def panel(group: str, y_title: str, colors: dict[str, str], height: int, rule: float | None = None):
-        data = frame[frame["Gruppe"] == group]
-        present = [r for r in colors if r in set(data["Reihe"])]
-        layers = []
-        if not curtailed.empty:
-            # every quarter hour the grid operator had to intervene
-            layers.append(
-                alt.Chart(curtailed).mark_rule(color=theme.STATUS_COLORS["kritisch"],
-                                               opacity=0.13, strokeWidth=4)
-                .encode(x=alt.X("Stunde:Q"))
-            )
-        if rule is not None:
-            layers.append(
-                alt.Chart(pd.DataFrame({"y": [rule]}))
-                .mark_rule(color=theme.STATUS_COLORS["kritisch"], strokeDash=[5, 4], strokeWidth=1.3)
-                .encode(y="y:Q")
-            )
+    data = frame[frame["Gruppe"] == group]
+    present = [r for r in colors if r in set(data["Reihe"])]
+    layers = []
+    if not curtailed.empty:
+        # every quarter hour the grid operator had to intervene
         layers.append(
-            alt.Chart(data).mark_line(strokeWidth=2).encode(
-                x=alt.X("Stunde:Q", title=None, axis=alt.Axis(**_HOUR_AXIS)),
-                y=alt.Y("Wert:Q", title=y_title),
-                color=alt.Color("Reihe:N",
-                                scale=alt.Scale(domain=present, range=[colors[r] for r in present]),
-                                legend=alt.Legend(title=None, orient="top")),
-                tooltip=[alt.Tooltip("Uhrzeit:N"), alt.Tooltip("Reihe:N"),
-                         alt.Tooltip("Wert:Q", format=".2f")],
-            )
+            alt.Chart(curtailed).mark_rule(color=theme.STATUS_COLORS["kritisch"],
+                                           opacity=0.13, strokeWidth=4)
+            .encode(x=alt.X("Stunde:Q"))
         )
-        return alt.layer(*layers).properties(width="container", height=height)
-
-    return alt.vconcat(
-        panel("Auslastung", "Auslastung (%)",
-              {"Trafo-Auslastung": theme.SERIES_COLORS["transformer"],
-               "max. Leitungsauslastung": theme.SERIES_COLORS["line"]}, 200, rule=100.0),
-        panel("Leistung", "Leistung (kW)",
-              {"EV": theme.DEVICE_COLORS["ev"], "Batterie": theme.DEVICE_COLORS["battery"],
-               "Wärmepumpe": theme.DEVICE_COLORS["hp"], "PV-Erzeugung": theme.DEVICE_COLORS["pv"]}, 200),
-        panel("Preis", "Preis (€/kWh)", {"Strompreis": theme.SERIES_COLORS["line"]}, 130),
-        spacing=8,
-    ).resolve_scale(color="independent")
+    if rule is not None:
+        layers.append(
+            alt.Chart(pd.DataFrame({"y": [rule]}))
+            .mark_rule(color=theme.STATUS_COLORS["kritisch"], strokeDash=[5, 4], strokeWidth=1.3)
+            .encode(y="y:Q")
+        )
+    layers.append(
+        alt.Chart(data).mark_line(strokeWidth=2).encode(
+            x=alt.X("Stunde:Q", title="Uhrzeit", axis=alt.Axis(**_HOUR_AXIS)),
+            y=alt.Y("Wert:Q", title=y_title),
+            color=alt.Color("Reihe:N",
+                            scale=alt.Scale(domain=present, range=[colors[r] for r in present]),
+                            legend=alt.Legend(title=None, orient="top")),
+            tooltip=[alt.Tooltip("Uhrzeit:N"), alt.Tooltip("Reihe:N"),
+                     alt.Tooltip("Wert:Q", format=".2f")],
+        )
+    )
+    return alt.layer(*layers).properties(width="container", height=height)
 
 
 def render_vergleich(summary: list[dict[str, Any]], timelines: list[dict[str, Any]] | None = None,
@@ -328,7 +343,11 @@ def render_vergleich(summary: list[dict[str, Any]], timelines: list[dict[str, An
             "groß sind — eine Strategie, die das Netz schont und das Auto leer lässt, "
             "hat nichts gewonnen."
         )
-        st.altair_chart(_metric_chart(metrics), width="stretch")
+        for _, label, _, higher_better in METRICS:
+            if label not in set(metrics["Kennzahl"]):
+                continue
+            st.markdown(f"**{label}** — {'größer ist besser' if higher_better else 'kleiner ist besser'}")
+            st.altair_chart(_metric_chart(metrics, label), width="stretch")
         download_pair(metrics.drop(columns=["scenario", "kennzahl"]),
                       "Kennzahlen je Szenario", f"{key}_kennzahlen")
 
@@ -345,11 +364,16 @@ def render_vergleich(summary: list[dict[str, Any]], timelines: list[dict[str, An
                 "Rot hinterlegt sind die Viertelstunden, in denen §14a gegriffen hat. "
                 "Einzelne Haushalte stehen im Reiter **Geräte & Haushalte**."
             )
-            st.altair_chart(
-                _episode_chart(episode_frame(timeline), curtailment_steps(timeline)),
-                width="stretch",
-            )
-            download_pair(episode_frame(timeline), "Episode", f"{key}_episode")
+            frame = episode_frame(timeline)
+            curtailed = curtailment_steps(timeline)
+            for group, y_title, colors, height, rule in EPISODE_PANELS:
+                if group not in set(frame["Gruppe"]):
+                    continue
+                st.altair_chart(
+                    _episode_panel(frame, curtailed, group, y_title, colors, height, rule),
+                    width="stretch",
+                )
+            download_pair(frame, "Episode", f"{key}_episode")
 
     # ── Überlastungskarte ─────────────────────────────────────
     if network is not None:
