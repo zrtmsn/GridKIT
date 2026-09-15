@@ -146,25 +146,71 @@ def overload_matrix(timeline: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+_TABLE_COLUMNS = ["Element", "Typ", "Dauer gesamt (h)", "Abschnitte",
+                  "längster Abschnitt", "Dauer davon (h)", "Zeitfenster"]
+
+
+def _format_span(start_hour: float, end_hour: float) -> str:
+    """'13:00–13:15' for a span, or just '13:00' when it lasted one step."""
+    start, end = format_hour(float(start_hour)), format_hour(float(end_hour))
+    return start if start == end else f"{start}–{end}"
+
+
+def contiguous_blocks(steps: list[int]) -> list[tuple[int, int]]:
+    """Consecutive runs in a sorted list of step indices, as (first, last) pairs.
+
+    An element rarely stays over its limit in one stretch: it trips when the
+    load peaks, recovers, and trips again. Those separate episodes are what the
+    table has to show.
+    """
+    if not steps:
+        return []
+    blocks: list[tuple[int, int]] = []
+    start = previous = steps[0]
+    for step in steps[1:]:
+        if step != previous + 1:
+            blocks.append((start, previous))
+            start = step
+        previous = step
+    blocks.append((start, previous))
+    return blocks
+
+
 def overload_table(timeline: dict[str, Any]) -> pd.DataFrame:
-    """Per overloaded element: how long, and when it first and last tripped."""
+    """Per overloaded element: how long in total, in how many separate stretches.
+
+    "Dauer gesamt" is the SUM of the overloaded quarter hours, which is not the
+    distance between the first and the last one: an element that trips at 13:00
+    and again at 08:45 spans twenty hours while being overloaded for six of
+    them. The earlier table showed only that span as "von … bis …", which reads
+    as one continuous period and overstated every entry. It now reports the sum,
+    how many separate stretches it took, and the longest single one — the figure
+    that decides whether a cable had time to cool down.
+    """
     matrix = overload_matrix(timeline)
     if matrix.empty:
-        return pd.DataFrame(columns=["Element", "Typ", "Dauer (h)", "von", "bis"])
+        return pd.DataFrame(columns=_TABLE_COLUMNS)
 
     rows: list[dict[str, Any]] = []
     for (element_id, kind), group in matrix.groupby(["Element", "Typ"], sort=False):
         hit = group[group["überlastet"]]
         if hit.empty:
             continue
+        steps = sorted(int(s) for s in hit["Schritt"])
+        hours = dict(zip(group["Schritt"], group["Stunde"]))
+        blocks = contiguous_blocks(steps)
+        longest = max(blocks, key=lambda b: b[1] - b[0])
         rows.append({
             "Element": element_id,
             "Typ": kind,
-            "Dauer (h)": round(len(hit) * TIMESTEP_HOURS, 2),
-            "von": format_hour(float(hit["Stunde"].min())),
-            "bis": format_hour(float(hit["Stunde"].max())),
+            "Dauer gesamt (h)": round(len(steps) * TIMESTEP_HOURS, 2),
+            "Abschnitte": len(blocks),
+            "längster Abschnitt": _format_span(hours[longest[0]], hours[longest[1]]),
+            "Dauer davon (h)": round((longest[1] - longest[0] + 1) * TIMESTEP_HOURS, 2),
+            "Zeitfenster": _format_span(hours[steps[0]], hours[steps[-1]]),
         })
-    return pd.DataFrame(rows).sort_values("Dauer (h)", ascending=False, ignore_index=True)
+    return (pd.DataFrame(rows, columns=_TABLE_COLUMNS)
+            .sort_values("Dauer gesamt (h)", ascending=False, ignore_index=True))
 
 
 def headline(timeline: dict[str, Any]) -> dict[str, Any]:
@@ -385,7 +431,12 @@ def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") 
     else:
         st.caption(
             "Binär: überlastet oder nicht. Abgestufte Farben bräuchten die Auslastung "
-            "je Element, die der Export derzeit nicht enthält."
+            "je Element, die der Export derzeit nicht enthält. **Ein Element ist selten "
+            "am Stück überlastet** — es geht über die Grenze, erholt sich und trippt "
+            "erneut. Die Tabelle nennt deshalb die aufsummierte Dauer, in wie vielen "
+            "getrennten Abschnitten sie zustande kam, und den längsten einzelnen davon; "
+            "**Zeitfenster** ist nur die Spanne vom ersten bis zum letzten Auftreten, "
+            "nicht die Zeit dazwischen."
         )
         st.altair_chart(_overload_chart(timeline), width="stretch")
         st.dataframe(table, width="stretch", hide_index=True)

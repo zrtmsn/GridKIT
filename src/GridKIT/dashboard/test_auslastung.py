@@ -3,6 +3,7 @@ import numpy as np
 
 from dashboard import theme
 from dashboard.auslastung import (
+    contiguous_blocks,
     duration_curve,
     format_hour,
     headline,
@@ -136,9 +137,65 @@ def test_overload_table_reports_duration_and_window():
                    overloaded_lines=[[], [], ["service_0"], ["service_0"], ["service_0"], [], [], []])
     row = overload_table(tl).iloc[0]
     assert row["Element"] == "service_0"
-    assert row["Dauer (h)"] == 0.75
-    assert row["von"] == "12:30"     # step 2
-    assert row["bis"] == "13:00"     # step 4
+    assert row["Dauer gesamt (h)"] == 0.75
+    assert row["Abschnitte"] == 1
+    assert row["Zeitfenster"] == "12:30–13:00"
+
+
+def test_total_duration_is_the_sum_not_the_span():
+    # the reading that confused a reader: an element over the limit at the start
+    # and again much later spans hours while being overloaded for minutes
+    steps = [[] for _ in range(20)]
+    steps[1] = ["service_2"]        # 12:15
+    steps[18] = ["service_2"]       # 16:30
+    tl = _timeline([0.3] * 20, [1.4] * 20, overloaded_lines=steps)
+    row = overload_table(tl).iloc[0]
+    assert row["Dauer gesamt (h)"] == 0.5          # two quarter hours, not four hours
+    assert row["Zeitfenster"] == "12:15–16:30"     # the span is much wider
+    assert row["Abschnitte"] == 2
+
+
+def test_table_counts_separate_stretches():
+    steps = [[] for _ in range(12)]
+    for i in (1, 2, 3, 7, 10):
+        steps[i] = ["service_0"]
+    tl = _timeline([0.3] * 12, [1.4] * 12, overloaded_lines=steps)
+    row = overload_table(tl).iloc[0]
+    assert row["Abschnitte"] == 3
+    assert row["Dauer gesamt (h)"] == 1.25
+
+
+def test_table_reports_the_longest_single_stretch():
+    # the figure that says whether a cable ever got time to cool down
+    steps = [[] for _ in range(14)]
+    for i in (0, 4, 5, 6, 7, 12):
+        steps[i] = ["service_0"]
+    tl = _timeline([0.3] * 14, [1.4] * 14, overloaded_lines=steps)
+    row = overload_table(tl).iloc[0]
+    assert row["Dauer davon (h)"] == 1.0            # steps 4..7
+    assert row["längster Abschnitt"] == "13:00–13:45"
+
+
+def test_single_step_stretch_is_written_as_one_time():
+    steps = [[] for _ in range(4)]
+    steps[2] = ["service_0"]
+    tl = _timeline([0.3] * 4, [1.4] * 4, overloaded_lines=steps)
+    row = overload_table(tl).iloc[0]
+    assert row["längster Abschnitt"] == "12:30"     # not "12:30–12:30"
+    assert row["Dauer davon (h)"] == 0.25
+
+
+# ── zusammenhängende Abschnitte ──────────────────────────────
+def test_contiguous_blocks_splits_on_gaps():
+    assert contiguous_blocks([0, 1, 2, 5, 6, 9]) == [(0, 2), (5, 6), (9, 9)]
+
+
+def test_contiguous_blocks_of_one_run():
+    assert contiguous_blocks([3, 4, 5]) == [(3, 5)]
+
+
+def test_contiguous_blocks_of_nothing():
+    assert contiguous_blocks([]) == []
 
 
 def test_overload_table_includes_transformers_not_just_lines():
