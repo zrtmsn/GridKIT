@@ -72,7 +72,7 @@ def download_pair(frame: pd.DataFrame, basename: str, key: str,
     with st.expander(f"⤓ {label}"):
         col_csv, col_json = st.columns(2)
         col_csv.download_button(
-            "CSV (Excel)", data=to_csv_bytes(frame),
+            "CSV", data=to_csv_bytes(frame),
             file_name=filename(basename, "csv"), mime="text/csv",
             key=f"{key}_csv", width="stretch",
         )
