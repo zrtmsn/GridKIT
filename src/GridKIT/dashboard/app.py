@@ -84,7 +84,7 @@ def render_results(summary, timelines, network=None) -> None:
     with tab_vergleich:
         render_vergleich(summary, timelines, network)
     with tab_training:
-        render_training(OUTPUT_DIR)
+        render_training(OUTPUT_DIR, summary)
 
 
 def _render_glossary() -> None:

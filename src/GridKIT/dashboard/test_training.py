@@ -6,9 +6,12 @@ from dashboard.training import (
     METRICS_FILENAME,
     SINGLE_RUN,
     convergence,
+    convergence_domain,
     entropy_frame,
+    evaluated_rewards,
     final_entropy,
     find_metric_files,
+    iterations_outside,
     load_metrics,
     penetration_of,
     return_frame,
@@ -183,3 +186,109 @@ def test_policy_label_and_colour_match_the_device():
 
 def test_unknown_policy_falls_back_to_its_id():
     assert theme.policy_label("mystery_policy") == "mystery_policy"
+
+
+# ── Zoom auf die konvergierte Phase ──────────────────────────
+def _run(values):
+    """One record per value, with a spread of ±10 around it."""
+    return [_record(i + 1, v, v - 10.0, v + 10.0) for i, v in enumerate(values)]
+
+
+def test_convergence_domain_ignores_the_catastrophic_start():
+    # the shape of the reference run: one enormous early value, then a plateau
+    frame = return_frame(_run([-13000.0] + [-900.0] * 15))
+    low, high = convergence_domain(frame)
+    assert low > -2000.0, "the untrained iteration must not set the axis"
+    assert high > -900.0
+
+
+def test_convergence_domain_leaves_the_converged_spread_visible():
+    frame = return_frame(_run([-13000.0] + [-1100.0, -900.0] * 8))
+    low, high = convergence_domain(frame)
+    assert low < -1110.0 and high > -890.0
+
+
+def test_convergence_domain_of_a_short_run_is_none():
+    # with a handful of iterations the whole curve is warm-up; cropping it
+    # would leave an empty chart
+    assert convergence_domain(return_frame(_run([-900.0] * 5))) is None
+
+
+def test_convergence_domain_of_a_flat_run_is_none():
+    # identical returns with no spread give a zero-height domain, which would
+    # collapse the chart — fall back to the automatic axis instead
+    frame = return_frame([_record(i, -900.0) for i in range(1, 13)])
+    assert convergence_domain(frame) is None
+
+
+def test_convergence_domain_of_nothing_is_none():
+    assert convergence_domain(return_frame([])) is None
+
+
+def test_iterations_outside_counts_the_cropped_points():
+    frame = return_frame(_run([-13000.0, -12000.0] + [-900.0] * 14))
+    assert iterations_outside(frame, convergence_domain(frame)) == 2
+
+
+def test_iterations_outside_without_a_domain_is_zero():
+    assert iterations_outside(return_frame(_run([-900.0] * 12)), None) == 0
+
+
+# ── Reward je Strategie ──────────────────────────────────────
+def _summary_row(scenario, reward, std=1.0, penetration=0.6):
+    return {"scenario": scenario, "penetration": penetration,
+            "reward_mean": reward, "reward_std": std}
+
+
+def test_evaluated_rewards_sorts_best_first():
+    frame = evaluated_rewards([
+        _summary_row("2: price-follow (manual)", -34.1),
+        _summary_row("1: flat / immediate", -23.3),
+        _summary_row("3: selfish RL", -25.9),
+    ])
+    assert frame["scenario"].tolist()[0] == "1: flat / immediate"
+    assert frame["Reward"].is_monotonic_decreasing
+
+
+def test_evaluated_rewards_marks_the_learned_policy():
+    frame = evaluated_rewards([_summary_row("1: flat / immediate", -23.3),
+                               _summary_row("3: selfish RL", -25.9)])
+    learned = frame[frame["gelernt"]]
+    assert len(learned) == 1
+    assert learned.iloc[0]["scenario"] == "3: selfish RL"
+
+
+def test_evaluated_rewards_uses_german_scenario_labels():
+    frame = evaluated_rewards([_summary_row("3: selfish RL", -25.9)])
+    assert frame["Szenario"].iloc[0] == theme.SCENARIO_LABELS_DE["3: selfish RL"]
+
+
+def test_evaluated_rewards_keeps_only_the_chosen_penetration():
+    frame = evaluated_rewards([_summary_row("3: selfish RL", -25.9, penetration=0.6),
+                               _summary_row("3: selfish RL", -40.0, penetration=0.2)],
+                              penetration=0.6)
+    assert frame["Reward"].tolist() == [-25.9]
+
+
+def test_evaluated_rewards_without_a_penetration_takes_everything():
+    frame = evaluated_rewards([_summary_row("3: selfish RL", -25.9, penetration=0.6),
+                               _summary_row("1: flat / immediate", -23.3, penetration=0.2)])
+    assert len(frame) == 2
+
+
+def test_evaluated_rewards_skips_records_without_a_reward():
+    frame = evaluated_rewards([{"scenario": "1: flat / immediate", "penetration": 0.6},
+                               _summary_row("3: selfish RL", -25.9)])
+    assert frame["scenario"].tolist() == ["3: selfish RL"]
+
+
+def test_evaluated_rewards_defaults_a_missing_spread_to_zero():
+    frame = evaluated_rewards([{"scenario": "3: selfish RL", "penetration": 0.6,
+                                "reward_mean": -25.9, "reward_std": None}])
+    assert frame["Streuung"].iloc[0] == 0.0
+
+
+def test_evaluated_rewards_of_nothing_is_empty_but_typed():
+    frame = evaluated_rewards([])
+    assert frame.empty
+    assert list(frame.columns) == ["scenario", "Szenario", "Reward", "Streuung", "gelernt"]

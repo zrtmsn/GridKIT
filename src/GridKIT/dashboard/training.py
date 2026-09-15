@@ -165,6 +165,72 @@ def convergence(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+#: Anteil der ersten Iterationen, den die Standardansicht ausblendet.
+WARMUP_FRACTION = 0.25
+
+
+def convergence_domain(frame: pd.DataFrame,
+                       skip_fraction: float = WARMUP_FRACTION) -> tuple[float, float] | None:
+    """y-range that shows the converged part, ignoring the first iterations.
+
+    An untrained policy starts catastrophically badly — in the reference run at
+    −13 600 against a converged −900 — so a full-range axis spends 97 % of its
+    height on the first few iterations and flattens the part that answers the
+    question. The range is taken from the tail of the run instead, with a
+    margin, and the early points fall off the top of the chart.
+
+    None when there is too little to judge: with a handful of iterations the
+    whole curve is warm-up and cropping it would hide everything.
+    """
+    if frame.empty or len(frame) < 8:
+        return None
+    tail = frame.iloc[int(len(frame) * skip_fraction):]
+    if tail.empty:
+        return None
+    low = float(min(tail["Minimum"].min(), tail["Mittel"].min()))
+    high = float(max(tail["Maximum"].max(), tail["Mittel"].max()))
+    if low == high:
+        return None
+    margin = (high - low) * 0.12
+    return low - margin, high + margin
+
+
+def iterations_outside(frame: pd.DataFrame, domain: tuple[float, float] | None) -> int:
+    """How many iterations fall outside the zoomed range, for the caption."""
+    if domain is None or frame.empty:
+        return 0
+    low, high = domain
+    return int(((frame["Mittel"] < low) | (frame["Mittel"] > high)).sum())
+
+
+def evaluated_rewards(summary: list[dict[str, Any]],
+                      penetration: float | None = None) -> pd.DataFrame:
+    """Reward per scenario from summary.json, for comparing the strategies.
+
+    NOT the same quantity as the training return above: the training return is
+    summed over every agent in the grid, the evaluated reward is per household,
+    a factor of roughly forty apart in the reference run. They must not share an
+    axis, which is why this is its own chart rather than a line on the other.
+    """
+    rows = []
+    for record in summary or []:
+        if penetration is not None and abs(float(record.get("penetration", -1)) - penetration) > 1e-9:
+            continue
+        value = record.get("reward_mean")
+        if value is None:
+            continue
+        scenario = record.get("scenario", "")
+        rows.append({
+            "scenario": scenario,
+            "Szenario": theme.scenario_label(scenario),
+            "Reward": float(value),
+            "Streuung": float(record.get("reward_std") or 0.0),
+            "gelernt": scenario == "3: selfish RL",
+        })
+    frame = pd.DataFrame(rows, columns=["scenario", "Szenario", "Reward", "Streuung", "gelernt"])
+    return frame.sort_values("Reward", ascending=False, ignore_index=True)
+
+
 def final_entropy(records: list[dict[str, Any]]) -> dict[str, float]:
     """{policy_id: entropy at the last iteration it appears in}."""
     frame = entropy_frame(records)
@@ -177,16 +243,21 @@ def final_entropy(records: list[dict[str, Any]]) -> dict[str, float]:
 # ══════════════════════════════════════════════════════════════
 # Streamlit-Ansicht
 # ══════════════════════════════════════════════════════════════
-def _return_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
+def _return_chart(frame: pd.DataFrame, domain: tuple[float, float] | None = None):  # pragma: no cover (UI)
     import altair as alt
+
+    # clamp so a warm-up iteration far below the range is pinned to the edge
+    # rather than silently dropped — the curve stays continuous
+    y_scale = (alt.Scale(domain=list(domain), clamp=True, nice=False)
+               if domain else alt.Scale(nice=False, zero=False))
+    x_scale = alt.Scale(nice=False, zero=False)
 
     band = (
         alt.Chart(frame)
         .mark_area(opacity=0.18, color=theme.SERIES_COLORS["transformer"])
         .encode(
-            x=alt.X("Iteration:Q", title="Trainingsiteration",
-                    scale=alt.Scale(nice=False, zero=False)),
-            y=alt.Y("Minimum:Q", title="Episoden-Return"),
+            x=alt.X("Iteration:Q", title="Trainingsiteration", scale=x_scale),
+            y=alt.Y("Minimum:Q", title="Episoden-Return", scale=y_scale),
             y2="Maximum:Q",
             tooltip=[alt.Tooltip("Iteration:Q"),
                      alt.Tooltip("Minimum:Q", format=".0f"),
@@ -197,12 +268,36 @@ def _return_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
         alt.Chart(frame)
         .mark_line(strokeWidth=2.4, color=theme.SERIES_COLORS["transformer"], point=True)
         .encode(
-            x=alt.X("Iteration:Q", scale=alt.Scale(nice=False, zero=False)),
-            y=alt.Y("Mittel:Q", title="Episoden-Return"),
+            x=alt.X("Iteration:Q", scale=x_scale),
+            y=alt.Y("Mittel:Q", title="Episoden-Return", scale=y_scale),
             tooltip=[alt.Tooltip("Iteration:Q"), alt.Tooltip("Mittel:Q", format=".0f")],
         )
     )
     return (band + line).properties(width="container", height=300)
+
+
+def _reward_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
+    """Evaluated reward per strategy, the learned one picked out."""
+    import altair as alt
+
+    order = list(frame["Szenario"])
+    base = alt.Chart(frame).encode(y=alt.Y("Szenario:N", title=None, sort=order))
+    bars = base.mark_bar(height=22, cornerRadiusEnd=3).encode(
+        x=alt.X("Reward:Q", title="Reward je Haushalt"),
+        # the learned policy in the scenario-3 colour, the baselines muted: the
+        # question is where the trained one lands among them
+        color=alt.condition(alt.datum.gelernt,
+                            alt.value(theme.SCENARIO_COLORS["3: selfish RL"]),
+                            alt.value("#9aa7ad")),
+        tooltip=[alt.Tooltip("Szenario:N"), alt.Tooltip("Reward:Q", format=".2f"),
+                 alt.Tooltip("Streuung:Q", format=".2f", title="± Streuung")],
+    )
+    spread = base.mark_rule(strokeWidth=1.6, color=theme.SERIES_COLORS["transformer"],
+                            opacity=0.8).encode(
+        x=alt.X("untere:Q", title=None), x2="obere:Q",
+    ).transform_calculate(untere="datum.Reward - datum.Streuung",
+                          obere="datum.Reward + datum.Streuung")
+    return (bars + spread).properties(width="container", height=alt.Step(32))
 
 
 def _entropy_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
@@ -231,8 +326,9 @@ def _entropy_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     )
 
 
-def render_training(output_dir: str | Path, key: str = "training") -> None:  # pragma: no cover (UI)
-    """Der Training-Reiter: Reward-Konvergenz und Entropie je Policy."""
+def render_training(output_dir: str | Path, summary: list[dict[str, Any]] | None = None,
+                    key: str = "training") -> None:  # pragma: no cover (UI)
+    """Der Training-Reiter: Reward-Konvergenz, Strategievergleich, Entropie je Policy."""
     import streamlit as st
 
     files = find_metric_files(output_dir)
@@ -305,8 +401,60 @@ def render_training(output_dir: str | Path, key: str = "training") -> None:  # p
         "schlechtester und bester Episode derselben Iteration. Eine breite Spanne "
         "heißt, die Policy ist noch stark vom Zufall der Episode abhängig."
     )
-    st.altair_chart(_return_chart(return_frame(records)), width="stretch")
-    download_pair(return_frame(records), "Reward-Konvergenz", f"{key}_return")
+    returns = return_frame(records)
+    domain = convergence_domain(returns)
+    if domain is not None:
+        zoom = not st.checkbox(
+            "Gesamte Spanne inkl. Startphase zeigen", key=f"{key}_full_range",
+            help=("Die untrainierte Policy startet um Größenordnungen schlechter. "
+                  "Über die volle Spanne gezeichnet ist der konvergierte Teil "
+                  "nur noch ein flacher Strich am oberen Rand."),
+        )
+    else:
+        zoom = False
+    applied = domain if zoom else None
+    st.altair_chart(_return_chart(returns, applied), width="stretch")
+    if applied is not None:
+        dropped = iterations_outside(returns, applied)
+        if dropped:
+            st.caption(
+                f"Ausschnitt ab der konvergierten Phase: {dropped} frühe "
+                f"{'Iteration liegt' if dropped == 1 else 'Iterationen liegen'} "
+                f"unterhalb des Ausschnitts und {'ist' if dropped == 1 else 'sind'} "
+                "am unteren Rand angeschnitten."
+            )
+    download_pair(returns, "Reward-Konvergenz", f"{key}_return")
+
+    rewards = evaluated_rewards(summary or [], st.session_state.get(PENETRATION_STATE))
+    if not rewards.empty:
+        st.subheader("Reward im Vergleich zu den Vergleichsstrategien")
+        st.caption(
+            "Auswertung des fertigen Laufs: mittlerer Reward je Haushalt, Strich "
+            "für die Streuung zwischen den Haushalten. Höher ist besser. Die "
+            "gelernte Policy ist hervorgehoben. Achtung, andere Größe als der "
+            "Episoden-Return oben: der summiert über alle Agenten im Netz, hier "
+            "steht der Wert je Haushalt."
+        )
+        st.altair_chart(_reward_chart(rewards), width="stretch")
+        learned = rewards[rewards["gelernt"]]
+        if not learned.empty:
+            rank = int(learned.index[0]) + 1
+            best = rewards.iloc[0]
+            if rank == 1:
+                st.caption(
+                    f"Die gelernte Policy hat mit {learned.iloc[0]['Reward']:.1f} den "
+                    "besten Reward aller Strategien."
+                )
+            else:
+                st.caption(
+                    f"Die gelernte Policy liegt auf Platz {rank} von {len(rewards)}; "
+                    f"vorn liegt „{best['Szenario']}“ mit {best['Reward']:.1f} "
+                    f"gegenüber {learned.iloc[0]['Reward']:.1f}. Der Reward misst "
+                    "den Eigennutz der Haushalte, nicht die Netzentlastung — die "
+                    "steht im Reiter Überblick."
+                )
+        download_pair(rewards.drop(columns=["scenario", "gelernt"]),
+                      "Reward je Strategie", f"{key}_reward_vergleich")
 
     entropy = entropy_frame(records)
     if not entropy.empty:
