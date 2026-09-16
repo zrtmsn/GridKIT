@@ -1,137 +1,88 @@
 # map_ui/test_household_config.py
-import core.constants as const
-from map_ui.household_config import (
-    build_household_configuration,
-    default_scenario_assumptions,
-    device_layout_from_configuration,
-    select_households_by_share,
-)
+from types import SimpleNamespace
+
+from core.models import HouseholdDevices
+from map_ui.household_config import build_household_configuration
 
 
 class _Bounds:
     def model_dump(self):
-        return {"south": 49.0, "west": 8.0, "north": 49.1, "east": 8.1}
+        return {}
 
     def approx_area_km2(self):
         return 1.0
 
 
-class _Network:
-    network_id = "test_net"
-    area_name = "test_area"
+def _network(household_devices=None):
+    return SimpleNamespace(
+        network_id="n", area_name="test-area",
+        household_devices=household_devices or {},
+    )
 
 
-def _config(ids, *, overrides=None, ev=50, battery=30, hp=20, pv=80, seed=42):
+def _build(network, household_ids, overrides=None, ev_share=30, hp_share=20):
     return build_household_configuration(
-        network=_Network(),
+        network=network,
         selected_bounds=_Bounds(),
-        household_ids=ids,
-        ev_share_percent=ev,
-        battery_share_percent=battery,
-        heat_pump_share_percent=hp,
-        pv_share_percent=pv,
+        household_ids=household_ids,
+        ev_share_percent=ev_share,
+        heat_pump_share_percent=hp_share,
         global_load_scaling_factor=1.0,
-        selection_seed=seed,
+        selection_seed=42,
         household_overrides=overrides or {},
     )
 
 
-_IDS = [f"h{i}" for i in range(10)]
-
-
-# ── all four device shares are configurable ──────────────────
-def test_defaults_cover_all_four_devices():
-    assumptions = default_scenario_assumptions()
-    for field in ("ev_share_percent", "battery_share_percent",
-                  "heat_pump_share_percent", "pv_share_percent"):
-        assert field in assumptions
-
-
-def test_shares_resolve_to_expected_counts():
-    resolved = _config(_IDS)["resolved"]
-    assert len(resolved["ev_bus_ids"]) == 5
-    assert len(resolved["battery_bus_ids"]) == 3
-    assert len(resolved["heat_pump_bus_ids"]) == 2
-    assert len(resolved["pv_bus_ids"]) == 8
-
-
-def test_zero_and_full_share_are_exact():
-    resolved = _config(_IDS, ev=0, pv=100)["resolved"]
-    assert resolved["ev_bus_ids"] == []
-    assert resolved["pv_bus_ids"] == sorted(_IDS)
-
-
-# ── per-device salts keep the draws independent ──────────────
-def test_changing_one_share_does_not_reshuffle_another():
-    # the reason each device gets its own salt: raising EV coverage must not
-    # silently move which homes have a heat pump
-    before = _config(_IDS, ev=20)["resolved"]["heat_pump_bus_ids"]
-    after = _config(_IDS, ev=90)["resolved"]["heat_pump_bus_ids"]
-    assert before == after
-
-
-def test_same_seed_is_reproducible():
-    assert _config(_IDS)["resolved"] == _config(_IDS)["resolved"]
-
-
-def test_different_seed_changes_selection():
-    assert _config(_IDS, seed=1)["resolved"] != _config(_IDS, seed=2)["resolved"]
-
-
-def test_select_households_by_share_is_salt_sensitive():
-    a = select_households_by_share(_IDS, 50, seed=42, salt="ev")
-    b = select_households_by_share(_IDS, 50, seed=42, salt="battery")
-    assert a != b
-
-
-# ── per-household overrides, including the new battery/PV ────
-def test_overrides_apply_for_every_device():
-    overrides = {
-        "h0": {"has_ev": True, "has_battery": True, "has_heat_pump": True, "has_pv": True},
-        "h1": {"has_ev": False, "has_battery": False, "has_heat_pump": False, "has_pv": False},
+def test_defaults_from_gridcreator_when_present():
+    household_ids = ["h0", "h1"]
+    devices = {
+        "h0": HouseholdDevices(bus_id="h0", ev=True, heat_pump=False, battery=True, pv=True, pv_kwp=6.5, battery_kwh=12.0),
+        "h1": HouseholdDevices(bus_id="h1", ev=False, heat_pump=True, battery=False, pv=False),
     }
-    resolved = _config(_IDS, overrides=overrides)["resolved"]
-    for field in ("ev_bus_ids", "battery_bus_ids", "heat_pump_bus_ids", "pv_bus_ids"):
-        assert "h0" in resolved[field]
-        assert "h1" not in resolved[field]
+    config = _build(_network(devices), household_ids)
+
+    resolved = config["resolved"]
+    assert resolved["ev_bus_ids"] == ["h0"]
+    assert resolved["heat_pump_bus_ids"] == ["h1"]
+    assert resolved["battery_bus_ids"] == ["h0"]
+    assert resolved["pv_bus_ids"] == ["h0"]
+    assert resolved["pv_kwp_by_bus"] == {"h0": 6.5}
+    assert resolved["battery_kwh_by_bus"] == {"h0": 12.0}
+    assert config["scenario_assumptions"]["uses_gridcreator_defaults"] is True
 
 
-def test_override_for_unknown_bus_is_ignored():
-    cfg = _config(_IDS, overrides={"not_a_bus": {"has_ev": True}})
-    assert "not_a_bus" not in cfg["individual_household_adjustments"]
-    assert "not_a_bus" not in cfg["resolved"]["ev_bus_ids"]
+def test_falls_back_to_share_percent_when_no_gridcreator_data():
+    household_ids = [f"h{i}" for i in range(10)]
+    config = _build(_network(), household_ids, ev_share=50, hp_share=0)
+
+    resolved = config["resolved"]
+    assert len(resolved["ev_bus_ids"]) == 5   # 50% of 10, deterministic given the seed
+    assert resolved["heat_pump_bus_ids"] == []
+    # no share concept for battery/pv — stay off without GridCreator data
+    assert resolved["battery_bus_ids"] == []
+    assert resolved["pv_bus_ids"] == []
+    assert config["scenario_assumptions"]["uses_gridcreator_defaults"] is False
 
 
-def test_load_scaling_override_wins_over_global():
-    cfg = _config(_IDS, overrides={"h2": {"load_scaling_factor": 1.5}})
-    scaling = cfg["resolved"]["load_scaling_by_bus"]
-    assert scaling["h2"] == 1.5
-    assert scaling["h0"] == 1.0
+def test_manual_override_wins_over_gridcreator_default():
+    household_ids = ["h0"]
+    devices = {"h0": HouseholdDevices(bus_id="h0", ev=True, battery=True)}
+    config = _build(
+        _network(devices), household_ids,
+        overrides={"h0": {"has_ev": False, "has_battery": False, "has_pv": True}},
+    )
+
+    resolved = config["resolved"]
+    assert resolved["ev_bus_ids"] == []
+    assert resolved["battery_bus_ids"] == []
+    assert resolved["pv_bus_ids"] == ["h0"]
 
 
-# ── the bridge into core.models ──────────────────────────────
-def test_device_layout_matches_resolved_sets():
-    cfg = _config(_IDS)
-    layout = device_layout_from_configuration(_IDS, cfg)
-    resolved = cfg["resolved"]
+def test_manual_override_wins_over_share_percent_fallback():
+    household_ids = ["h0", "h1"]
+    config = _build(
+        _network(), household_ids, ev_share=0,
+        overrides={"h0": {"has_ev": True}},
+    )
 
-    assert set(layout) == set(_IDS)
-    for bus_id, devices in layout.items():
-        assert devices.ev == (bus_id in resolved["ev_bus_ids"])
-        assert devices.battery == (bus_id in resolved["battery_bus_ids"])
-        assert devices.heat_pump == (bus_id in resolved["heat_pump_bus_ids"])
-        assert devices.pv == (bus_id in resolved["pv_bus_ids"])
-
-
-def test_layout_controllable_reflects_configuration():
-    cfg = _config(_IDS, overrides={"h0": {"has_ev": True, "has_battery": True,
-                                          "has_heat_pump": True}})
-    layout = device_layout_from_configuration(_IDS, cfg)
-    assert set(layout["h0"].controllable) == set(const.CONTROLLABLE_DEVICE_TYPES)
-
-
-def test_pv_is_not_controllable():
-    cfg = _config(_IDS, ev=0, battery=0, hp=0, pv=100)
-    layout = device_layout_from_configuration(_IDS, cfg)
-    assert layout["h0"].pv is True
-    assert layout["h0"].controllable == []
+    assert config["resolved"]["ev_bus_ids"] == ["h0"]

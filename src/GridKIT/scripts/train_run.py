@@ -1,19 +1,24 @@
 # scripts/train_run.py
 # ─────────────────────────────────────────────────────────────
-# Background trainer for ONE designed grid + device layout (a "run").
+# Background trainer for ONE run saved via core.run_store (a network +
+# household_configuration.json from the map UI).
 #
-# Reads a run directory (created by run_store.create_run), trains an IPPO policy
-# on that exact grid, evaluates the naive baselines + the trained RL, and writes
-# summary.json / timelines.json / checkpoints into the run dir — updating
-# status.json live so the web app can show progress while it trains.
+# Loads the run's grid_network.json + household_configuration.json, trains an
+# IPPO policy on that exact grid + device layout, evaluates it against the
+# rule-based baselines, and writes the result via run_store.save_results() —
+# updating run_store status live so the UI can show progress while it trains.
 #
-# Launched detached by the web app:
-#   PYTHONPATH=src python -m GridKIT.scripts.train_run --run-dir runs/<id>
+# Training hyperparameters (iterations/seeds) are FIXED
+# (core.constants.PIPELINE_TRAINING_ITERATIONS/PIPELINE_EVALUATION_SEEDS), not
+# read from the run config — the UI never exposes RL knobs to the user, so
+# there is nothing per-run to read here.
+#
+# Launched detached by map_ui/map_widget.py:
+#   PYTHONPATH=src/GridKIT:src python -m GridKIT.scripts.train_run --run-dir runs/<id>
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import traceback
@@ -21,17 +26,76 @@ from pathlib import Path
 
 
 def _setup_paths() -> None:
+    # Two import styles coexist in this codebase: core/grid_model/scenarios
+    # import each other bare ("core.X"), rl_engine/scripts import "GridKIT.X"
+    # — both roots must be on the path for either style to resolve.
     script_dir = Path(__file__).resolve().parent.parent      # src/GridKIT/
-    src_dir = script_dir.parent                              # src/
+    src_dir = script_dir.parent                               # src/
     for p in (str(src_dir), str(script_dir)):
         if p not in sys.path:
             sys.path.insert(0, p)
+    # os.pathsep, not ":" — Ray starts worker processes that re-read PYTHONPATH,
+    # and on Windows a colon-joined value leaves them unable to import GridKIT at
+    # all. It surfaces far from here, as an IndexError inside the trainer.
     os.environ["PYTHONPATH"] = f"{script_dir}{os.pathsep}{src_dir}"
     os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"
 
 
+# ══════════════════════════════════════════════════════════════
+# household_configuration.json (map_ui/household_config.py's schema) ->
+# core.models.HouseholdDevices. Pure + import-light, so it's unit-testable
+# without pulling in Ray/RLlib.
+# ══════════════════════════════════════════════════════════════
+def household_devices_from_config(config: dict, household_bus_ids: list[str]) -> dict:
+    """Convert a map_ui household_configuration.json dict into a device layout.
+
+    ev/heat_pump/battery/pv ownership and pv_kwp/battery_kwh capacities come
+    from `resolved.*` — either GridCreator's real per-household assignment or
+    the scenario-assumption fallback, whichever map_ui/household_config.py
+    resolved for this network (see its `build_household_configuration`).
+
+    Known gap in that schema as of map_ui/household_config.py — not a bug in
+    this converter, just not there yet on the map_ui side:
+      - "load_scaling_by_bus" (a per-household consumption multiplier) has no
+        home in HouseholdDevices/GridEnv yet (only a per-EPISODE global
+        multiplier exists — core.constants.LOAD_MULTIPLIER_MIN/MAX) — read
+        here for nothing else, deliberately not applied.
+    """
+    from core.models import HouseholdDevices
+
+    resolved = config.get("resolved", {})
+    ev_ids = set(resolved.get("ev_bus_ids", []))
+    hp_ids = set(resolved.get("heat_pump_bus_ids", []))
+    battery_ids = set(resolved.get("battery_bus_ids", []))
+    pv_ids = set(resolved.get("pv_bus_ids", []))
+    pv_kwp_by_bus = resolved.get("pv_kwp_by_bus", {})
+    battery_kwh_by_bus = resolved.get("battery_kwh_by_bus", {})
+    return {
+        bus_id: HouseholdDevices(
+            bus_id=bus_id, ev=bus_id in ev_ids, heat_pump=bus_id in hp_ids,
+            battery=bus_id in battery_ids, battery_kwh=battery_kwh_by_bus.get(bus_id),
+            pv=bus_id in pv_ids, pv_kwp=pv_kwp_by_bus.get(bus_id),
+        )
+        for bus_id in household_bus_ids
+    }
+
+
+def configured_share(layout: dict) -> float:
+    """Share of households that got at least one controllable device.
+
+    The dashboard labels its results with an "Ausstattungsgrad". In the batch
+    experiment that is the swept input; a run from the map has no sweep, so it
+    is read back off the layout the user actually configured. Households with
+    only PV don't count — PV isn't controllable, so it is not part of what the
+    §14a question is about.
+    """
+    if not layout:
+        return 0.0
+    return sum(1 for cfg in layout.values() if cfg.controllable) / len(layout)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train one designed grid (a run)")
+    parser = argparse.ArgumentParser(description="Train one run saved via core.run_store")
     parser.add_argument("--run-dir", required=True, help="runs/<id> directory")
     args = parser.parse_args()
 
@@ -43,54 +107,67 @@ def main() -> None:
     run_id = run_path.name
     root = str(run_path.parent)
 
-    from scripts import run_store as rs
+    from core import run_store as rs
 
     try:
         import core.constants as const
-        from core.models import GridNetwork  # noqa: F401
-        from scripts.grid_designer import StaticBuilder
+        from grid_model.builder import FixedNetworkBuilder
         from scripts.run_experiment import _timeline, summary_record
         from GridKIT.grid_model.environment import GridEnv
-        from GridKIT.grid_model.device_profiles import DeviceProfileProvider
         from GridKIT.rl_engine import (
             GridEnvRLlibWrapper, Trainer, create_ippo_config, RLlibPolicyAdapter,
         )
         from GridKIT.scenarios.policies import NaiveImmediatePolicy, NaivePriceFollowPolicy
         from GridKIT.scenarios.runner import run_episode, run_scenario
 
-        config = rs.load_config(run_id, root=root) or {}
-        iterations = int(config.get("iterations", 20))
-        seeds = list(range(int(config.get("seeds", 6))))
         network = rs.load_network(run_id, root=root)
-        layout = rs.load_layout(run_id, root=root)
-        n_house = len(network.household_bus_ids)
-        n_active = sum(1 for c in layout.values() if c.controllable)
-        pen_label = round(n_active / n_house, 2) if n_house else 0.0
+        household_configuration = rs.load_household_configuration(run_id, root=root) or {}
+        layout = household_devices_from_config(household_configuration, list(network.household_bus_ids))
 
-        rs.set_status(run_id, state=rs.RUNNING, progress=0.0, iteration=0,
-                      total_iters=iterations, message="starting Ray + training", root=root)
+        iterations = const.PIPELINE_TRAINING_ITERATIONS
+        seeds = list(range(const.PIPELINE_EVALUATION_SEEDS))
+
+        # What the dashboard shows as the Ausstattungsgrad for this run.
+        PENETRATION = configured_share(layout)
+        active_device_types = tuple(sorted({d for cfg in layout.values() for d in cfg.controllable}))
+        if not active_device_types:
+            rs.set_status(run_id, state=rs.FAILED,
+                           message="No EV/battery/heat-pump households in this configuration — nothing to train.",
+                           root=root)
+            return
+
+        rs.set_status(run_id, state=rs.RUNNING, progress=0.0, iteration=0, total_iters=iterations,
+                       message="starting Ray + training", root=root)
 
         # ── train on this exact grid ─────────────────────────
         def env_factory(cfg=None):
-            return GridEnvRLlibWrapper(env=GridEnv(builder=StaticBuilder(network), device_layout=layout))
+            return GridEnvRLlibWrapper(env=GridEnv(builder=FixedNetworkBuilder(network), device_layout=layout))
+
+        def config_func(env_name):
+            return create_ippo_config(env_name=env_name, device_types=active_device_types)
 
         class _StatusCallback:
             def on_iteration_end(self, iteration, reward, length):
                 rs.set_status(run_id, state=rs.RUNNING, iteration=iteration, total_iters=iterations,
-                              progress=iteration / max(1, iterations),
-                              message=f"iter {iteration}/{iterations} · reward {reward:.1f}", root=root)
+                               progress=iteration / max(1, iterations),
+                               message=f"iter {iteration}/{iterations} · reward {reward:.1f}", root=root)
 
-        trainer = Trainer(env_factory=env_factory, config_func=create_ippo_config)
+        trainer = Trainer(env_factory=env_factory, config_func=config_func)
+        # metrics_dir: without it iteration_metrics.json goes to a temp path and
+        # the dashboard's Training tab stays empty for every run from the map.
         trainer.run(num_episodes=iterations, callback=_StatusCallback(), cleanup=False,
                     metrics_dir=run_path)
 
         rs.set_status(run_id, state=rs.RUNNING, progress=1.0, iteration=iterations,
-                      total_iters=iterations, message="evaluating scenarios", root=root)
+                       total_iters=iterations, message="evaluating scenarios", root=root)
         trainer.save_checkpoint(str((run_path / "checkpoints").resolve()))
-        adapter = RLlibPolicyAdapter(trainer.get_policy_modules())
+        modules = {dev: trainer.get_policy_module(f"{dev}_policy") for dev in active_device_types}
+        adapter = RLlibPolicyAdapter(modules)
 
         # ── evaluate baselines + RL on the same grid ─────────
-        provider = DeviceProfileProvider.build()
+        # The same four scenarios as the batch experiment, so a run started from
+        # the map is directly comparable with one from run_experiment.py — the
+        # Szenarienvergleich tab is built around this set.
         scenarios = {
             "1: flat / immediate": NaiveImmediatePolicy(),
             "2: price-follow (manual)": NaivePriceFollowPolicy(jitter_std=8.0),
@@ -98,25 +175,28 @@ def main() -> None:
             "3: selfish RL": adapter,
         }
         summary: list[dict] = []
+        # A list, not a dict keyed by label: the dashboard's tabs filter timelines
+        # by their `scenario` field and read them as records, the same shape
+        # run_experiment.py writes. A dict here left every tab but the first empty.
         timelines: list[dict] = []
         for label, policy in scenarios.items():
-            env = GridEnv(builder=StaticBuilder(network), device_layout=layout, profile_provider=provider)
-            stats = run_scenario(env, policy, seeds, label=label, ev_penetration=pen_label)
-            # Same record as the batch sweep writes — including HP comfort and the
-            # battery figures, which this path used to omit, leaving those dashboard
-            # tiles empty for every run started from the web app.
-            summary.append(summary_record(stats, label, pen_label))
-            env = GridEnv(builder=StaticBuilder(network), device_layout=layout, profile_provider=provider)
-            rep = run_episode(env, policy, seeds[0], ev_penetration=pen_label)
-            timelines.append(_timeline(env, rep, label, pen_label))
+            env = GridEnv(builder=FixedNetworkBuilder(network), device_layout=layout)
+            stats = run_scenario(env, policy, seeds, label=label)
+            # summary_record, not an inline dict: the dashboard reads ~30 fields
+            # (HP comfort, battery cycles, the feeder/line breakdown) that an
+            # inline subset leaves blank.
+            summary.append(summary_record(stats, label, PENETRATION))
+            env = GridEnv(builder=FixedNetworkBuilder(network), device_layout=layout)
+            rep = run_episode(env, policy, seeds[0])
+            timelines.append(_timeline(env, rep, label, PENETRATION))
 
-        (run_path / "summary.json").write_text(json.dumps(summary, indent=2))
-        (run_path / "timelines.json").write_text(json.dumps(timelines, indent=2))
+        rs.save_results(run_id, summary, timelines, root=root)
         trainer.stop()
-        rs.set_status(run_id, state=rs.DONE, progress=1.0, iteration=iterations,
-                      total_iters=iterations, message="done", root=root)
 
-    except Exception as exc:  # noqa: BLE001
+    except BaseException as exc:  # noqa: BLE001 — including KeyboardInterrupt/SystemExit: this
+        # process's only job is to train and report status, so however it's ending, record FAILED
+        # before we go. (A SIGKILL — e.g. an OOM kill — can't be caught by anything, by any process,
+        # ever; that case is invisible here and only shows up as a stale run — see run_store.STALE_AFTER_SECONDS.)
         rs.set_status(run_id, state=rs.FAILED, message=f"{type(exc).__name__}: {exc}", root=root)
         traceback.print_exc()
         sys.exit(1)

@@ -1,194 +1,146 @@
 # GridKIT
 
 GridKIT simulates a low-voltage (0.4 kV) household grid and trains multi-agent
-reinforcement learning (IPPO) to manage flexible devices (EVs, heat pumps)
-under §14a EnWG curtailment rules — the grid operator's right to temporarily
-dim a household's draw when the local transformer/line would overload.
+reinforcement learning (IPPO) to manage flexible devices — EVs, home
+batteries, heat pumps — under §14a EnWG curtailment rules. A fast linear
+power-flow surrogate drives the per-step grid physics; real network
+topologies are built from OpenStreetMap data via the vendored
+[GridCreator](https://github.com/INATECH-CIG/GridCreator) tool.
 
-This guide takes you from a fresh clone to: building a network in the map UI,
-training on it, and viewing the results — all commands verified on this
-branch, not copied from an older/aspirational doc.
+For a full architecture breakdown (what each module does, which data
+contracts are shared, which paths are actually wired up vs. stubs), see
+[`CLAUDE.md`](CLAUDE.md) — it's kept up to date with the actual code, not
+aspirational.
 
 ---
 
-## 1. Setup
+## Setup
 
-**Prerequisites**: Python 3.12+, [`uv`](https://docs.astral.sh/uv/), git.
-[conda](https://docs.conda.io) is only needed if you'll build networks from
-real OpenStreetMap data (see §3) — skip it if you're just running the stub
-network or training on an already-downloaded `grid_network.json`.
+You need **two** separate environments:
+
+- a **uv-managed venv** for GridKIT itself (Python 3.12+)
+- a **conda env** for GridCreator (only needed if you want to build real
+  networks from OpenStreetMap — GridKIT calls it out-of-process via
+  `conda run -n GridCreator`, so it never has to be activated by hand, just
+  present on the machine)
+
+Skip the conda/GridCreator steps if you only want to run the test suite or
+work with the bundled stub networks (`data/stub_network.json`,
+`data/feeder_20.json`).
+
+### 1. Clone the repo and its submodule
 
 ```bash
 git clone <repo-url>
 cd GridKIT
 git submodule update --init --recursive   # fetches vendor/GridCreator
-
-uv sync                          # creates .venv, installs everything from pyproject.toml
-source .venv/bin/activate        # .venv\Scripts\activate on Windows
 ```
 
-### The one thing to know about running any command here
+### 2. Install uv
 
-Two import styles coexist in this codebase: `core/`, `grid_model/`,
-`map_ui/`, `scenarios/` import each other bare (`from core.models import
-...`), which resolves with `src/GridKIT` on `PYTHONPATH`; `rl_engine/` and
-`scripts/` import with the full package prefix (`from GridKIT.core import
-...`), which resolves with `src` on `PYTHONPATH`. Every command below sets
-**both**:
+If you don't already have [uv](https://docs.astral.sh/uv/):
 
 ```bash
-export PYTHONPATH=src/GridKIT:src
+curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
+# or: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"   (Windows)
 ```
 
-Set it once per terminal session (or prefix each command with it) and every
-command in this guide works as written. `pytest` doesn't need this — it's
-already configured in `pyproject.toml`.
-
-### Verify the setup
+### 3. Create and activate the GridKIT venv
 
 ```bash
-pytest                                                          # full test suite
-python -m grid_model.cli build --stub --out /tmp/net.json       # builds the bundled 5-household stub network
-python -m grid_model.cli plot /tmp/net.json --out-dir /tmp/demo # runs a quick heuristic episode, saves PNGs
+uv sync                        # creates .venv/, installs pyproject.toml deps
+source .venv/bin/activate      # macOS / Linux
+.venv\Scripts\activate         # Windows
 ```
 
-If both of those work, your environment is set up correctly — everything
-past this point either needs conda (map UI, real networks) or just takes
-longer (training).
-
----
-
-## 2. Map UI — build a network
+Verify with the test suite:
 
 ```bash
-streamlit run src/GridKIT/map_ui/map_widget.py
+pytest
 ```
 
-Opens at `http://localhost:8501`. In the sidebar: search a place or draw a
-box on the map (or type a bounding box manually) → **"GridNetwork
-erzeugen"**. Once built, the page shows the network's stats, a topology
-visualization, and a household-configuration section (EV/heat-pump
-penetration sliders + per-household overrides) with **download buttons** for
-`grid_network.json` and `household_configuration.json` — save those
-somewhere, you'll need `grid_network.json` for training in §3.
+### 4. Install conda (only needed for real OSM/ding0 grid builds)
 
-### This needs GridCreator, which needs conda
+If you don't already have conda, install
+[Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install).
 
-Building from a real drawn area (not the stub) shells out to the vendored
-GridCreator tool via `conda run -n GridCreator ...`. One-time setup:
+### 5. Create the GridCreator conda env
+
+GridCreator has its own dependency stack and is never imported into
+GridKIT's own venv, so it gets its own environment:
 
 ```bash
 conda create -n GridCreator python=3.12.11
 conda activate GridCreator
-cd vendor/GridCreator
-pip install -r requirements.txt
-cd ../..
+pip install -r vendor/GridCreator/requirements.txt
+conda deactivate
 ```
 
-GridCreator also needs its input data present: download `input.zip` from
-https://zenodo.org/records/17884917 and unpack it so you end up with
-`vendor/GridCreator/input/` containing the `grids`/`weather_2013`/
-`zensus_daten` subfolders.
-
-Don't want to set up conda? Point at any Python interpreter that already has
-GridCreator's `requirements.txt` installed instead, and it'll be called
-directly (no conda involved):
-
-```bash
-GRIDCREATOR_PYTHON=/path/to/that/python streamlit run src/GridKIT/map_ui/map_widget.py
-```
-
-**Known issue**: a fresh `vendor/GridCreator` checkout can fail with
-`TypeError: Invalid value '...' for dtype 'int64'` inside
-`appartments_assignment` (a pandas-version incompatibility in
-`main_functions.py` — an int column initialized as `0` later receives
-fractional writes). Fix: in `vendor/GridCreator`, change
-`buses['Bewohnerinnen'] = 0` to `buses['Bewohnerinnen'] = 0.0`.
+GridCreator also needs its input data (ding0 grids, Zensus, weather) — see
+`vendor/GridCreator/README.md`'s "Necessary input data" section for the
+download link and where to unpack it (`vendor/GridCreator/input/`).
 
 ---
 
-## 3. Training
+## Running it
+
+With the GridKIT venv (`.venv`) active, from the repo root:
 
 ```bash
-python -m GridKIT.scripts.run_experiment --network data/stub_network.json --out outputs
+streamlit run src/GridKIT/scripts/app.py
 ```
 
-Trains a separate IPPO policy for each EV-penetration level in
-`core.constants.EV_PENETRATION_LEVELS` (20/40/60% by default) on that
-network, evaluates it against two rule-based baselines (flat/immediate
-charging, price-following), and writes `outputs/summary.json`,
-`outputs/timelines.json`, and a trained checkpoint per penetration level
-under `outputs/checkpoints/`.
+This is the main entry point: one Streamlit app with two pages —
 
-Defaults are `--iterations 40 --seeds 12` per penetration level — a real
-training run, expect it to take a while. For a quick check that everything
-wires up correctly, cut both down:
+- **Karte** — search/draw a bounding box, build a `GridNetwork` from real OSM
+  data (via the GridCreator conda env), configure households (EV/heat pump),
+  and optionally save it and kick off IPPO training in the background.
+- **Dashboard** — browse every saved run, watch training progress live, and
+  once a run finishes explore its results across five tabs (German UI):
+  **Überblick** (does the grid hold, and which scenario is best),
+  **Netzauslastung** (loading over the day, duration curve, which element
+  overloads when), **Geräte & Haushalte** (per-device power, SoC, heat-pump
+  comfort, a representative household), **Szenarienvergleich** (the strategies
+  side by side plus the overload map) and **Training** (reward convergence,
+  reward against the baselines, policy entropy). Every chart exports to
+  CSV/JSON.
+
+Saved networks/runs live under `runs/<run_id>/` (gitignored).
+
+### Batch experiment (no map)
+
+To sweep the scenarios across several Ausstattungsgrade on a fixed network,
+independent of the map UI:
 
 ```bash
-python -m GridKIT.scripts.run_experiment --network data/stub_network.json --out outputs --iterations 5 --seeds 2
+python -m GridKIT.scripts.run_experiment          # writes outputs/
+streamlit run src/GridKIT/dashboard/app.py        # same five tabs, on outputs/
 ```
 
-No `--network`? It defaults to the bundled 20-household `data/feeder_20.json`
-— useful for a first run without needing a real GridCreator build at all.
+`GRIDKIT_OUTPUT_DIR` points the dashboard at a different results directory.
+When both `runs/` and `outputs/` hold results, the standalone dashboard offers
+a source picker in the sidebar.
 
-**Caveat**: this script drives device penetration itself (the `--iterations`
-run above assigns EV/battery/heat-pump/PV to the same evenly-spread
-households per penetration level) — it does **not** read the
-`household_configuration.json` you can download from the map UI's
-per-household editor. The two aren't wired together yet.
-
----
-
-## 4. Viewing results
+### Other useful commands
 
 ```bash
-python -m GridKIT.scripts.plot_results --results outputs --out outputs/graphs
+pytest                                  # full test suite
+pytest -k battery                       # by keyword
+pytest src/GridKIT/grid_model/test_environment.py   # one file
+
+# grid_model CLI (needs both roots on PYTHONPATH outside pytest)
+PYTHONPATH=src/GridKIT:src python -m grid_model.cli build --stub --out /tmp/net.json
+PYTHONPATH=src/GridKIT:src python -m grid_model.cli plot /tmp/net.json --out-dir outputs/demo
+
+# map UI standalone (no dashboard page)
+streamlit run src/GridKIT/map_ui/map_widget.py
 ```
 
-Reads `outputs/summary.json`/`outputs/timelines.json` from §3 and saves PNGs
-to `outputs/graphs/` — curtailment/SoC/reward comparisons across scenarios
-and penetration levels, device-power timelines. No Streamlit/dashboard
-needed; this is a plain headless script.
-
-If you just want a fast sanity-check plot for a network **without** training
-an RL policy at all (a simple heuristic charging policy instead), use the CLI
-from §1 again:
-
-```bash
-python -m grid_model.cli plot data/stub_network.json --out-dir outputs/quicklook
-```
-
-This prints a one-line episode summary (curtailment events, peak transformer
-loading, EV targets met) and saves 4 PNGs (network topology, loading,
-load+curtailment, device SoC) in seconds — good for confirming a newly built
-network is sane before committing to a full training run.
-
----
-
-## 5. Dashboard
-
-Interactive web UI for exploring training results:
-
-```bash
-streamlit run src/GridKIT/dashboard/app.py
-```
-
-Reads `outputs/` by default; point `$GRIDKIT_OUTPUT_DIR` at another run directory
-to view that one instead. The dashboard provides:
-
-| Tab | Description |
-|-----|-------------|
-| Überblick | The verdict across every scenario × penetration: worst loading, the EV share at which the first scenario overloads, and the highest share at which none do |
-| Netzauslastung | Quarter-hour utilisation — transformer and cable together, overload matrix, load duration curve |
-| Geräte & Haushalte | Energy per device type, battery cycles, and one household in detail (EV / battery / heat pump, with an approximated indoor temperature) |
-| Szenarienvergleich | Curtailment and SoC across penetration levels, plus the overload map |
-| Training | Reward convergence and per-policy entropy from `iteration_metrics.json` |
-
-Every chart offers its underlying table as CSV (semicolon + decimal comma, so
-German Excel opens it directly) or JSON.
-
-**Requirements:** Training must be completed first (§3) to generate `summary.json`,
-`timelines.json`, and `iteration_metrics.json`.
+See `grid_model/cli.py`'s module docstring for more CLI examples (OSM,
+ding0, add-bus, add-household, add-ev), and `CLAUDE.md` for the full module
+map and the two coexisting import styles (`from core...` vs.
+`from GridKIT.core...`) you'll hit if you run a script directly instead of
+through `pytest` or `streamlit run`.
 
 ---
 
@@ -196,57 +148,18 @@ German Excel opens it directly) or JSON.
 
 ```
 src/GridKIT/
-├── core/                 # shared pydantic models, settings, constants, Protocol interfaces
-├── grid_model/           # network construction (OSM/GridCreator/stub) + episode simulation
-├── map_ui/               # Streamlit + Folium: build a network, configure households
-├── rl_engine/            # RLlib IPPO training against core.protocols.GridEnvProtocol
-├── scenarios/            # rule-based baseline policies + the episode/scenario runner
-├── dashboard/            # Streamlit dashboard: explore training results interactively
-└── scripts/              # entry points: run_experiment (train), plot_results (headless plots)
+├── core/          # shared pydantic models, settings, constants, Protocol interfaces
+├── grid_model/    # network construction + episode simulation (the only module that owns grid physics)
+├── map_ui/        # Streamlit + Folium area picker → GridNetwork
+├── rl_engine/     # RLlib IPPO training against GridEnvProtocol
+├── scenarios/     # rule-based baseline policies + episode runner
+├── dashboard/     # Streamlit viewer for saved runs
+└── scripts/       # entry points (app.py, train_run.py, run_experiment.py, ...)
 ```
 
-Modules besides `core` don't import each other's internals — `rl_engine` and
-`scenarios` are written against `core.protocols.GridEnvProtocol` and receive
-a concrete environment (`grid_model.GridEnv`) only by dependency injection.
-
-## Development
-
-```bash
-pytest                                              # full suite
-pytest src/GridKIT/grid_model/test_environment.py   # one file
-pytest -k battery                                   # by keyword
-```
-
-Tests live next to the module they cover (`grid_model/test_environment.py`),
-not in a separate `tests/` tree. There is no configured linter/formatter.
-
----
-
-## Libraries
-
-| Library | Used in | Purpose |
-|---|---|---|
-| [GridCreator](https://github.com/INATECHCIG/GridCreator) | `grid_model` | Real ding0 LV grid topology for a drawn area |
-| [pandapower](https://pandapower.readthedocs.io) | `grid_model` | Power flow simulation |
-| [Gymnasium](https://gymnasium.farama.org) | `rl_engine` | RL environment interface |
-| [RLlib](https://docs.ray.io/en/latest/rllib/) or [SB3](https://stable-baselines3.readthedocs.io) | `rl_engine` | MARL agents |
-| [Streamlit](https://streamlit.io) | `dashboard` | UI and visualization |
-
-## Enabling real ding0 grids (recommended)
-
-When you draw an area in the grid designer, GridKIT extracts the **actual** LV grid
-for that box from the ding0 archive — every transformer real and individually sized
-(GridCreator step 1). Without the archive it falls back to the OSM builder, which can
-only place **one generic 160 kVA transformer** for the whole area, so its congestion
-and §14a curtailment numbers are not physically meaningful.
-
-To enable it, download `input.zip` from [Zenodo](https://zenodo.org/records/17884917)
-and unpack it so the grids land here:
-
-```
-vendor/GridCreator/input/grids/<grid_district>/topology/buses.csv
-```
-
-Or point `$GRIDKIT_DING0_GRIDS_DIR` at an existing copy. The designer detects the
-archive automatically and greys out the ding0 option when it is missing.
-Coverage is Germany-only, limited to the districts in your download.
+Modules other than `core` don't import each other's internals — `rl_engine`
+and `scenarios` are written against `core.protocols.GridEnvProtocol` and
+receive a concrete env by dependency injection, never by importing
+`grid_model` directly. See `CLAUDE.md` for the reasoning and for which parts
+of `rl_engine`/`scripts` are fully wired up vs. still stubs (e.g. DQN is
+configured but never implemented; only IPPO is real).

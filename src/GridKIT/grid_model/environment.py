@@ -99,7 +99,8 @@ def curtail_household(controllable_req_kw: float, scale: float) -> float:
 # Per-household live state for one episode
 # ══════════════════════════════════════════════════════════════
 class _Household:
-    def __init__(self, bus_id: str, profiles: HouseholdDayProfiles, devices: set[str], has_pv: bool):
+    def __init__(self, bus_id: str, profiles: HouseholdDayProfiles, devices: set[str], has_pv: bool,
+                 battery_kwh: float = const.BATTERY_CAPACITY_KWH):
         self.bus_id = bus_id
         self.profiles = profiles
         self.devices = devices        # subset of controllable {ev, battery, hp} this home has
@@ -111,7 +112,9 @@ class _Household:
             agent_id=make_agent_id(bus_id, const.DEVICE_EV), bus_id=bus_id,
             soc=0.5, availability=(profiles.ev_available >= 0.5).tolist(),
         )
-        self.battery = BatteryState(agent_id=make_agent_id(bus_id, const.DEVICE_BATTERY), bus_id=bus_id)
+        self.battery = BatteryState(
+            agent_id=make_agent_id(bus_id, const.DEVICE_BATTERY), bus_id=bus_id, capacity_kwh=battery_kwh,
+        )
         self.hp = HPState(agent_id=make_agent_id(bus_id, const.DEVICE_HEAT_PUMP), bus_id=bus_id)
         # last available step in the day = the EV's departure deadline for the SoC bonus
         avail = np.flatnonzero(profiles.ev_available >= 0.5)
@@ -237,7 +240,10 @@ class GridEnv(GridEnvProtocol):
         self._households = {}
         for bus, prof in zip(all_h, profiles):
             cfg = self._layout[bus]
-            self._households[bus] = _Household(bus, prof, devices=set(cfg.controllable), has_pv=cfg.pv)
+            self._households[bus] = _Household(
+                bus, prof, devices=set(cfg.controllable), has_pv=cfg.pv,
+                battery_kwh=cfg.battery_kwh or const.BATTERY_CAPACITY_KWH,
+            )
 
         observations: dict[str, Observation] = {}
         for hh in self._households.values():

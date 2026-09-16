@@ -6,10 +6,6 @@
 #
 # This module does not change the network topology.
 # It only creates a household_configuration.json structure.
-#
-# Covers all four device types the simulation knows about
-# (EV, Batterie, Wärmepumpe, PV) so the configuration can be turned
-# straight into a core.models device layout.
 # ─────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -18,34 +14,17 @@ import json
 import random
 from typing import Any
 
-import core.constants as const
-from core.models import HouseholdDevices
-
 
 DEFAULT_EV_SHARE_PERCENT = 30
 DEFAULT_HEAT_PUMP_SHARE_PERCENT = 20
-DEFAULT_BATTERY_SHARE_PERCENT = 20
-DEFAULT_PV_SHARE_PERCENT = 30
 DEFAULT_GLOBAL_LOAD_SCALING_FACTOR = 1.0
 DEFAULT_SELECTION_SEED = 42
-
-# Device key → (assumption field, override field, resolved field, selection salt).
-# Salts keep each device's deterministic draw independent, so raising the EV share
-# does not reshuffle which homes got a heat pump.
-DEVICE_CONFIG_FIELDS = {
-    const.DEVICE_EV: ("ev_share_percent", "has_ev", "ev_bus_ids", "ev"),
-    const.DEVICE_BATTERY: ("battery_share_percent", "has_battery", "battery_bus_ids", "battery"),
-    const.DEVICE_HEAT_PUMP: ("heat_pump_share_percent", "has_heat_pump", "heat_pump_bus_ids", "heat_pump"),
-    const.DEVICE_PV: ("pv_share_percent", "has_pv", "pv_bus_ids", "pv"),
-}
 
 
 def default_scenario_assumptions() -> dict[str, Any]:
     return {
         "ev_share_percent": DEFAULT_EV_SHARE_PERCENT,
-        "battery_share_percent": DEFAULT_BATTERY_SHARE_PERCENT,
         "heat_pump_share_percent": DEFAULT_HEAT_PUMP_SHARE_PERCENT,
-        "pv_share_percent": DEFAULT_PV_SHARE_PERCENT,
         "global_load_scaling_factor": DEFAULT_GLOBAL_LOAD_SCALING_FACTOR,
         "selection_seed": DEFAULT_SELECTION_SEED,
     }
@@ -89,6 +68,13 @@ def select_households_by_share(
     return sorted(shuffled_ids[:count])
 
 
+def gridcreator_defaults(network: Any) -> dict[str, Any]:
+    """Per-household device assignment from GridCreator (network.household_devices),
+    or {} if the network carries no real device data (stub/ding0-direct networks) —
+    callers fall back to the random-share model in that case."""
+    return getattr(network, "household_devices", {}) or {}
+
+
 def build_household_configuration(
     network: Any,
     selected_bounds: Any,
@@ -98,26 +84,46 @@ def build_household_configuration(
     global_load_scaling_factor: float,
     selection_seed: int,
     household_overrides: dict[str, dict[str, Any]],
-    battery_share_percent: int = DEFAULT_BATTERY_SHARE_PERCENT,
-    pv_share_percent: int = DEFAULT_PV_SHARE_PERCENT,
 ) -> dict[str, Any]:
-    share_by_device = {
-        const.DEVICE_EV: int(ev_share_percent),
-        const.DEVICE_BATTERY: int(battery_share_percent),
-        const.DEVICE_HEAT_PUMP: int(heat_pump_share_percent),
-        const.DEVICE_PV: int(pv_share_percent),
-    }
+    household_devices = gridcreator_defaults(network)
+    uses_gridcreator_defaults = bool(household_devices)
 
-    resolved_by_device: dict[str, set[str]] = {}
-    for device, (_, _, _, salt) in DEVICE_CONFIG_FIELDS.items():
-        resolved_by_device[device] = set(
+    if uses_gridcreator_defaults:
+        # Real GridCreator data is the default source — the share-percent
+        # sliders are ignored for this network (see the "note" below).
+        resolved_ev_ids = {b for b in household_ids if getattr(household_devices.get(b), "ev", False)}
+        resolved_heat_pump_ids = {b for b in household_ids if getattr(household_devices.get(b), "heat_pump", False)}
+    else:
+        resolved_ev_ids = set(
             select_households_by_share(
                 household_ids=household_ids,
-                share_percent=share_by_device[device],
+                share_percent=ev_share_percent,
                 seed=selection_seed,
-                salt=salt,
+                salt="ev",
             )
         )
+        resolved_heat_pump_ids = set(
+            select_households_by_share(
+                household_ids=household_ids,
+                share_percent=heat_pump_share_percent,
+                seed=selection_seed,
+                salt="heat_pump",
+            )
+        )
+
+    # Battery/PV have no share-percent slider — their only default source is
+    # GridCreator; absent that, they default to off (unchanged from before).
+    resolved_battery_ids = {b for b in household_ids if getattr(household_devices.get(b), "battery", False)}
+    resolved_pv_ids = {b for b in household_ids if getattr(household_devices.get(b), "pv", False)}
+
+    pv_kwp_by_bus = {
+        b: dev.pv_kwp for b, dev in household_devices.items()
+        if b in household_ids and dev.pv_kwp is not None
+    }
+    battery_kwh_by_bus = {
+        b: dev.battery_kwh for b, dev in household_devices.items()
+        if b in household_ids and dev.battery_kwh is not None
+    }
 
     resolved_load_scaling_by_bus = {
         bus_id: float(global_load_scaling_factor)
@@ -132,15 +138,41 @@ def build_household_configuration(
 
         cleaned_override: dict[str, Any] = {}
 
-        for device, (_, override_field, _, _) in DEVICE_CONFIG_FIELDS.items():
-            if override_field in override:
-                has_device = bool(override[override_field])
-                cleaned_override[override_field] = has_device
+        if "has_ev" in override:
+            has_ev = bool(override["has_ev"])
+            cleaned_override["has_ev"] = has_ev
 
-                if has_device:
-                    resolved_by_device[device].add(bus_id)
-                else:
-                    resolved_by_device[device].discard(bus_id)
+            if has_ev:
+                resolved_ev_ids.add(bus_id)
+            else:
+                resolved_ev_ids.discard(bus_id)
+
+        if "has_heat_pump" in override:
+            has_heat_pump = bool(override["has_heat_pump"])
+            cleaned_override["has_heat_pump"] = has_heat_pump
+
+            if has_heat_pump:
+                resolved_heat_pump_ids.add(bus_id)
+            else:
+                resolved_heat_pump_ids.discard(bus_id)
+
+        if "has_battery" in override:
+            has_battery = bool(override["has_battery"])
+            cleaned_override["has_battery"] = has_battery
+
+            if has_battery:
+                resolved_battery_ids.add(bus_id)
+            else:
+                resolved_battery_ids.discard(bus_id)
+
+        if "has_pv" in override:
+            has_pv = bool(override["has_pv"])
+            cleaned_override["has_pv"] = has_pv
+
+            if has_pv:
+                resolved_pv_ids.add(bus_id)
+            else:
+                resolved_pv_ids.discard(bus_id)
 
         if "load_scaling_factor" in override:
             load_scaling_factor = float(override["load_scaling_factor"])
@@ -150,18 +182,12 @@ def build_household_configuration(
         if cleaned_override:
             cleaned_overrides[bus_id] = cleaned_override
 
-    resolved: dict[str, Any] = {
-        resolved_field: sorted(resolved_by_device[device])
-        for device, (_, _, resolved_field, _) in DEVICE_CONFIG_FIELDS.items()
-    }
-    resolved["load_scaling_by_bus"] = resolved_load_scaling_by_bus
-
     return {
         "configuration_type": "household_scenario_configuration",
         "version": 2,
         "topology_changed": False,
         "description": (
-            "Konfiguration von Szenario-Annahmen und individuellen Anpassungen "
+            "Konfiguration von Standardwerten und individuellen Anpassungen "
             "für vorhandene Haushalts-/Last-Busse."
         ),
         "network": {
@@ -172,61 +198,49 @@ def build_household_configuration(
             "household_count": len(household_ids),
         },
         "scenario_assumptions": {
+            "uses_gridcreator_defaults": uses_gridcreator_defaults,
             "ev_share_percent": int(ev_share_percent),
-            "battery_share_percent": int(battery_share_percent),
             "heat_pump_share_percent": int(heat_pump_share_percent),
-            "pv_share_percent": int(pv_share_percent),
             "global_load_scaling_factor": float(global_load_scaling_factor),
             "selection_seed": int(selection_seed),
             "selection_method": (
-                "Deterministische zufällige Auswahl aus vorhandenen household_bus_ids. "
-                "Individuelle Haushalt-Anpassungen überschreiben diese Szenario-Annahmen."
+                "EV/Wärmepumpe/Batterie/PV werden automatisch aus der von GridCreator "
+                "zugeordneten Gerätebelegung übernommen, sofern das Netz reale "
+                "Gerätedaten enthält. Andernfalls gilt für EV/Wärmepumpe eine "
+                "deterministische zufällige Auswahl per Szenario-Anteil "
+                "(ev_share_percent/heat_pump_share_percent); Batterie/PV bleiben dann "
+                "aus. Individuelle Haushalt-Anpassungen überschreiben in jedem Fall "
+                "den jeweiligen Standardwert."
             ),
             "note": (
-                "Diese Werte werden nicht automatisch aus OSM erkannt, "
-                "sondern als Annahmen für das Szenario verwendet."
+                "Für dieses Netz liegen reale GridCreator-Gerätedaten vor — die "
+                "Szenario-Anteile oben werden ignoriert."
+                if uses_gridcreator_defaults else
+                "Für dieses Netz liegen keine realen GridCreator-Gerätedaten vor "
+                "(z. B. ding0-Direktimport oder Stub-Netz) — es gelten die "
+                "Szenario-Anteile oben als Annahmen."
             ),
         },
         "individual_household_adjustments": cleaned_overrides,
-        "resolved": resolved,
+        "resolved": {
+            "ev_bus_ids": sorted(resolved_ev_ids),
+            "heat_pump_bus_ids": sorted(resolved_heat_pump_ids),
+            "battery_bus_ids": sorted(resolved_battery_ids),
+            "pv_bus_ids": sorted(resolved_pv_ids),
+            "pv_kwp_by_bus": pv_kwp_by_bus,
+            "battery_kwh_by_bus": battery_kwh_by_bus,
+            "load_scaling_by_bus": resolved_load_scaling_by_bus,
+        },
         "assumptions": {
             "ev_means": "Electric Vehicle / Elektrofahrzeug am Haushalt",
-            "battery_means": "Heim-Batteriespeicher am Haushalt",
             "heat_pump_means": "Wärmepumpe am Haushalt",
-            "pv_means": "PV-Anlage auf dem Haushalt",
+            "battery_means": "Batteriespeicher am Haushalt",
+            "pv_means": "Photovoltaikanlage am Haushalt",
             "load_scaling_factor_means": (
                 "1.0 = unverändertes Lastprofil, 1.2 = 20 Prozent höherer Verbrauch"
             ),
             "topology_note": "Die Netztopologie des erzeugten GridNetwork bleibt unverändert.",
         },
-    }
-
-
-def device_layout_from_configuration(
-    household_ids: list[str],
-    configuration: dict[str, Any],
-) -> dict[str, HouseholdDevices]:
-    """Turn a household_configuration into the per-home layout GridEnv consumes.
-
-    This is the bridge between the map UI's configuration format and
-    core.models — the RL environment and the dashboard both work off
-    HouseholdDevices, never off the JSON structure.
-    """
-    resolved = configuration["resolved"]
-    equipped = {
-        device: set(resolved.get(resolved_field, []))
-        for device, (_, _, resolved_field, _) in DEVICE_CONFIG_FIELDS.items()
-    }
-
-    return {
-        bus_id: HouseholdDevices(
-            bus_id=bus_id,
-            ev=bus_id in equipped[const.DEVICE_EV],
-            battery=bus_id in equipped[const.DEVICE_BATTERY],
-            heat_pump=bus_id in equipped[const.DEVICE_HEAT_PUMP],
-            pv=bus_id in equipped[const.DEVICE_PV],
-        )
-        for bus_id in household_ids
     }
 
 
