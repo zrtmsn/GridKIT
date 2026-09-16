@@ -1,4 +1,4 @@
-from scripts.train_run import household_devices_from_config
+from scripts.train_run import configured_share, household_devices_from_config
 
 
 def _config(ev_ids, hp_ids):
@@ -56,3 +56,30 @@ def test_household_devices_from_config_ignores_unknown_resolved_ids():
     layout = household_devices_from_config(config, ["h0"])
     assert set(layout) == {"h0"}
     assert layout["h0"].ev is False
+
+
+# ── Ausstattungsgrad eines Karten-Laufs ──────────────────────
+def test_configured_share_counts_households_with_a_controllable_device():
+    layout = household_devices_from_config(_config(ev_ids=["h0"], hp_ids=["h1"]),
+                                           ["h0", "h1", "h2", "h3"])
+    assert configured_share(layout) == 0.5
+
+
+def test_configured_share_ignores_pv_only_households():
+    # PV is exogenous, not controllable, so a PV-only household is not part of
+    # what the Ausstattungsgrad describes
+    config = {"resolved": {"ev_bus_ids": [], "heat_pump_bus_ids": [],
+                           "pv_bus_ids": ["h0", "h1"]}}
+    layout = household_devices_from_config(config, ["h0", "h1"])
+    assert configured_share(layout) == 0.0
+
+
+def test_configured_share_of_a_fully_equipped_grid_is_one():
+    layout = household_devices_from_config(_config(ev_ids=["h0", "h1"], hp_ids=[]),
+                                           ["h0", "h1"])
+    assert configured_share(layout) == 1.0
+
+
+def test_configured_share_of_an_empty_layout_is_zero():
+    # a network with no households at all must not divide by zero
+    assert configured_share({}) == 0.0

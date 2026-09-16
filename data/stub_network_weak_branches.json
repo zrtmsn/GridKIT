@@ -1,0 +1,35 @@
+{
+    "network_id": "stub_5_households_weak_branches",
+    
+    "buses": [
+        {"bus_id": "bus_hv", "v_nom_kv": 20.0, "x_coord": 0.0, "y_coord": 1.0},
+        {"bus_id": "bus_lv", "v_nom_kv": 0.4, "x_coord": 0.0, "y_coord": 0.0},
+        {"bus_id": "bus_0", "v_nom_kv": 0.4, "x_coord": 1.0, "y_coord": 0.0},
+        {"bus_id": "bus_1", "v_nom_kv": 0.4, "x_coord": 2.0, "y_coord": 0.0},
+        {"bus_id": "bus_2", "v_nom_kv": 0.4, "x_coord": 3.0, "y_coord": 0.0},
+        {"bus_id": "bus_3", "v_nom_kv": 0.4, "x_coord": 4.0, "y_coord": 0.0},
+        {"bus_id": "bus_4", "v_nom_kv": 0.4, "x_coord": 5.0, "y_coord": 0.0}
+    ],
+    
+    "transformers": [
+        {
+            "trafo_id": "trafo_0",
+            "hv_bus": "bus_hv",
+            "lv_bus" : "bus_lv",
+            "s_nom_mva": 0.05,
+            "vn_hv_kv": 20.0,
+            "vn_lv_kv": 0.4
+        }
+    ],
+    
+    "lines": [
+        {"line_id": "lv_to_0", "from_bus": "bus_lv", "to_bus": "bus_0", "length_km": 0.05, "r_ohm_per_km": 0.32, "x_ohm_per_km": 0.08, "max_i_ka": 0.060},
+        {"line_id": "0_to_1", "from_bus": "bus_0", "to_bus": "bus_1", "length_km": 0.05, "r_ohm_per_km": 0.32, "x_ohm_per_km": 0.08, "max_i_ka": 0.025},
+        {"line_id": "1_to_2", "from_bus": "bus_1", "to_bus": "bus_2", "length_km": 0.05, "r_ohm_per_km": 0.32, "x_ohm_per_km": 0.08, "max_i_ka": 0.020},
+        {"line_id": "2_to_3", "from_bus": "bus_2", "to_bus": "bus_3", "length_km": 0.05, "r_ohm_per_km": 0.32, "x_ohm_per_km": 0.08, "max_i_ka": 0.015},
+        {"line_id": "3_to_4", "from_bus": "bus_3", "to_bus": "bus_4", "length_km": 0.05, "r_ohm_per_km": 0.32, "x_ohm_per_km": 0.08, "max_i_ka": 0.010}
+
+    ],
+    
+    "household_bus_ids": ["bus_0", "bus_1", "bus_2", "bus_3", "bus_4"]
+}

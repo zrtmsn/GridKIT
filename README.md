@@ -96,10 +96,30 @@ This is the main entry point: one Streamlit app with two pages —
   data (via the GridCreator conda env), configure households (EV/heat pump),
   and optionally save it and kick off IPPO training in the background.
 - **Dashboard** — browse every saved run, watch training progress live, and
-  view results (curtailment, SoC satisfaction, transformer peak loading,
-  reward, bill) once a run finishes.
+  once a run finishes explore its results across five tabs (German UI):
+  **Überblick** (does the grid hold, and which scenario is best),
+  **Netzauslastung** (loading over the day, duration curve, which element
+  overloads when), **Geräte & Haushalte** (per-device power, SoC, heat-pump
+  comfort, a representative household), **Szenarienvergleich** (the strategies
+  side by side plus the overload map) and **Training** (reward convergence,
+  reward against the baselines, policy entropy). Every chart exports to
+  CSV/JSON.
 
 Saved networks/runs live under `runs/<run_id>/` (gitignored).
+
+### Batch experiment (no map)
+
+To sweep the scenarios across several Ausstattungsgrade on a fixed network,
+independent of the map UI:
+
+```bash
+python -m GridKIT.scripts.run_experiment          # writes outputs/
+streamlit run src/GridKIT/dashboard/app.py        # same five tabs, on outputs/
+```
+
+`GRIDKIT_OUTPUT_DIR` points the dashboard at a different results directory.
+When both `runs/` and `outputs/` hold results, the standalone dashboard offers
+a source picker in the sidebar.
 
 ### Other useful commands
 

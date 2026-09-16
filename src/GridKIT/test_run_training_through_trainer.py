@@ -17,7 +17,7 @@ project_root = script_dir.parent.parent
 os.chdir(project_root)
 
 # Sets PYTHONPATH for all Ray workers.
-os.environ["PYTHONPATH"] = f"{script_dir}:{src_dir}"
+os.environ["PYTHONPATH"] = f"{script_dir}{os.pathsep}{src_dir}"
 os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"
 
 

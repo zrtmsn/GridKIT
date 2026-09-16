@@ -22,3 +22,12 @@ data/
 
 # Streamlit local files
 .streamlit/
+
+# Training run artifacts (checkpoints + per-run results; regenerate with train_run.py)
+runs/
+
+# Local app logs
+*.log
+
+# CLI scratch output (grid_model.cli --out network.json)
+/network.json

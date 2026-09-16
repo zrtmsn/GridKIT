@@ -1,4 +1,0 @@
-[console_scripts]
-gridkit-app = GridKIT.scripts.app:main
-gridkit-experiment = GridKIT.scripts.run_experiment:main
-gridkit-train = GridKIT.scripts.train:main

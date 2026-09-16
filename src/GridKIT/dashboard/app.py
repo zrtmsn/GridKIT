@@ -1,180 +1,270 @@
 # dashboard/app.py
 # ─────────────────────────────────────────────────────────────
-# GridKIT — Dashboard.
+# Streamlit dashboard for the GridKIT §14a curtailment comparison.
 #
-# Reads runs saved via core.run_store (created by map_ui/map_widget.py's
-# "Speichern & Training starten") and renders their status / results.
-# Pure viewer — never launches or writes to a run itself (except deleting one
-# on request), so it can be reloaded/refreshed freely while scripts.train_run
-# is writing to the same run in the background.
+# It reads results from two producers, which write the same schema:
+#   · runs/<id>/          — one run started from the map (scripts/train_run.py)
+#   · outputs/            — the scenario × Ausstattungsgrad batch sweep
+#                           (scripts/run_experiment.py)
 #
-# Run:  PYTHONPATH=src/GridKIT:src streamlit run src/GridKIT/dashboard/app.py
+# Entry points:
+#   streamlit run src/GridKIT/scripts/app.py    Karte + Dashboard in one app
+#   streamlit run src/GridKIT/dashboard/app.py  the dashboard on its own
+#
+# `render_dashboard()` is the page scripts/app.py composes: it browses saved
+# runs and renders the selected one. It never starts or writes a run (except
+# deleting one on request), so it can be refreshed freely while train_run.py
+# is writing into the same directory.
+#
+# This module is only the shell: it loads the result files, renders the
+# glossary and hands each tab its data. Every view lives in its own module
+# (ueberblick, auslastung, geraete, vergleich, training) and every colour and
+# label in theme.py.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
 # ── path bootstrap (so `streamlit run` finds the packages) ──
-_SCRIPT_DIR = Path(__file__).resolve().parent.parent   # src/GridKIT/
-_SRC_DIR = _SCRIPT_DIR.parent                            # src/
-for _p in (str(_SCRIPT_DIR), str(_SRC_DIR)):
+# Needed because this file is run directly as a script, not imported as part of
+# the package: without it `from dashboard...` below fails unless PYTHONPATH
+# happens to be set outside. Same bootstrap as scripts/grid_designer.py.
+_PKG_DIR = Path(__file__).resolve().parent.parent   # src/GridKIT/
+_SRC_DIR = _PKG_DIR.parent                          # src/
+for _p in (str(_PKG_DIR), str(_SRC_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 import streamlit as st
 
 from core import run_store as rs
+from dashboard.auslastung import render_auslastung
+from dashboard.geraete import render_geraete
+from dashboard.training import render_training
+from dashboard.ueberblick import render_ueberblick
+from dashboard.vergleich import render_vergleich
 
-SCENARIO_ORDER = [
-    "1: flat / immediate",
-    "2: price-follow (automated)",
-    "3: selfish RL",
-]
-SCENARIO_COLORS = {
-    "1: flat / immediate": "#6c757d",
-    "2: price-follow (automated)": "#e76f51",
-    "3: selfish RL": "#2a9d8f",
+OUTPUT_DIR = Path(os.environ.get("GRIDKIT_OUTPUT_DIR", "outputs"))
+
+#: Session-state key for the selected run, so the pick survives a rerun.
+RUN_STATE = "dashboard_selected_run"
+
+#: run_store's states are persisted values compared against status.json on
+#: disk, so they stay English; only their on-screen labels are translated.
+STATE_LABELS_DE = {
+    rs.QUEUED: "wartet",
+    rs.RUNNING: "läuft",
+    rs.DONE: "fertig",
+    rs.FAILED: "fehlgeschlagen",
 }
+
+def _load(name: str):
+    """Read one result file; None when it is missing, unreadable or malformed.
+
+    A run killed mid-write leaves truncated JSON behind, and that used to take
+    the whole dashboard down with a raw parser traceback. Returning None lets
+    each view say what is missing instead.
+    """
+    path = OUTPUT_DIR / name
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        st.error(
+            f"`{name}` konnte nicht gelesen werden ({type(exc).__name__}). "
+            "Die Datei ist vermutlich unvollständig; das passiert, wenn ein Lauf "
+            "abgebrochen wurde. Experiment erneut ausführen."
+        )
+        return None
+
+
+def render_results(summary, timelines, network=None, output_dir=None) -> None:
+    """Rendert das Szenario-Vergleichs-Dashboard aus Daten im Arbeitsspeicher.
+
+    `network` ist optional: wenn übergeben, wird zusätzlich die Überlastungskarte
+    gezeichnet. `output_dir` sagt, wo die Trainingsmetriken dieses Laufs liegen —
+    für einen Lauf aus der Karte sein eigenes Verzeichnis, sonst OUTPUT_DIR.
+    Ohne diesen Parameter zeigte der Training-Reiter eines Karten-Laufs die
+    Metriken des Batch-Experiments, also die eines ganz anderen Netzes.
+    """
+    if not summary:
+        st.info("Für diese Auswahl liegen noch keine Ergebnisse vor.")
+        return
+
+    _render_glossary()
+
+    tab_ueberblick, tab_last, tab_geraete, tab_vergleich, tab_training = st.tabs(
+        ["Überblick", "Netzauslastung", "Geräte & Haushalte", "Szenarienvergleich", "Training"]
+    )
+    with tab_ueberblick:
+        render_ueberblick(summary, timelines)
+    with tab_last:
+        render_auslastung(timelines or [])
+    with tab_geraete:
+        render_geraete(summary, timelines or [])
+    with tab_vergleich:
+        render_vergleich(summary, timelines, network)
+    with tab_training:
+        render_training(output_dir if output_dir is not None else OUTPUT_DIR, summary)
+
+
+def _render_glossary() -> None:
+    """Die Begriffe, ohne die keine Zahl auf dieser Seite lesbar ist."""
+    with st.expander("Wie lese ich das? Begriffe in einem Satz"):
+        left, right = st.columns(2)
+        left.markdown(
+            "**Auslastung (%)**: Belastung im Verhältnis zur Nennleistung. "
+            "100 % heißt genau ausgelastet, darüber ist Überlast.\n\n"
+            "**Transformator vs. Leitung**: beide können überlasten. Im "
+            "Niederspannungsnetz erreicht meist das **Kabel** zuerst seine "
+            "Grenze, während der Transformator noch entspannt aussieht.\n\n"
+            "**Ausstattungsgrad**: Anteil der Haushalte mit flexiblen Geräten. Im "
+            "Batch-Experiment bekommen genau diese Haushalte die volle Ausstattung "
+            "(E-Auto, Batterie, Wärmepumpe, PV), die übrigen keines davon. "
+            "Der Härtegrad des Tests."
+        )
+        right.markdown(
+            "**§14a EnWG**: erlaubt dem Netzbetreiber, steuerbare Geräte "
+            "gedrosselt zu betreiben, wenn das Netz sonst überlastet. Ein "
+            "„Eingriff“ ist eine Viertelstunde, in der das passiert.\n\n"
+            "**Ladestand (SoC)**: Füllstand von Autobatterie oder Speicher, "
+            "0 bis 1.\n\n"
+            "**Szenarien**: die Regelstrategie. *konstant/sofort* lädt ohne "
+            "Rücksicht, *preisorientiert* wartet auf günstigen Strom, "
+            "*eigennütziges RL* ist die gelernte Strategie."
+        )
+
+
+SUBTITLE = (
+    "Jeder Haushalt betreibt drei steuerbare Geräte-Agenten (EV, Batterie, Wärmepumpe) "
+    "sowie eine exogene Dach-PV-Anlage, auf Basis realer, wetterabhängiger Profile "
+    "(GridCreator/pyCity). Der Mechanismus wird unter vereinfachten Annahmen gezeigt "
+    "(Ersatz-Lastfluss). Ein relativer Vergleich, keine Prognose."
+)
+
+
+def _run_label(record: dict) -> str:
+    """One line per run for the picker: name, state and whether it has results."""
+    state = STATE_LABELS_DE.get(record["state"], record["state"])
+    mark = " ✓ Ergebnisse" if record.get("has_results") else ""
+    return f"{record.get('name', '')} · {state}{mark}  ·  {record['run_id']}"
 
 
 def render_dashboard() -> None:
-    """Page body — no st.set_page_config here, so this can be composed as one
-    page of a larger app (see scripts/app.py) as well as run standalone
-    (see main() below, which owns page config for the standalone case)."""
-    st.title("GridKIT — Dashboard")
-    st.caption(
-        "Zeigt gespeicherte Netze und Trainingsläufe aus der Karte "
-        "(erreichbar über `streamlit run src/GridKIT/scripts/app.py`, oder "
-        "eigenständig über `streamlit run src/GridKIT/map_ui/map_widget.py`)."
-    )
+    """Die Dashboard-Seite: gespeicherte Läufe durchsehen und den gewählten zeigen.
 
-    if st.button("🔄 Aktualisieren"):
+    Kein `st.set_page_config` hier, damit scripts/app.py die Seite neben der
+    Karte einhängen kann; `main()` unten übernimmt das für den Einzelbetrieb.
+    """
+    st.title("GridKIT Dashboard")
+    st.caption(SUBTITLE)
+
+    if st.button("🔄 Aktualisieren", help="Läufe neu einlesen — ein laufendes Training "
+                                          "schreibt weiter, während diese Seite offen ist"):
         st.rerun()
 
     runs = rs.list_runs()
     if not runs:
-        st.info("Noch keine gespeicherten Läufe. Im Karten-UI ein Netz speichern und trainieren.")
+        st.info(
+            "Noch keine Läufe. Auf der Seite **Karte** ein Gebiet auswählen, die Haushalte "
+            "konfigurieren und „Speichern & Training starten“ — der Lauf erscheint dann hier."
+        )
         return
-
-    st.subheader("Gespeicherte Läufe")
-    st.dataframe(
-        [{"Lauf": r["run_id"], "Name": r.get("name", ""), "Status": r["state"],
-          "Fortschritt": f"{r.get('progress', 0) * 100:.0f}%", "Haushalte": r.get("n_households", 0),
-          "Erstellt": r.get("created", ""), "Ergebnisse": "✓" if r.get("has_results") else "—"}
-         for r in runs],
-        width="stretch", hide_index=True,
-    )
 
     ids = [r["run_id"] for r in runs]
     by_id = {r["run_id"]: r for r in runs}
-    sel = st.selectbox(
-        "Lauf auswählen", ids,
-        format_func=lambda i: f"{by_id[i].get('name', '')} · {by_id[i]['state']} ({i})",
-    )
-    r = by_id[sel]
+    # Remember the pick across reruns, but never point at a deleted run.
+    if st.session_state.get(RUN_STATE) not in ids:
+        st.session_state[RUN_STATE] = ids[0]
+    sel = st.selectbox("Lauf", ids, key=RUN_STATE, format_func=lambda i: _run_label(by_id[i]))
+    record = by_id[sel]
 
-    top_col, delete_col = st.columns([4, 1])
-    top_col.caption(f"**{sel}** — {r.get('n_households', '?')} Haushalte · erstellt {r.get('created', '?')}")
-    if delete_col.button("🗑 Lauf löschen"):
+    head, delete = st.columns([5, 1])
+    head.caption(f"**{record.get('name', '')}** — {record.get('n_households', '?')} Haushalte · "
+                 f"erstellt {record.get('created', '?')} · `{sel}`")
+    if delete.button("🗑 Löschen"):
         rs.delete_run(sel)
+        st.session_state.pop(RUN_STATE, None)
         st.rerun()
 
-    state = r["state"]
+    state = record["state"]
     if state == rs.QUEUED:
-        st.info("Gespeichert, Training wurde noch nicht gestartet.")
-    elif state == rs.RUNNING and r.get("stale"):
+        st.info("Gespeichert, das Training hat noch nicht begonnen.")
+        return
+    if state == rs.RUNNING and record.get("stale"):
         st.warning(
-            f"Zeigt seit über {rs.STALE_AFTER_SECONDS // 60} Minuten keinen Fortschritt mehr "
-            f"(letzte Meldung: „{r.get('message', '')}“) — der Prozess ist wahrscheinlich abgestürzt "
-            "(z. B. durch zu wenig Arbeitsspeicher, wenn mehrere Trainings gleichzeitig liefen), nicht "
-            "wirklich noch am Trainieren. Sicherheitshalber löschen und neu starten."
+            f"Seit über {rs.STALE_AFTER_SECONDS // 60} Minuten kein Fortschritt "
+            f"(zuletzt: „{record.get('message', '')}“). Der Trainingsprozess ist "
+            "wahrscheinlich abgestürzt, etwa aus Speichermangel, wenn mehrere Läufe "
+            "gleichzeitig trainiert haben. Am besten löschen und neu starten."
         )
     elif state == rs.RUNNING:
-        st.progress(min(1.0, r.get("progress", 0.0)), text=r.get("message", "Training läuft…"))
-        st.caption("Noch am Trainieren — auf „Aktualisieren“ klicken, um den Fortschritt zu sehen.")
+        st.progress(min(1.0, record.get("progress", 0.0)), text=record.get("message", "Training läuft…"))
+        st.caption("Das Training läuft noch. Auf „Aktualisieren“ klicken für den neuesten Stand; "
+                   "die Ergebnisse erscheinen hier, sobald es fertig ist.")
     elif state == rs.FAILED:
-        st.error(f"Fehlgeschlagen: {r.get('message', '')}")
-    elif r.get("has_results"):
-        summary, timelines = rs.load_results(sel)
-        render_results(summary, timelines)
-    else:
-        st.info(f"Status: {state}")
+        st.error(f"Fehlgeschlagen: {record.get('message', '')}")
+        st.caption(f"Einzelheiten in `runs/{sel}/train.log`.")
 
-
-def render_results(summary: list[dict], timelines: dict) -> None:
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    st.subheader("Szenarienvergleich")
-    present = {row["scenario"] for row in summary}
-    scenarios = [s for s in SCENARIO_ORDER if s in present]
-    by_scenario = {row["scenario"]: row for row in summary}
-    x = np.arange(len(scenarios))
-    colors = [SCENARIO_COLORS.get(s, "#888888") for s in scenarios]
-
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
-    axes[0].bar(x, [by_scenario[s]["curtailment_mean"] for s in scenarios],
-                yerr=[by_scenario[s]["curtailment_std"] for s in scenarios], capsize=3, color=colors)
-    axes[0].set_title("§14a-Abregelungen / Episode")
-
-    axes[1].bar(x, [by_scenario[s]["soc_mean"] for s in scenarios],
-                yerr=[by_scenario[s]["soc_std"] for s in scenarios], capsize=3, color=colors)
-    axes[1].set_title("EV-Ladeziel erreicht")
-    axes[1].set_ylim(0, 1.05)
-
-    axes[2].bar(x, [by_scenario[s]["reward_mean"] for s in scenarios],
-                yerr=[by_scenario[s]["reward_std"] for s in scenarios], capsize=3, color=colors)
-    axes[2].set_title("Reward (Ø)")
-
-    for ax in axes:
-        ax.set_xticks(x)
-        ax.set_xticklabels(scenarios, rotation=20, ha="right", fontsize=8)
-        ax.grid(axis="y", alpha=0.3)
-    fig.tight_layout()
-    st.pyplot(fig)
-
-    with st.expander("Rohdaten (summary.json)"):
-        st.dataframe(summary, width="stretch")
-
-    st.subheader("Repräsentative 24h-Episode")
-    available = [s for s in SCENARIO_ORDER if s in (timelines or {})]
-    if not available:
-        st.caption("Keine Zeitreihen für diesen Lauf gespeichert.")
+    if not record.get("has_results"):
         return
-    chosen = st.selectbox("Szenario", available)
-    tl = timelines[chosen]
 
-    n = len(tl["transformer_loading"])
-    hours = 12 + np.arange(n) * 0.25  # episode starts at noon
+    summary, timelines = rs.load_results(sel)
+    try:
+        network = rs.load_network(sel)
+    except Exception:
+        # A run saved by an older version, or a half-written file: the overload
+        # map is the only view that needs the topology, so lose just that one.
+        network = None
+    render_results(summary, timelines, network=network, output_dir=rs.run_dir(sel))
 
-    fig2, ax1 = plt.subplots(figsize=(10, 4))
-    ax1.plot(hours, tl["transformer_loading"], color="#264653", label="Trafo-Auslastung (p.u.)")
-    ax1.axhline(1.0, color="red", ls="--", lw=1, label="Überlastschwelle")
-    curt = np.array(tl["curtailment"], dtype=bool)
-    ax1.fill_between(hours, 0, 1.4, where=curt, color="red", alpha=0.12, label="Abregelung aktiv")
-    ax1.set_ylim(0, 1.4)
-    ax1.set_ylabel("Auslastung (p.u.)")
 
-    ax2 = ax1.twinx()
-    ax2.plot(hours, tl["price"], color="#2a9d8f", alpha=0.6, label="Preis (€/kWh)")
-    ax2.set_ylabel("Preis (€/kWh)", color="#2a9d8f")
-
-    ax1.set_xlabel("Uhrzeit (Episode läuft Mittag → Mittag)")
-    ax1.set_title(f"{chosen} — ein repräsentativer Tag")
-    l1, lab1 = ax1.get_legend_handles_labels()
-    l2, lab2 = ax2.get_legend_handles_labels()
-    ax1.legend(l1 + l2, lab1 + lab2, fontsize=8, loc="upper left")
-    ax1.grid(alpha=0.3)
-    fig2.tight_layout()
-    st.pyplot(fig2)
+def render_batch() -> None:
+    """Die Ausgabe des Batch-Experiments aus OUTPUT_DIR."""
+    st.title("GridKIT Dashboard")
+    st.caption(SUBTITLE)
+    summary = _load("summary.json")
+    timelines = _load("timelines.json")
+    if not summary:
+        st.warning(f"Keine Ergebnisse in `{OUTPUT_DIR}/`. Zuerst "
+                   "`python -m GridKIT.scripts.run_experiment` ausführen.")
+        return
+    render_results(summary, timelines, output_dir=OUTPUT_DIR)
 
 
 def main() -> None:
-    """Standalone entry point: streamlit run src/GridKIT/dashboard/app.py"""
-    st.set_page_config(page_title="GridKIT — Dashboard", layout="wide")
-    render_dashboard()
+    st.set_page_config(page_title="GridKIT Dashboard", layout="wide")
+    # Two producers can have written results. Ask only when both actually have
+    # something to show, so the usual case stays a single click-free page.
+    has_batch = (OUTPUT_DIR / "summary.json").exists()
+    has_runs = bool(rs.list_runs())
+    if has_batch and has_runs:
+        source = st.sidebar.radio(
+            "Datenquelle", ["Lauf aus der Karte", f"Batch-Experiment ({OUTPUT_DIR})"],
+            help="Läufe aus der Karte liegen unter runs/, das Batch-Experiment unter outputs/.",
+        )
+        render_dashboard() if source == "Lauf aus der Karte" else render_batch()
+    elif has_batch:
+        render_batch()
+    else:
+        render_dashboard()
+
+
+def _running_under_streamlit() -> bool:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        return get_script_run_ctx() is not None
+    except Exception:
+        return False
 
 
 if __name__ == "__main__":
+    main()
+elif _running_under_streamlit():
+    # `streamlit run` importiert das Modul (name != __main__); nur dann automatisch
+    # ausführen, NICHT bei einem einfachen Import (z. B. wenn die Web-App render_results importiert).
     main()

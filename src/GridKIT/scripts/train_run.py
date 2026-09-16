@@ -34,7 +34,10 @@ def _setup_paths() -> None:
     for p in (str(src_dir), str(script_dir)):
         if p not in sys.path:
             sys.path.insert(0, p)
-    os.environ["PYTHONPATH"] = f"{script_dir}:{src_dir}"
+    # os.pathsep, not ":" — Ray starts worker processes that re-read PYTHONPATH,
+    # and on Windows a colon-joined value leaves them unable to import GridKIT at
+    # all. It surfaces far from here, as an IndexError inside the trainer.
+    os.environ["PYTHONPATH"] = f"{script_dir}{os.pathsep}{src_dir}"
     os.environ["RAY_CHDIR_TO_TRIAL_DIR"] = "0"
 
 
@@ -77,6 +80,20 @@ def household_devices_from_config(config: dict, household_bus_ids: list[str]) ->
     }
 
 
+def configured_share(layout: dict) -> float:
+    """Share of households that got at least one controllable device.
+
+    The dashboard labels its results with an "Ausstattungsgrad". In the batch
+    experiment that is the swept input; a run from the map has no sweep, so it
+    is read back off the layout the user actually configured. Households with
+    only PV don't count — PV isn't controllable, so it is not part of what the
+    §14a question is about.
+    """
+    if not layout:
+        return 0.0
+    return sum(1 for cfg in layout.values() if cfg.controllable) / len(layout)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train one run saved via core.run_store")
     parser.add_argument("--run-dir", required=True, help="runs/<id> directory")
@@ -95,7 +112,7 @@ def main() -> None:
     try:
         import core.constants as const
         from grid_model.builder import FixedNetworkBuilder
-        from scripts.run_experiment import _timeline
+        from scripts.run_experiment import _timeline, summary_record
         from GridKIT.grid_model.environment import GridEnv
         from GridKIT.rl_engine import (
             GridEnvRLlibWrapper, Trainer, create_ippo_config, RLlibPolicyAdapter,
@@ -110,6 +127,8 @@ def main() -> None:
         iterations = const.PIPELINE_TRAINING_ITERATIONS
         seeds = list(range(const.PIPELINE_EVALUATION_SEEDS))
 
+        # What the dashboard shows as the Ausstattungsgrad for this run.
+        PENETRATION = configured_share(layout)
         active_device_types = tuple(sorted({d for cfg in layout.values() for d in cfg.controllable}))
         if not active_device_types:
             rs.set_status(run_id, state=rs.FAILED,
@@ -134,7 +153,10 @@ def main() -> None:
                                message=f"iter {iteration}/{iterations} · reward {reward:.1f}", root=root)
 
         trainer = Trainer(env_factory=env_factory, config_func=config_func)
-        trainer.run(num_episodes=iterations, callback=_StatusCallback(), cleanup=False)
+        # metrics_dir: without it iteration_metrics.json goes to a temp path and
+        # the dashboard's Training tab stays empty for every run from the map.
+        trainer.run(num_episodes=iterations, callback=_StatusCallback(), cleanup=False,
+                    metrics_dir=run_path)
 
         rs.set_status(run_id, state=rs.RUNNING, progress=1.0, iteration=iterations,
                        total_iters=iterations, message="evaluating scenarios", root=root)
@@ -143,27 +165,30 @@ def main() -> None:
         adapter = RLlibPolicyAdapter(modules)
 
         # ── evaluate baselines + RL on the same grid ─────────
+        # The same four scenarios as the batch experiment, so a run started from
+        # the map is directly comparable with one from run_experiment.py — the
+        # Szenarienvergleich tab is built around this set.
         scenarios = {
             "1: flat / immediate": NaiveImmediatePolicy(),
+            "2: price-follow (manual)": NaivePriceFollowPolicy(jitter_std=8.0),
             "2: price-follow (automated)": NaivePriceFollowPolicy(jitter_std=0.0),
             "3: selfish RL": adapter,
         }
         summary: list[dict] = []
-        timelines: dict[str, dict] = {}
+        # A list, not a dict keyed by label: the dashboard's tabs filter timelines
+        # by their `scenario` field and read them as records, the same shape
+        # run_experiment.py writes. A dict here left every tab but the first empty.
+        timelines: list[dict] = []
         for label, policy in scenarios.items():
             env = GridEnv(builder=FixedNetworkBuilder(network), device_layout=layout)
             stats = run_scenario(env, policy, seeds, label=label)
-            summary.append({
-                "scenario": label,
-                "curtailment_mean": stats.curtailment_events[0], "curtailment_std": stats.curtailment_events[1],
-                "soc_mean": stats.soc_satisfaction_rate[0], "soc_std": stats.soc_satisfaction_rate[1],
-                "peak_mean": stats.transformer_peak_loading_pu[0], "peak_std": stats.transformer_peak_loading_pu[1],
-                "reward_mean": stats.mean_episode_reward[0], "reward_std": stats.mean_episode_reward[1],
-                "bill_mean": stats.mean_household_bill_eur[0], "bill_std": stats.mean_household_bill_eur[1],
-            })
+            # summary_record, not an inline dict: the dashboard reads ~30 fields
+            # (HP comfort, battery cycles, the feeder/line breakdown) that an
+            # inline subset leaves blank.
+            summary.append(summary_record(stats, label, PENETRATION))
             env = GridEnv(builder=FixedNetworkBuilder(network), device_layout=layout)
             rep = run_episode(env, policy, seeds[0])
-            timelines[label] = _timeline(env, rep, label, 0.0)
+            timelines.append(_timeline(env, rep, label, PENETRATION))
 
         rs.save_results(run_id, summary, timelines, root=root)
         trainer.stop()
