@@ -83,9 +83,23 @@ def test_save_results_persists_and_marks_done(tmp_path):
 
     summary, timelines = rs.load_results(rid, root=tmp_path)
     assert summary == [{"scenario": "1"}]
-    assert timelines == {"1": {"transformer_loading": [0.1, 0.2]}}
+    # train_run.py writes timelines.json as {scenario_label: timeline_dict};
+    # load_results reshapes it to a plain list, matching what the dashboard
+    # (built against run_experiment.py's batch-output shape) expects.
+    assert timelines == [{"transformer_loading": [0.1, 0.2]}]
     assert rs.get_status(rid, root=tmp_path)["state"] == rs.DONE
     assert rs.list_runs(root=tmp_path)[0]["has_results"] is True
+
+
+def test_load_results_leaves_list_shaped_timelines_untouched(tmp_path):
+    # a network built by run_experiment.py's own path already writes a list —
+    # load_results must not mangle it.
+    net = _net()
+    rid = rs.create_run("r", net, _config(), iterations=1, seeds=1, root=tmp_path)
+    rs.save_results(rid, [{"scenario": "1"}], [{"scenario": "1", "transformer_loading": [0.1]}], root=tmp_path)
+
+    _, timelines = rs.load_results(rid, root=tmp_path)
+    assert timelines == [{"scenario": "1", "transformer_loading": [0.1]}]
 
 
 def test_delete_run_removes_everything(tmp_path):
