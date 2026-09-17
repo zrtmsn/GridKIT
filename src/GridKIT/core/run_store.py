@@ -205,7 +205,17 @@ def load_household_configuration(run_id: str, root: str | Path = DEFAULT_ROOT) -
 
 def load_results(run_id: str, root: str | Path = DEFAULT_ROOT) -> tuple[Any | None, Any | None]:
     d = run_dir(run_id, root)
-    return _read_json(d / "summary.json"), _read_json(d / "timelines.json")
+    summary = _read_json(d / "summary.json")
+    timelines = _read_json(d / "timelines.json")
+    if isinstance(timelines, dict):
+        # train_run.py writes {scenario_label: timeline_dict} for a UI-launched
+        # run; the dashboard (ueberblick/auslastung/geraete/vergleich) — built
+        # against run_experiment.py's batch output — expects a plain list of
+        # timeline dicts instead. Each dict already carries its own "scenario"/
+        # "penetration" keys (see scripts.run_experiment._timeline), so this is
+        # a lossless reshape, not a data change.
+        timelines = list(timelines.values())
+    return summary, timelines
 
 
 def save_results(
