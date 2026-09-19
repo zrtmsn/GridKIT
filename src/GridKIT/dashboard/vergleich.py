@@ -167,13 +167,7 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
 
     centre = (float(np.mean([c[0] for c in coords.values()])),
               float(np.mean([c[1] for c in coords.values()])))
-    # Plain/light basemap, not full-detail OpenStreetMap: most lines stay pale
-    # background styling (below LINE_WATCH_THRESHOLD, by design — see
-    # cable_peak_pu's docstring), and that thin, semi-transparent grey nearly
-    # disappears against OSM's own busy road/building linework. Esri's gray
-    # canvas is genuinely keyless (confirmed via xyzservices — no token
-    # required) and, unlike "cartodbpositron", isn't gated behind CARTO's
-    # newer API-key-only service.
+    
     import xyzservices.providers as xyz_providers
     m = folium.Map(location=centre, zoom_start=15, tiles=xyz_providers.Esri.WorldGrayCanvas)
 
@@ -184,12 +178,7 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
             continue
         pu = peaks.get(ln.line_id)
         if pu is None:
-            # Below LINE_WATCH_THRESHOLD, by design (see cable_peak_pu's
-            # docstring) — most lines in a real feeder never carry enough
-            # aggregate load to be "interesting", especially individual
-            # household tails vs. the trunk near the transformer. Still
-            # visible enough to read as "the rest of the network is here",
-            # not just a two-tone basemap-dependent guess.
+
             folium.PolyLine(
                 [a, b], color="#8a8f98", weight=1.6, opacity=0.8,
                 tooltip=f"{ln.line_id}: unauffällig (unter der Beobachtungsschwelle)",
