@@ -167,7 +167,9 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
 
     centre = (float(np.mean([c[0] for c in coords.values()])),
               float(np.mean([c[1] for c in coords.values()])))
-    m = folium.Map(location=centre, zoom_start=15, tiles="cartodbpositron")
+    
+    import xyzservices.providers as xyz_providers
+    m = folium.Map(location=centre, zoom_start=15, tiles=xyz_providers.Esri.WorldGrayCanvas)
 
     n_over = 0
     for ln in network.lines:
@@ -176,7 +178,11 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
             continue
         pu = peaks.get(ln.line_id)
         if pu is None:
-            folium.PolyLine([a, b], color="#c3c9d1", weight=1.2, opacity=0.5).add_to(m)
+
+            folium.PolyLine(
+                [a, b], color="#8a8f98", weight=1.6, opacity=0.8,
+                tooltip=f"{ln.line_id}: unauffällig (unter der Beobachtungsschwelle)",
+            ).add_to(m)
             continue
         trips = steps.get(ln.line_id, 0)
         color, weight = _load_style(pu, tripped=trips > 0)
