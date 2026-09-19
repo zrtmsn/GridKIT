@@ -4,6 +4,9 @@
 # Streamlit + Folium GUI for selecting an area and displaying
 # GridNetwork information from grid_model's OSMNetworkBuilder.
 #
+# Household configuration and training UI sections live in
+# map_ui/map_widget_sections.py to keep this file readable.
+#
 # Run from project root:
 #   python -m streamlit run src/GridKIT/map_ui/map_widget.py
 # ─────────────────────────────────────────────────────────────
@@ -19,17 +22,17 @@ from folium.plugins import Draw
 from streamlit_folium import st_folium
 
 from grid_model.builder import OSMNetworkBuilder
-from map_ui.household_config import (
-    bool_from_choice,
-    build_household_configuration,
-    choice_index_from_bool,
-    default_scenario_assumptions,
-    gridcreator_defaults,
-    json_dumps_pretty,
-    select_households_by_share,
+from map_ui.household_config import default_scenario_assumptions
+from map_ui.map_widget_sections import (
+    show_household_configuration,
+    show_training_section,
 )
 from map_ui.network_visualization import show_network_visualization
 from map_ui.osm_fetcher import AreaBounds
+from map_ui.transformer_network_filter import (
+    device_summary,
+    show_transformer_selection,
+)
 
 
 DEFAULT_CENTER = (49.0069, 8.4037)  # Karlsruhe
@@ -40,42 +43,19 @@ NOMINATIM_USER_AGENT = "GridKIT-map-ui/0.1"
 
 
 def render_map_ui() -> None:
-    """Page body — no st.set_page_config here, so this can be composed as one
-    page of a larger app (see scripts/app.py) as well as run standalone
-    (see main() below, which owns page config for the standalone case)."""
+    """Page body without st.set_page_config.
+
+    This function can be used as one page of the integrated app via
+    scripts/app.py and can also run standalone through main().
+    """
     st.title("GridKIT Karte")
     st.caption(
-        "Ort suchen → Bereich auswählen → GridNetwork erzeugen → Netzansicht visualisieren → "
+        "Ort suchen → Bereich auswählen → GridNetwork erzeugen → "
+        "optional Transformator auswählen → Netzansicht visualisieren → "
         "Haushalte konfigurieren → speichern & trainieren"
     )
 
-    if "built_network" not in st.session_state:
-        st.session_state["built_network"] = None
-    if "built_bounds" not in st.session_state:
-        st.session_state["built_bounds"] = None
-    if "built_scenario" not in st.session_state:
-        st.session_state["built_scenario"] = None
-
-    if "map_center" not in st.session_state:
-        st.session_state["map_center"] = DEFAULT_CENTER
-    if "map_zoom" not in st.session_state:
-        st.session_state["map_zoom"] = DEFAULT_ZOOM
-    if "search_results" not in st.session_state:
-        st.session_state["search_results"] = []
-    if "search_marker" not in st.session_state:
-        st.session_state["search_marker"] = None
-
-    if "household_overrides" not in st.session_state:
-        st.session_state["household_overrides"] = {}
-
-    if "scenario_assumptions" not in st.session_state:
-        st.session_state["scenario_assumptions"] = default_scenario_assumptions()
-
-    if "scenario_config_version" not in st.session_state:
-        st.session_state["scenario_config_version"] = 0
-
-    if "household_config_version" not in st.session_state:
-        st.session_state["household_config_version"] = 0
+    initialise_session_state()
 
     with st.sidebar:
         st.header("Eingabe")
@@ -222,17 +202,24 @@ def render_map_ui() -> None:
                         conda_env=conda_env.strip() or "GridCreator",
                     )
 
-                    network = builder.build()
+                    full_network = builder.build()
 
-                    st.session_state["built_network"] = network
+                    st.session_state["full_network"] = full_network
+                    st.session_state["built_network"] = full_network
                     st.session_state["built_bounds"] = selected_bounds
                     st.session_state["built_scenario"] = scenario
                     st.session_state["max_households"] = int(max_households)
 
-                    # Alte individuelle Haushalt-Anpassungen zurücksetzen,
-                    # wenn ein neues GridNetwork erzeugt wird.
+                    # Start with the complete generated GridNetwork. A transformer
+                    # filter is only applied after the user explicitly selects one.
+                    st.session_state["selected_trafo_id"] = None
+
+                    # Reset all interactive configuration state for a new network.
                     st.session_state["household_overrides"] = {}
+                    st.session_state["global_device_targets"] = None
+                    st.session_state["global_device_target_scope"] = None
                     st.session_state["household_config_version"] += 1
+                    st.session_state["scenario_config_version"] += 1
 
                 except Exception as exc:
                     if is_overpass_timeout_error(exc):
@@ -256,19 +243,69 @@ def render_map_ui() -> None:
 
             st.success("GridNetwork erzeugt.")
 
-    built_network = st.session_state.get("built_network")
+    full_network = st.session_state.get("full_network")
     built_bounds = st.session_state.get("built_bounds")
 
-    if built_network is not None and built_bounds is not None:
+    if full_network is not None and built_bounds is not None:
+        st.divider()
+        built_network = show_transformer_selection(full_network)
         st.divider()
         show_grid_model_result(built_network, built_bounds)
         st.divider()
         show_network_visualization(built_network, built_bounds)
         st.divider()
         household_configuration = show_household_configuration(built_network, built_bounds)
+
         if household_configuration is not None:
             st.divider()
             show_training_section(built_network, household_configuration)
+
+
+def initialise_session_state() -> None:
+    if "full_network" not in st.session_state:
+        st.session_state["full_network"] = None
+
+    if "built_network" not in st.session_state:
+        st.session_state["built_network"] = None
+
+    if "built_bounds" not in st.session_state:
+        st.session_state["built_bounds"] = None
+
+    if "built_scenario" not in st.session_state:
+        st.session_state["built_scenario"] = None
+
+    if "selected_trafo_id" not in st.session_state:
+        st.session_state["selected_trafo_id"] = None
+
+    if "map_center" not in st.session_state:
+        st.session_state["map_center"] = DEFAULT_CENTER
+
+    if "map_zoom" not in st.session_state:
+        st.session_state["map_zoom"] = DEFAULT_ZOOM
+
+    if "search_results" not in st.session_state:
+        st.session_state["search_results"] = []
+
+    if "search_marker" not in st.session_state:
+        st.session_state["search_marker"] = None
+
+    if "household_overrides" not in st.session_state:
+        st.session_state["household_overrides"] = {}
+
+    if "scenario_assumptions" not in st.session_state:
+        st.session_state["scenario_assumptions"] = default_scenario_assumptions()
+
+    if "global_device_targets" not in st.session_state:
+        st.session_state["global_device_targets"] = None
+
+    if "global_device_target_scope" not in st.session_state:
+        st.session_state["global_device_target_scope"] = None
+
+    if "scenario_config_version" not in st.session_state:
+        st.session_state["scenario_config_version"] = 0
+
+    if "household_config_version" not in st.session_state:
+        st.session_state["household_config_version"] = 0
 
 
 def make_base_map(
@@ -410,12 +447,28 @@ def bounds_from_drawings(map_data: dict[str, Any] | None) -> AreaBounds | None:
 
 
 def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
-    st.subheader("GridNetwork aus grid_model")
+    st.subheader("GridNetwork")
+
+    selected_trafo_id = st.session_state.get("selected_trafo_id")
+
+    if selected_trafo_id is None:
+        st.caption(
+            "Es ist aktuell kein Trafo-Filter aktiv. "
+            "Die Netzwerkkonfiguration zeigt das vollständig erzeugte GridNetwork "
+            "für den ausgewählten Kartenbereich."
+        )
+    else:
+        st.caption(
+            f"Aktiver Trafo-Filter: Die Netzwerkkonfiguration ist auf Transformator "
+            f"{selected_trafo_id} begrenzt. Der JSON-Export enthält nur dieses "
+            f"topologisch gefilterte Trafo-Teilnetz."
+        )
 
     bus_count = len(network.buses)
     line_count = len(network.lines)
     transformer_count = len(network.transformers)
     household_count = len(network.household_bus_ids)
+    devices = device_summary(network)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Buses / Knoten", bus_count)
@@ -423,12 +476,24 @@ def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
     c3.metric("Households", household_count)
     c4.metric("Transformers", transformer_count)
 
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("EV aus GridCreator", devices["ev_count"])
+    d2.metric("WP aus GridCreator", devices["heat_pump_count"])
+    d3.metric("Batterien aus GridCreator", devices["battery_count"])
+    d4.metric("PV aus GridCreator", devices["pv_count"])
+
     st.write("**Ausgewählter Kartenbereich**")
     st.json(
         {
             "bbox": selected_bounds.model_dump(),
             "area_km2": selected_bounds.approx_area_km2(),
         }
+    )
+
+    filtering_mode = (
+        "complete_network"
+        if selected_trafo_id is None
+        else "topology_based_transformer_feeder"
     )
 
     st.write("**Von grid_model erzeugte Netzwerkdaten**")
@@ -440,6 +505,9 @@ def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
             "line_count": line_count,
             "household_count": household_count,
             "transformer_count": transformer_count,
+            "selected_trafo_id": selected_trafo_id,
+            "filtering": filtering_mode,
+            "gridcreator_device_summary": devices,
         }
     )
 
@@ -456,427 +524,8 @@ def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
         st.code(grid_json, language="json")
 
 
-def show_household_configuration(network, selected_bounds: AreaBounds) -> None:
-    st.subheader("Haushaltskonfiguration")
-
-    household_ids = sorted(str(bus_id) for bus_id in getattr(network, "household_bus_ids", []))
-
-    if not household_ids:
-        st.warning(
-            "Im erzeugten GridNetwork wurden keine Haushalts-/Last-Busse gefunden. "
-            "Die Haushaltskonfiguration kann deshalb nicht angewendet werden."
-        )
-        return
-
-    if st.session_state.pop("scenario_assumptions_saved_message", False):
-        st.success("Szenario-Annahmen wurden gespeichert.")
-
-    if st.session_state.pop("scenario_assumptions_reset_message", False):
-        st.success("Szenario-Annahmen wurden zurückgesetzt.")
-
-    saved_household = st.session_state.pop("household_saved_message", None)
-    if saved_household:
-        st.success(f"Individuelle Anpassung für {saved_household} gespeichert.")
-
-    reset_household = st.session_state.pop("household_reset_message", None)
-    if reset_household:
-        st.info(f"Individuelle Anpassung für {reset_household} wurde gelöscht.")
-
-    st.session_state.setdefault("household_overrides", {})
-    st.session_state.setdefault("scenario_assumptions", default_scenario_assumptions())
-    st.session_state.setdefault("scenario_config_version", 0)
-    st.session_state.setdefault("household_config_version", 0)
-
-    household_overrides: dict[str, dict[str, Any]] = st.session_state["household_overrides"]
-    saved_assumptions: dict[str, Any] = st.session_state["scenario_assumptions"]
-
-    uses_gridcreator_defaults = bool(gridcreator_defaults(network))
-
-    st.markdown("### Szenario-Annahmen für das Gebiet")
-
-    if uses_gridcreator_defaults:
-        st.info(
-            "Für dieses Netz liegen reale GridCreator-Gerätedaten vor (EV/Wärmepumpe/"
-            "Batterie/PV). Diese werden automatisch als Standardwerte je Haushalt "
-            "verwendet — die Szenario-Anteile unten sind für dieses Netz inaktiv. "
-            "Einzelne Haushalte können weiterhin unten manuell angepasst werden."
-        )
-    else:
-        st.info(
-            "Für dieses Netz liegen keine realen GridCreator-Gerätedaten vor "
-            "(z. B. ding0-Direktimport oder Stub-Netz). EV/Wärmepumpe folgen daher "
-            "den Szenario-Anteilen unten; Batterie/PV sind ohne manuelle Anpassung "
-            "standardmäßig aus."
-        )
-
-    st.caption(
-        "Die folgenden Eingabefelder sind zunächst ein Entwurf. "
-        "Mit „Szenario-Annahmen speichern“ werden sie für die JSON-Konfiguration übernommen."
-    )
-
-    widget_suffix = st.session_state["scenario_config_version"]
-
-    high_col1, high_col2, high_col3, high_col4 = st.columns(4)
-
-    draft_ev_share_percent = high_col1.slider(
-        "Anteil Haushalte mit EV (%)",
-        min_value=0,
-        max_value=100,
-        value=int(saved_assumptions["ev_share_percent"]),
-        step=5,
-        help="Annahme für den Anteil der Haushalte, die ein Elektrofahrzeug besitzen sollen.",
-        key=f"draft_ev_share_percent_{widget_suffix}",
-        disabled=uses_gridcreator_defaults,
-    )
-
-    draft_heat_pump_share_percent = high_col2.slider(
-        "Anteil Haushalte mit WP (%)",
-        min_value=0,
-        max_value=100,
-        value=int(saved_assumptions["heat_pump_share_percent"]),
-        step=5,
-        help="Annahme für den Anteil der Haushalte, die eine Wärmepumpe besitzen sollen.",
-        key=f"draft_heat_pump_share_percent_{widget_suffix}",
-        disabled=uses_gridcreator_defaults,
-    )
-
-    draft_global_load_scaling_factor = high_col3.number_input(
-        "Verbrauchsfaktor global",
-        min_value=0.1,
-        max_value=5.0,
-        value=float(saved_assumptions["global_load_scaling_factor"]),
-        step=0.1,
-        format="%.2f",
-        help="1.0 bedeutet unverändert, 1.2 bedeutet 20 % höherer Verbrauch.",
-        key=f"draft_global_load_scaling_factor_{widget_suffix}",
-    )
-
-    draft_selection_seed = high_col4.number_input(
-        "Zufallswert für Haushalt-Auswahl",
-        min_value=0,
-        max_value=99999,
-        value=int(saved_assumptions["selection_seed"]),
-        step=1,
-        help="Sorgt dafür, dass die prozentuale Auswahl reproduzierbar bleibt.",
-        key=f"draft_selection_seed_{widget_suffix}",
-    )
-
-    draft_assumptions = {
-        "ev_share_percent": int(draft_ev_share_percent),
-        "heat_pump_share_percent": int(draft_heat_pump_share_percent),
-        "global_load_scaling_factor": float(draft_global_load_scaling_factor),
-        "selection_seed": int(draft_selection_seed),
-    }
-
-    high_action_col1, high_action_col2 = st.columns(2)
-
-    if high_action_col1.button("Szenario-Annahmen speichern"):
-        st.session_state["scenario_assumptions"] = draft_assumptions
-        st.session_state["scenario_config_version"] += 1
-        st.session_state["scenario_assumptions_saved_message"] = True
-        st.rerun()
-
-    if high_action_col2.button("Szenario-Annahmen zurücksetzen"):
-        st.session_state["scenario_assumptions"] = default_scenario_assumptions()
-        st.session_state["scenario_config_version"] += 1
-        st.session_state["scenario_assumptions_reset_message"] = True
-        st.rerun()
-
-    if draft_assumptions != saved_assumptions:
-        st.warning(
-            "Es gibt nicht gespeicherte Änderungen in den Szenario-Annahmen. "
-            "Klicke auf „Szenario-Annahmen speichern“, damit diese Werte in die JSON-Konfiguration übernommen werden."
-        )
-
-    saved_ev_share_percent = int(saved_assumptions["ev_share_percent"])
-    saved_heat_pump_share_percent = int(saved_assumptions["heat_pump_share_percent"])
-    saved_global_load_scaling_factor = float(saved_assumptions["global_load_scaling_factor"])
-    saved_selection_seed = int(saved_assumptions["selection_seed"])
-
-    st.markdown("### Individuelle Anpassung einzelner Haushalte")
-
-    selected_household = st.selectbox(
-        "Haushalt / Lastpunkt auswählen",
-        household_ids,
-        help="Hier kann ein konkreter vorhandener Haushalts-/Last-Bus individuell angepasst werden.",
-    )
-
-    current_override = household_overrides.get(selected_household, {})
-    household_widget_suffix = st.session_state["household_config_version"]
-
-    # What "Automatisch" actually resolves to for THIS household — shown
-    # directly in the option label (not just a hover tooltip) so it's visible
-    # without opening the dropdown. Ignores any override on this bus, since
-    # the point is to show what applies when there ISN'T one.
-    gc_devices = gridcreator_defaults(network)
-    gc_for_household = gc_devices.get(selected_household)
-    if uses_gridcreator_defaults:
-        default_ev = bool(getattr(gc_for_household, "ev", False))
-        default_heat_pump = bool(getattr(gc_for_household, "heat_pump", False))
-        default_battery = bool(getattr(gc_for_household, "battery", False))
-        default_pv = bool(getattr(gc_for_household, "pv", False))
-    else:
-        default_ev = selected_household in select_households_by_share(
-            household_ids, saved_ev_share_percent, seed=saved_selection_seed, salt="ev")
-        default_heat_pump = selected_household in select_households_by_share(
-            household_ids, saved_heat_pump_share_percent, seed=saved_selection_seed, salt="heat_pump")
-        default_battery = False   # no share slider for battery/pv — off without GridCreator data
-        default_pv = False
-
-    def _auto_label(default_value: bool) -> str:
-        return f"Automatisch (aktuell: {'Ja' if default_value else 'Nein'})"
-
-    def _auto_help(device_label: str, share_percent: int | None) -> str:
-        if uses_gridcreator_defaults:
-            return f"Automatisch = Zuordnung aus GridCreator für diesen Haushalt ({device_label})."
-        if share_percent is not None:
-            return f"Automatisch = {share_percent}% Szenario-Anteil ({device_label}), zufällig verteilt."
-        return f"Automatisch = aus (kein Szenario-Anteil für {device_label})."
-
-    low_col1, low_col2, low_col3, low_col4, low_col5 = st.columns(5)
-
-    ev_choice = low_col1.selectbox(
-        "EV für diesen Haushalt",
-        options=[_auto_label(default_ev), "Ja", "Nein"],
-        index=choice_index_from_bool(current_override.get("has_ev")),
-        key=f"ev_choice_{selected_household}_{household_widget_suffix}",
-        help=_auto_help("EV", saved_ev_share_percent),
-    )
-
-    heat_pump_choice = low_col2.selectbox(
-        "WP für diesen Haushalt",
-        options=[_auto_label(default_heat_pump), "Ja", "Nein"],
-        index=choice_index_from_bool(current_override.get("has_heat_pump")),
-        key=f"heat_pump_choice_{selected_household}_{household_widget_suffix}",
-        help=_auto_help("Wärmepumpe", saved_heat_pump_share_percent),
-    )
-
-    battery_choice = low_col3.selectbox(
-        "Batterie für diesen Haushalt",
-        options=[_auto_label(default_battery), "Ja", "Nein"],
-        index=choice_index_from_bool(current_override.get("has_battery")),
-        key=f"battery_choice_{selected_household}_{household_widget_suffix}",
-        help=_auto_help("Batterie", None),
-    )
-
-    pv_choice = low_col4.selectbox(
-        "PV für diesen Haushalt",
-        options=[_auto_label(default_pv), "Ja", "Nein"],
-        index=choice_index_from_bool(current_override.get("has_pv")),
-        key=f"pv_choice_{selected_household}_{household_widget_suffix}",
-        help=_auto_help("PV", None),
-    )
-
-    load_factor_mode = low_col5.selectbox(
-        "Verbrauchsfaktor-Modus",
-        options=["Automatisch aus Szenario-Annahmen", "Individuell festlegen"],
-        index=1 if "load_scaling_factor" in current_override else 0,
-        key=f"load_factor_mode_{selected_household}_{household_widget_suffix}",
-        help=(
-            "Automatisch bedeutet: Der globale Verbrauchsfaktor aus den Szenario-Annahmen gilt. "
-            "Individuell bedeutet: Für diesen Haushalt wird ein eigener Verbrauchsfaktor gespeichert."
-        ),
-    )
-
-    individual_load_scaling_factor = low_col5.number_input(
-        "Individueller Verbrauchsfaktor",
-        min_value=0.1,
-        max_value=5.0,
-        value=float(current_override.get("load_scaling_factor", saved_global_load_scaling_factor)),
-        step=0.1,
-        format="%.2f",
-        key=f"load_factor_{selected_household}_{household_widget_suffix}",
-        disabled=load_factor_mode == "Automatisch aus Szenario-Annahmen",
-        help="Dieser Wert wird nur gespeichert, wenn der Modus auf „Individuell festlegen“ steht.",
-    )
-
-    action_col1, action_col2 = st.columns(2)
-
-    if action_col1.button(
-        "Individuelle Anpassung für diesen Haushalt speichern",
-        key=f"save_override_{selected_household}",
-    ):
-        new_override: dict[str, Any] = {}
-
-        ev_override = bool_from_choice(ev_choice)
-        heat_pump_override = bool_from_choice(heat_pump_choice)
-        battery_override = bool_from_choice(battery_choice)
-        pv_override = bool_from_choice(pv_choice)
-
-        if ev_override is not None:
-            new_override["has_ev"] = ev_override
-
-        if heat_pump_override is not None:
-            new_override["has_heat_pump"] = heat_pump_override
-
-        if battery_override is not None:
-            new_override["has_battery"] = battery_override
-
-        if pv_override is not None:
-            new_override["has_pv"] = pv_override
-
-        if load_factor_mode == "Individuell festlegen":
-            new_override["load_scaling_factor"] = float(individual_load_scaling_factor)
-
-        if new_override:
-            household_overrides[selected_household] = new_override
-            st.session_state["household_config_version"] += 1
-            st.session_state["household_saved_message"] = selected_household
-            st.rerun()
-        else:
-            household_overrides.pop(selected_household, None)
-            st.session_state["household_config_version"] += 1
-            st.session_state["household_reset_message"] = selected_household
-            st.rerun()
-
-    if action_col2.button(
-        "Individuelle Anpassung löschen",
-        key=f"delete_override_{selected_household}",
-    ):
-        household_overrides.pop(selected_household, None)
-        st.session_state["household_config_version"] += 1
-        st.session_state["household_reset_message"] = selected_household
-        st.rerun()
-
-    household_configuration = build_household_configuration(
-        network=network,
-        selected_bounds=selected_bounds,
-        household_ids=household_ids,
-        ev_share_percent=saved_ev_share_percent,
-        heat_pump_share_percent=saved_heat_pump_share_percent,
-        global_load_scaling_factor=saved_global_load_scaling_factor,
-        selection_seed=saved_selection_seed,
-        household_overrides=household_overrides,
-    )
-
-    st.markdown("### Zusammenfassung der aktuellen Haushaltskonfiguration")
-
-    resolved = household_configuration["resolved"]
-
-    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5, summary_col6 = st.columns(6)
-    summary_col1.metric("Haushalte gesamt", len(household_ids))
-    summary_col2.metric("Haushalte mit EV", len(resolved["ev_bus_ids"]))
-    summary_col3.metric("Haushalte mit WP", len(resolved["heat_pump_bus_ids"]))
-    summary_col4.metric("Haushalte mit Batterie", len(resolved["battery_bus_ids"]))
-    summary_col5.metric("Haushalte mit PV", len(resolved["pv_bus_ids"]))
-    summary_col6.metric("Individuelle Anpassungen", len(household_overrides))
-
-    with st.expander("household_configuration.json anzeigen"):
-        st.json(household_configuration)
-
-    st.download_button(
-        label="household_configuration.json herunterladen",
-        data=json_dumps_pretty(household_configuration),
-        file_name="household_configuration.json",
-        mime="application/json",
-    )
-
-    return household_configuration
-
-
-def show_training_section(network, household_configuration: dict[str, Any]) -> None:
-    """Save the current network + household configuration, and optionally
-    launch a training run in the background. Progress/results are viewed in
-    the separate dashboard app (streamlit run src/GridKIT/dashboard/app.py),
-    not here — this section only creates/launches runs.
-    """
-    import core.constants as const
-    from core import run_store as rs
-
-    st.subheader("Speichern & Training")
-
-    saved_run_id = st.session_state.pop("last_saved_run_id", None)
-    if saved_run_id:
-        st.success(f"Gespeichert als **{saved_run_id}**.")
-    launched_run_id = st.session_state.pop("last_launched_run_id", None)
-    if launched_run_id:
-        st.success(
-            f"Training für **{launched_run_id}** gestartet. Fortschritt und Ergebnisse siehst du im "
-            f"Dashboard (`streamlit run src/GridKIT/dashboard/app.py`)."
-        )
-
-    st.caption(
-        "Speichert dieses Netz mit der aktuellen Haushaltskonfiguration unter `runs/`, sodass mehrere "
-        "Netze parallel gespeichert werden können. Trainings-Details (Iterationen, Gewichtung o. Ä.) "
-        "werden bewusst nicht angezeigt — ein Lauf verwendet immer dieselben, festen Einstellungen."
-    )
-
-    n_households = len(getattr(network, "household_bus_ids", []))
-    default_name = f"{getattr(network, 'area_name', None) or network.network_id} ({n_households} Haushalte)"
-    run_name = st.text_input(
-        "Name für diesen Lauf",
-        value=default_name,
-        help="Nur ein Anzeigename, um mehrere gespeicherte Netze auseinanderzuhalten — muss nicht eindeutig sein.",
-    )
-
-    # Each training run spawns its own Ray instance + worker processes — running
-    # several at once has been observed to exhaust memory and crash Ray's
-    # actors (surfacing as cryptic RLlib errors in the dashboard, or a run
-    # silently orphaned). `stale` running entries (no status update in a long
-    # time — see core.run_store.STALE_AFTER_SECONDS) are excluded: those are
-    # themselves almost certainly dead, not a real second training in progress.
-    active_runs = [r for r in rs.list_runs() if r["state"] == rs.RUNNING and not r.get("stale")]
-    if active_runs:
-        names = ", ".join(f"**{r.get('name') or r['run_id']}**" for r in active_runs)
-        st.warning(
-            f"Es läuft bereits ein Training ({names}). Mehrere gleichzeitige Trainings können den "
-            "Rechner überlasten und Abstürze verursachen — bitte warten, bis es fertig ist (Fortschritt "
-            "im Dashboard), bevor ein weiteres gestartet wird. Speichern allein ist weiterhin möglich."
-        )
-
-    col1, col2 = st.columns(2)
-    save_only_clicked = col1.button("Nur speichern")
-    save_and_train_clicked = col2.button(
-        "Speichern & Training starten", type="primary", disabled=bool(active_runs),
-    )
-
-    if save_only_clicked:
-        run_id = rs.save_network_only(run_name, network, household_configuration, network_source="map_ui")
-        st.session_state["last_saved_run_id"] = run_id
-        st.rerun()
-
-    if save_and_train_clicked:
-        run_id = rs.create_run(
-            run_name, network, household_configuration,
-            iterations=const.PIPELINE_TRAINING_ITERATIONS,
-            seeds=const.PIPELINE_EVALUATION_SEEDS,
-            network_source="map_ui",
-        )
-        try:
-            _launch_training(run_id)
-        except Exception as exc:
-            rs.set_status(run_id, state=rs.FAILED, message=f"Start fehlgeschlagen: {exc}")
-            st.error("Training konnte nicht gestartet werden.")
-            st.exception(exc)
-        else:
-            st.session_state["last_launched_run_id"] = run_id
-            st.rerun()
-
-
-def _launch_training(run_id: str) -> None:
-    """Spawn a detached scripts.train_run subprocess writing into runs/<run_id>/."""
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
-
-    from core import run_store as rs
-
-    script_dir = Path(__file__).resolve().parent.parent   # src/GridKIT/
-    src_dir = script_dir.parent                             # src/
-    repo_root = src_dir.parent                               # repo root
-
-    run_directory = rs.run_dir(run_id, root=repo_root / "runs")
-    env = {**os.environ, "PYTHONPATH": f"{script_dir}{os.pathsep}{src_dir}"}
-    with open(run_directory / "train.log", "w") as logf:
-        subprocess.Popen(
-            [sys.executable, "-m", "GridKIT.scripts.train_run", "--run-dir", str(run_directory)],
-            cwd=str(repo_root), env=env, stdout=logf, stderr=subprocess.STDOUT,
-        )
-
-
 def main() -> None:
-    """Standalone entry point: streamlit run src/GridKIT/map_ui/map_widget.py"""
+    """Standalone entry point: streamlit run src/GridKIT/map_ui/map_widget.py."""
     st.set_page_config(page_title="GridKIT map_ui", layout="wide")
     render_map_ui()
 
