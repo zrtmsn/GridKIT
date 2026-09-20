@@ -3,8 +3,8 @@
 # Streamlit dashboard for the GridKIT §14a curtailment comparison.
 #
 # It reads results from two producers, which write the same schema:
-#   · runs/<id>/          — one run started from the map (scripts/train_run.py)
-#   · outputs/            — the scenario × Ausstattungsgrad batch sweep
+#   · runs/<id>/          one run started from the map (scripts/train_run.py)
+#   · outputs/            the scenario × Ausstattungsgrad batch sweep
 #                           (scripts/run_experiment.py)
 #
 # Entry points:
@@ -86,7 +86,7 @@ def render_results(summary, timelines, network=None, output_dir=None) -> None:
     """Rendert das Szenario-Vergleichs-Dashboard aus Daten im Arbeitsspeicher.
 
     `network` ist optional: wenn übergeben, wird zusätzlich die Überlastungskarte
-    gezeichnet. `output_dir` sagt, wo die Trainingsmetriken dieses Laufs liegen —
+    gezeichnet. `output_dir` sagt, wo die Trainingsmetriken dieses Laufs liegen:
     für einen Lauf aus der Karte sein eigenes Verzeichnis, sonst OUTPUT_DIR.
     Ohne diesen Parameter zeigte der Training-Reiter eines Karten-Laufs die
     Metriken des Batch-Experiments, also die eines ganz anderen Netzes.
@@ -163,7 +163,7 @@ def render_dashboard() -> None:
     st.title("GridKIT Dashboard")
     st.caption(SUBTITLE)
 
-    if st.button("🔄 Aktualisieren", help="Läufe neu einlesen — ein laufendes Training "
+    if st.button("🔄 Aktualisieren", help="Läufe neu einlesen; ein laufendes Training "
                                           "schreibt weiter, während diese Seite offen ist"):
         st.rerun()
 
@@ -171,7 +171,7 @@ def render_dashboard() -> None:
     if not runs:
         st.info(
             "Noch keine Läufe. Auf der Seite **Karte** ein Gebiet auswählen, die Haushalte "
-            "konfigurieren und „Speichern & Training starten“ — der Lauf erscheint dann hier."
+            "konfigurieren und „Speichern & Training starten“. Der Lauf erscheint dann hier."
         )
         return
 
@@ -184,7 +184,7 @@ def render_dashboard() -> None:
     record = by_id[sel]
 
     head, delete = st.columns([5, 1])
-    head.caption(f"**{record.get('name', '')}** — {record.get('n_households', '?')} Haushalte · "
+    head.caption(f"**{record.get('name', '')}** · {record.get('n_households', '?')} Haushalte · "
                  f"erstellt {record.get('created', '?')} · `{sel}`")
     if delete.button("🗑 Löschen"):
         rs.delete_run(sel)

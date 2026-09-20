@@ -1,6 +1,6 @@
 # dashboard/auslastung.py
 # ─────────────────────────────────────────────────────────────
-# Netzauslastung in Viertelstundenwerten — der Auslastungs-Reiter.
+# Netzauslastung in Viertelstundenwerten: der Auslastungs-Reiter.
 #
 # Reads only fields run_experiment.py already writes to timelines.json:
 #   transformer_loading, max_line_loading, curtailment,
@@ -9,12 +9,12 @@
 # Why BOTH loading series are always drawn together: a low-voltage grid is
 # cable-limited long before the transformer notices. In the 17-household
 # reference run the transformer sits at a comfortable-looking 80 % while the
-# service cables run at 295 % — showing the transformer figure alone reads
+# service cables run at 295 %; showing the transformer figure alone reads
 # "unauffällig" straight through a threefold thermal violation.
 #
 # Everything above the first section is Streamlit-free so it can be unit-tested.
 #
-# UI text is German; the timeline keys stay English — they are the raw field
+# UI text is German; the timeline keys stay English; they are the raw field
 # names from timelines.json and translating them would break every lookup.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
@@ -33,7 +33,7 @@ TIMESTEP_HOURS = 0.25
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit — unit-testbar)
+# Reine Helfer (kein Streamlit, unit-testbar)
 # ══════════════════════════════════════════════════════════════
 def format_hour(hour: float) -> str:
     """14.25 → "14:15". Modulo 24 because the episode runs noon → noon."""
@@ -50,7 +50,7 @@ def hours_axis(n: int) -> np.ndarray:
 def utilization_frame(timeline: dict[str, Any]) -> pd.DataFrame:
     """Long-form frame for the daily-profile chart.
 
-    One row per (step, series) with the loading in PERCENT — percent rather than
+    One row per (step, series) with the loading in PERCENT, percent rather than
     p.u. because the whole point of the view is "x von 100 %", and a chart that
     silently mixes 0.78 with 78 invites exactly the misreading we are avoiding.
     """
@@ -76,7 +76,7 @@ def utilization_frame(timeline: dict[str, Any]) -> pd.DataFrame:
 def duration_curve(values: Sequence[float]) -> pd.DataFrame:
     """Auslastungsdauerlinie: values sorted descending against cumulative hours.
 
-    Answers "how many hours above X %" by reading straight off the curve —
+    Answers "how many hours above X %" by reading straight off the curve,
     the standard grid-planning view of the same data as the daily profile.
     """
     percent = np.sort(np.asarray([float(v) * 100.0 for v in values]))[::-1]
@@ -95,7 +95,7 @@ def hours_above(values: Iterable[float], threshold_pu: float = theme.OVERLOAD_PU
 
 
 def peak_moment(values: Sequence[float]) -> tuple[float, str]:
-    """(peak in percent, clock time it occurred) — empty input gives (0.0, "—")."""
+    """(peak in percent, clock time it occurred); empty input gives (0.0, theme.NO_VALUE)."""
     if len(values) == 0:
         return 0.0, theme.NO_VALUE
     arr = np.asarray([float(v) for v in values])
@@ -184,7 +184,7 @@ def overload_table(timeline: dict[str, Any]) -> pd.DataFrame:
     and again at 08:45 spans twenty hours while being overloaded for six of
     them. The earlier table showed only that span as "von … bis …", which reads
     as one continuous period and overstated every entry. It now reports the sum,
-    how many separate stretches it took, and the longest single one — the figure
+    how many separate stretches it took, and the longest single one, the figure
     that decides whether a cable had time to cool down.
     """
     matrix = overload_matrix(timeline)
@@ -432,7 +432,7 @@ def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") 
         st.caption(
             "Binär: überlastet oder nicht. Abgestufte Farben bräuchten die Auslastung "
             "je Element, die der Export derzeit nicht enthält. **Ein Element ist selten "
-            "am Stück überlastet** — es geht über die Grenze, erholt sich und trippt "
+            "am Stück überlastet**: es geht über die Grenze, erholt sich und trippt "
             "erneut. Die Tabelle nennt deshalb die aufsummierte Dauer, in wie vielen "
             "getrennten Abschnitten sie zustande kam, und den längsten einzelnen davon; "
             "**Zeitfenster** ist nur die Spanne vom ersten bis zum letzten Auftreten, "

@@ -55,7 +55,7 @@ def test_cable_peak_fallback_matches_on_both_scenario_and_penetration():
 
 # ── Übersichtsmatrix ─────────────────────────────────────────
 def test_status_follows_the_worse_of_transformer_and_cable():
-    # a relaxed transformer must not hide a cable over its limit — the exact
+    # a relaxed transformer must not hide a cable over its limit: the exact
     # misreading this dashboard exists to prevent
     frame = overview_frame([_row("3: selfish RL", 0.6, 0.80, line_peak_max=2.95)])
     assert frame["status"].iloc[0] == "kritisch"
@@ -226,7 +226,7 @@ def test_headline_names_the_longest_overload_not_the_highest_reading():
     frame = overview_frame([
         # highest peak, but brief
         _row("spiky", 0.6, 0.80, line_peak_max=2.80, line_overload_steps={"s": 4.0}),
-        # lower peak, but overloaded far longer — this is the one to name
+        # lower peak, but overloaded far longer; this is the one to name
         _row("long", 0.4, 1.05, line_peak_max=1.20, line_overload_steps={"s": 40.0}),
     ])
     head = headline_numbers(frame)

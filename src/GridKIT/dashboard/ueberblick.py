@@ -1,9 +1,9 @@
 # dashboard/ueberblick.py
 # ─────────────────────────────────────────────────────────────
-# Überblick — die Antwort, bevor jemand scrollt.
+# Überblick: die Antwort, bevor jemand scrollt.
 #
-# Answers the project's own question — does §14a curtailment hold up with EV,
-# battery, heat pump and PV on the same low-voltage grid? — across ALL
+# Answers the project's own question: does §14a curtailment hold up with EV,
+# battery, heat pump and PV on the same low-voltage grid? Across ALL
 # scenarios and penetration levels at once. The other tabs then explain one
 # combination at a time.
 #
@@ -23,14 +23,14 @@ from dashboard import theme
 from dashboard.auslastung import select_timeline
 from dashboard.export import download_pair
 
-#: Order of severity, worst first — used to reduce many combinations to one verdict.
+#: Order of severity, worst first, used to reduce many combinations to one verdict.
 _SEVERITY = ["kritisch", "grenzbereich", "warnung", "gut"]
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit — unit-testbar)
+# Reine Helfer (kein Streamlit, unit-testbar)
 # ══════════════════════════════════════════════════════════════
-#: One simulation step, in hours — overload counts are recorded per step.
+#: One simulation step, in hours; overload counts are recorded per step.
 TIMESTEP_HOURS = 0.25
 
 
@@ -72,7 +72,7 @@ def cable_peak_pu(record: dict[str, Any], timelines: list[dict[str, Any]] | None
 
     Prefers `line_peak_max` (averaged over all evaluation seeds). Older runs do
     not carry it, so it falls back to the representative episode in
-    timelines.json — a weaker figure, but a real one. None when neither exists.
+    timelines.json, a weaker figure, but a real one. None when neither exists.
     """
     value = record.get("line_peak_max")
     if value is not None:
@@ -90,7 +90,7 @@ def overview_frame(summary: list[dict[str, Any]],
     """One row per scenario × penetration with the peaks and the resulting status.
 
     The status is taken from whichever of transformer and cable is worse,
-    because either one over its limit is an overload — reporting only the
+    because either one over its limit is an overload; reporting only the
     transformer is exactly the misreading this dashboard exists to prevent.
     """
     rows: list[dict[str, Any]] = []
@@ -317,9 +317,9 @@ def render_ueberblick(summary: list[dict[str, Any]],
 
     if hours is not None:
         worst_text = (f"am längsten überlastet: {hours:.2f} h".replace(".", ",")
-                      + f" — {where}")
+                      + f" ({where})")
     else:
-        worst_text = f"Spitze {peak_percent:.0f} % — {where}"
+        worst_text = f"Spitze {peak_percent:.0f} % ({where})"
 
     if head["status"] == "kritisch":
         ceiling = head["safe_ceiling"]
@@ -330,10 +330,10 @@ def render_ueberblick(summary: list[dict[str, Any]],
                     " Schon beim niedrigsten geprüften Ausstattungsgrad kommt es zur Überlast.")
         st.error(f"**Das Netz hält nicht durch.** {worst_text.capitalize()}.{tail}")
     elif head["status"] == "grenzbereich":
-        st.warning(f"**Grenzwertig.** Höchste Auslastung {peak_percent:.0f} % — {where}. "
+        st.warning(f"**Grenzwertig.** Höchste Auslastung {peak_percent:.0f} % ({where}). "
                    "Keine Überschreitung, aber ohne Reserve.")
     else:
-        st.success(f"**Das Netz hält durch.** Höchste Auslastung {peak_percent:.0f} % — {where}.")
+        st.success(f"**Das Netz hält durch.** Höchste Auslastung {peak_percent:.0f} % ({where}).")
 
     tiles = st.columns(4 if swept else 3)
     if hours is not None:

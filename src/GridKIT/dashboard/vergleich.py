@@ -1,6 +1,6 @@
 # dashboard/vergleich.py
 # ─────────────────────────────────────────────────────────────
-# Szenarienvergleich — die vier Regelstrategien nebeneinander.
+# Szenarienvergleich: die vier Regelstrategien nebeneinander.
 #
 # Was die anderen Reiter für EINE Strategie zeigen, zeigt dieser für alle vier
 # gleichzeitig: dieselbe Netzsituation, vier Politiken, was kostet welche?
@@ -34,7 +34,7 @@ METRICS: tuple[tuple[str, str, str, bool], ...] = (
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit — unit-testbar)
+# Reine Helfer (kein Streamlit, unit-testbar)
 # ══════════════════════════════════════════════════════════════
 def metric_frame(summary: list[dict[str, Any]], penetration: float | None = None) -> pd.DataFrame:
     """Long-form frame of the comparison metrics, one row per scenario × metric.
@@ -108,10 +108,10 @@ def curtailment_steps(timeline: dict[str, Any]) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════
-# Überlastungskarte — WO das Netz litt, nicht nur wie oft
+# Überlastungskarte: WO das Netz litt, nicht nur wie oft
 # ══════════════════════════════════════════════════════════════
 #: Auslastung (p.u.) → Farbe. Ein reales NS-Netz ist kabellimitiert, lange bevor
-#: der Transformator etwas merkt — die Karte muss ein 0,9-p.u.-Kabel sichtbar machen.
+#: der Transformator etwas merkt; die Karte muss ein 0,9-p.u.-Kabel sichtbar machen.
 _LOAD_COLORS = ((1.0, "#d7191c", 5.0), (0.9, "#fdae61", 4.0), (0.7, "#ffd54f", 3.0), (0.0, "#7cb342", 2.5))
 
 
@@ -119,7 +119,7 @@ def _load_style(pu: float, tripped: bool = False) -> tuple[str, float]:
     """(Farbe, Linienstärke) für eine Auslastung in p.u.
 
     `tripped` erzwingt die Überlastungsfarbe. Der gespeicherte Spitzenwert ist ein
-    MITTELWERT über die Seeds — ein Kabel, das in zwei von sechs Läufen seine Grenze
+    MITTELWERT über die Seeds: ein Kabel, das in zwei von sechs Läufen seine Grenze
     verletzt hat, liegt im Mittel unter 1.0. Es muss trotzdem als Verletzung erkennbar
     sein, sonst würde die Karte der danebenstehenden Überlastungszahl widersprechen.
     """
@@ -229,7 +229,7 @@ def _metric_chart(frame: pd.DataFrame, kennzahl: str):  # pragma: no cover (UI)
     """One metric, the scenarios as bars in the scenario palette.
 
     One chart per metric rather than one faceted chart, because `width:
-    "container"` only applies to single-view and layered specs — inside a facet
+    "container"` only applies to single-view and layered specs; inside a facet
     or concat the child views cannot size themselves and render empty until the
     viewer opens them fullscreen.
     """
@@ -264,7 +264,7 @@ def _metric_chart(frame: pd.DataFrame, kennzahl: str):  # pragma: no cover (UI)
     return (bars + spread + labels).properties(width="container", height=alt.Step(30))
 
 
-#: (Gruppe, y-Titel, {Reihe: Farbe}, Höhe, Grenzlinie) — je ein eigenes Diagramm.
+#: (Gruppe, y-Titel, {Reihe: Farbe}, Höhe, Grenzlinie); je ein eigenes Diagramm.
 EPISODE_PANELS: tuple[tuple[str, str, dict[str, str], int, float | None], ...] = (
     ("Auslastung", "Auslastung (%)",
      {"Trafo-Auslastung": theme.SERIES_COLORS["transformer"],
@@ -346,20 +346,20 @@ def render_vergleich(summary: list[dict[str, Any]], timelines: list[dict[str, An
             "ist die Streuung über die Auswertungsläufe: Unterschiede, die kleiner "
             "sind als dieser Strich, sind keine. **§14a-Eingriffe** und **Stromkosten** "
             "sind besser, wenn sie klein sind; **EV-Ziel** und **WP-Komfort**, wenn sie "
-            "groß sind — eine Strategie, die das Netz schont und das Auto leer lässt, "
+            "groß sind: eine Strategie, die das Netz schont und das Auto leer lässt, "
             "hat nichts gewonnen."
         )
         for _, label, _, higher_better in METRICS:
             if label not in set(metrics["Kennzahl"]):
                 continue
-            st.markdown(f"**{label}** — {'größer ist besser' if higher_better else 'kleiner ist besser'}")
+            st.markdown(f"**{label}**: {'größer ist besser' if higher_better else 'kleiner ist besser'}")
             st.altair_chart(_metric_chart(metrics, label), width="stretch")
         download_pair(metrics.drop(columns=["scenario", "kennzahl"]),
                       "Kennzahlen je Szenario", f"{key}_kennzahlen")
 
     # ── Eine repräsentative Episode ───────────────────────────
     if timelines:
-        st.subheader(f"Eine repräsentative 24-Stunden-Episode — {theme.scenario_label(scenario)}"
+        st.subheader(f"Eine repräsentative 24-Stunden-Episode: {theme.scenario_label(scenario)}"
                      if scenario else "Eine repräsentative 24-Stunden-Episode")
         timeline = select_timeline(timelines, scenario, chosen_pen) if scenario else None
         if timeline is None:

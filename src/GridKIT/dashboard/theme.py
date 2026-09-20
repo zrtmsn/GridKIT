@@ -3,9 +3,9 @@
 # One place for the dashboard's colours.
 #
 # Two colour ROLES that must never be mixed:
-#   STATUS   — severity of a loading (green→red). Carries meaning: the same
+#   STATUS   : severity of a loading (green→red). Carries meaning: the same
 #              value always gets the same colour, in every view.
-#   SCENARIO — which policy produced a series. Categorical only; a scenario
+#   SCENARIO : which policy produced a series. Categorical only; a scenario
 #              being orange says nothing about whether it is bad.
 #
 # The status thresholds are the ones the overload map already used, kept
@@ -17,7 +17,7 @@ from __future__ import annotations
 # (untere Grenze, obere Grenze, Schlüssel, Anzeigename, Farbe)
 #
 # Die untere Grenze ist AUSSCHLIESSEND, die obere einschließend: ein Element mit
-# genau 1.0 p.u. ist "Grenzbereich", nicht "Überlast". Das ist kein Detail —
+# genau 1.0 p.u. ist "Grenzbereich", nicht "Überlast". Das ist kein Detail:
 # run_experiment.py füllt overloaded_lines/-_transformers mit `loading > 1.0`,
 # also strikt größer. Läge 1.0 hier im roten Band, würde das Diagramm rot zeigen,
 # wo die Überlast-Matrix nichts meldet, und beide Ansichten widersprächen sich.
@@ -45,7 +45,7 @@ NO_VALUE = "k. A."
 LOAD_SCALE_MIN_PERCENT = 120.0
 
 # ── Serienfarben der Auslastungsansicht ──────────────────────
-#: Trafo und Leitung sind zwei Messgrößen desselben Netzes, keine Szenarien —
+#: Trafo und Leitung sind zwei Messgrößen desselben Netzes, keine Szenarien,
 #: daher eigene, ruhige Farben statt der Szenariopalette.
 SERIES_COLORS = {
     "transformer": "#264653",
@@ -73,7 +73,7 @@ DEVICE_COLORS = {
 }
 
 #: RLlib-Policy-ID → Gerätetyp. Eine Policy je steuerbarem Gerät, geteilt über
-#: alle Haushalte — daher gibt es keine PV-Policy (PV ist exogen, nicht steuerbar).
+#: alle Haushalte; daher gibt es keine PV-Policy (PV ist exogen, nicht steuerbar).
 POLICY_DEVICES = {
     "ev_policy": "ev",
     "battery_policy": "battery",
@@ -118,7 +118,7 @@ def scenario_label(scenario: str) -> str:
 
 
 def status_of(loading_pu: float) -> str:
-    """Severity key for a loading in p.u. — the single source of truth for colour.
+    """Severity key for a loading in p.u., the single source of truth for colour.
 
     Lower bound exclusive, upper inclusive (see LOAD_BANDS): 1.0 p.u. is
     "grenzbereich", only above it is "kritisch", matching how the backend

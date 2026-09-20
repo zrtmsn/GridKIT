@@ -22,7 +22,7 @@ CSV_ENCODING = "utf-8-sig"
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit — unit-testbar)
+# Reine Helfer (kein Streamlit, unit-testbar)
 # ══════════════════════════════════════════════════════════════
 def to_csv_bytes(frame: pd.DataFrame) -> bytes:
     """CSV a German Excel opens correctly, as bytes."""
@@ -62,7 +62,7 @@ def download_pair(frame: pd.DataFrame, basename: str, key: str,
                   label: str = "Daten zu diesem Diagramm") -> None:  # pragma: no cover (UI)
     """A CSV/JSON download pair for the data behind a chart.
 
-    Rendered inside an expander so it never competes with the chart itself —
+    Rendered inside an expander so it never competes with the chart itself:
     the numbers are there when someone wants them, invisible when they don't.
     """
     import streamlit as st

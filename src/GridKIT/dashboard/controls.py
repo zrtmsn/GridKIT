@@ -3,7 +3,7 @@
 # Gemeinsame Auswahl über alle Reiter hinweg.
 #
 # Szenario und Ausstattungsgrad are picked on more than one tab. Streamlit refuses to
-# reuse a widget key, so each tab needs its own widget — but a user who selects
+# reuse a widget key, so each tab needs its own widget, but a user who selects
 # "eigennütziges RL bei 60 %" on one tab and finds another tab still showing a
 # different scenario has been silently shown two different runs side by side.
 # Every picker therefore reads and writes ONE shared value, and each widget
@@ -46,7 +46,7 @@ def scenario_penetration_picker(timelines: list[dict[str, Any]], key: str,
                                 ) -> tuple[str | None, float | None]:  # pragma: no cover (UI)
     """Render the shared Szenario / Ausstattungsgrad pickers; return the current choice.
 
-    `key` only namespaces this tab's widgets — the selected value itself lives
+    `key` only namespaces this tab's widgets; the selected value itself lives
     in session state shared by every tab.
     """
     import streamlit as st
@@ -68,7 +68,7 @@ def scenario_penetration_picker(timelines: list[dict[str, Any]], key: str,
 
     # Push the shared choice into each widget's own state BEFORE creating it.
     # `index=` is only an initial value: once a widget key holds something,
-    # Streamlit uses that and ignores index entirely — which is why syncing
+    # Streamlit uses that and ignores index entirely, which is why syncing
     # through index alone leaves the other tabs on their old selection.
     ss[scenario_widget] = ss[SCENARIO_STATE]
 

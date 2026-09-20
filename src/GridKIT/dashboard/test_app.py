@@ -20,7 +20,7 @@ def test_weight_increases_with_loading():
 
 
 def test_exactly_at_the_overload_threshold_is_not_yet_red():
-    # the environment curtails on `> threshold`, so the map must agree — a cable
+    # the environment curtails on `> threshold`, so the map must agree: a cable
     # sitting exactly at rating has not tripped
     color, _ = _load_style(const.LINE_OVERLOAD_THRESHOLD)
     assert color != "#d7191c"
@@ -35,7 +35,7 @@ def test_watch_level_still_renders_a_colour():
 
 def test_a_cable_that_tripped_reads_as_overloaded_even_when_its_mean_is_lower():
     # peaks are averaged over seeds, so a cable that violated its rating in a minority
-    # of seeds sits below 1.0 on average — the map must not contradict the trip count
+    # of seeds sits below 1.0 on average; the map must not contradict the trip count
     plain, _ = _load_style(0.85)
     tripped, weight = _load_style(0.85, tripped=True)
     assert plain != tripped

@@ -60,7 +60,7 @@ def test_find_metric_files_on_missing_dir_is_empty(tmp_path):
 
 def test_finds_metrics_of_a_run_started_from_the_map(tmp_path):
     # train_run.py trains one device layout and writes the metrics at the run
-    # root, with no pen_* level — the training tab used to come up empty for
+    # root, with no pen_* level; the training tab used to come up empty for
     # exactly the runs a user creates by drawing an area
     (tmp_path / METRICS_FILENAME).write_text("[]", encoding="utf-8")
     (tmp_path / "checkpoints").mkdir()
@@ -216,7 +216,7 @@ def test_convergence_domain_of_a_short_run_is_none():
 
 def test_convergence_domain_of_a_flat_run_is_none():
     # identical returns with no spread give a zero-height domain, which would
-    # collapse the chart — fall back to the automatic axis instead
+    # collapse the chart; fall back to the automatic axis instead
     frame = return_frame([_record(i, -900.0) for i in range(1, 13)])
     assert convergence_domain(frame) is None
 

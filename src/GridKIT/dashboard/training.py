@@ -1,6 +1,6 @@
 # dashboard/training.py
 # ─────────────────────────────────────────────────────────────
-# Trainingsverlauf — der Training-Reiter.
+# Trainingsverlauf: der Training-Reiter.
 #
 # Reads iteration_metrics.json, written per penetration level by
 # rl_engine.Trainer into its checkpoint directory:
@@ -12,7 +12,7 @@
 #
 # The three entropy curves are the most informative single view here: one
 # shared policy per controllable device (EV, Batterie, Wärmepumpe), so their
-# curves show which device stops exploring first — a policy whose entropy
+# curves show which device stops exploring first: a policy whose entropy
 # collapses early has committed to a strategy while the others are still
 # searching.
 #
@@ -44,7 +44,7 @@ def _sync_penetration(widget_key: str) -> None:  # pragma: no cover (UI callback
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit — unit-testbar)
+# Reine Helfer (kein Streamlit, unit-testbar)
 # ══════════════════════════════════════════════════════════════
 def penetration_of(directory_name: str) -> float | None:
     """'pen_20' → 0.2, so the training tab can share the other tabs' Ausstattungsgrad."""
@@ -147,7 +147,7 @@ def entropy_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
 def convergence(records: list[dict[str, Any]]) -> dict[str, Any]:
     """First/last return and the change between them.
 
-    `improved` says only that the return rose over the run — with few
+    `improved` says only that the return rose over the run; with few
     iterations that is weak evidence, so the view reports the iteration count
     alongside it rather than presenting it as a verdict.
     """
@@ -173,8 +173,8 @@ def convergence_domain(frame: pd.DataFrame,
                        skip_fraction: float = WARMUP_FRACTION) -> tuple[float, float] | None:
     """y-range that shows the converged part, ignoring the first iterations.
 
-    An untrained policy starts catastrophically badly — in the reference run at
-    −13 600 against a converged −900 — so a full-range axis spends 97 % of its
+    An untrained policy starts catastrophically badly, in the reference run at
+    −13 600 against a converged −900, so a full-range axis spends 97 % of its
     height on the first few iterations and flattens the part that answers the
     question. The range is taken from the tail of the run instead, with a
     margin, and the early points fall off the top of the chart.
@@ -247,7 +247,7 @@ def _return_chart(frame: pd.DataFrame, domain: tuple[float, float] | None = None
     import altair as alt
 
     # clamp so a warm-up iteration far below the range is pinned to the edge
-    # rather than silently dropped — the curve stays continuous
+    # rather than silently dropped, so the curve stays continuous
     y_scale = (alt.Scale(domain=list(domain), clamp=True, nice=False)
                if domain else alt.Scale(nice=False, zero=False))
     x_scale = alt.Scale(nice=False, zero=False)
@@ -334,7 +334,7 @@ def render_training(output_dir: str | Path, summary: list[dict[str, Any]] | None
     files = find_metric_files(output_dir)
     if not files:
         st.info(
-            f"Keine `{METRICS_FILENAME}` gefunden. Sie entsteht beim Training — "
+            f"Keine `{METRICS_FILENAME}` gefunden. Sie entsteht beim Training: "
             f"beim Batch-Experiment unter `checkpoints/pen_*/`, bei einem Lauf aus "
             f"der Karte direkt im Lauf-Ordner. Zuerst ein Training ausführen."
         )
@@ -450,7 +450,7 @@ def render_training(output_dir: str | Path, summary: list[dict[str, Any]] | None
                     f"Die gelernte Policy liegt auf Platz {rank} von {len(rewards)}; "
                     f"vorn liegt „{best['Szenario']}“ mit {best['Reward']:.1f} "
                     f"gegenüber {learned.iloc[0]['Reward']:.1f}. Der Reward misst "
-                    "den Eigennutz der Haushalte, nicht die Netzentlastung — die "
+                    "den Eigennutz der Haushalte, nicht die Netzentlastung; die "
                     "steht im Reiter Überblick."
                 )
         download_pair(rewards.drop(columns=["scenario", "gelernt"]),

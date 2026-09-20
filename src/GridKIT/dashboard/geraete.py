@@ -1,6 +1,6 @@
 # dashboard/geraete.py
 # ─────────────────────────────────────────────────────────────
-# Geräte & Haushalte — was EV, Batterie und Wärmepumpe tatsächlich getan haben.
+# Geräte & Haushalte: was EV, Batterie und Wärmepumpe tatsächlich getan haben.
 #
 # Reads only agreed fields:
 #   summary.json    hp_comfort_*, battery_throughput_kwh_*, battery_full_cycles_*, soc_*
@@ -12,7 +12,7 @@
 # The one derived value in the whole dashboard lives here: an indoor
 # temperature approximated from the heat pump's thermal buffer, because
 # "0,72" tells a reader nothing and "21,7 °C" tells them everything. It is a
-# display conversion with declared assumptions, NOT a simulated temperature —
+# display conversion with declared assumptions, NOT a simulated temperature;
 # see INDOOR_TEMP_* below.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
@@ -31,7 +31,7 @@ from dashboard.export import download_pair
 # The environment models the heat pump as a thermal buffer (house inertia) and
 # never computes a temperature. Turning the buffer level into °C therefore needs
 # two anchors, chosen so the numbers mean something to a reader:
-#   * at the model's own comfort floor the house sits at 20 °C — the German
+#   * at the model's own comfort floor the house sits at 20 °C, the German
 #     design indoor temperature for living space (DIN EN 12831),
 #   * a full buffer is 23 °C, a comfortably warm house.
 # Linear between and beyond. Change these two numbers and every temperature in
@@ -42,7 +42,7 @@ HP_COMFORT_MIN_SOC = 0.30       # mirrors core.constants.HP_COMFORT_MIN_SOC
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit — unit-testbar)
+# Reine Helfer (kein Streamlit, unit-testbar)
 # ══════════════════════════════════════════════════════════════
 def indoor_temperature(thermal_soc: float) -> float:
     """Approximate indoor temperature (°C) from the heat pump's buffer level.
@@ -92,7 +92,7 @@ def household_frame(timeline: dict[str, Any]) -> pd.DataFrame:
     """One representative household: power, state of charge, indoor temperature.
 
     `ev_available` is carried through as a boolean so the EV chart can shade the
-    window the car was actually plugged in — an EV at a flat SoC is a completely
+    window the car was actually plugged in: an EV at a flat SoC is a completely
     different story depending on whether it was home and idle or simply away.
     """
     ev_power = timeline.get("house_ev_power") or []
@@ -231,7 +231,7 @@ def _ev_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     away = frame[~frame["EV angeschlossen"]]
     if away.empty:
         return soc.properties(width="container", height=240)
-    # shade the time the car was NOT plugged in — a flat SoC means something
+    # shade the time the car was NOT plugged in: a flat SoC means something
     # different depending on whether the car was home and idle or simply gone
     shade = (
         alt.Chart(away)
