@@ -5,7 +5,6 @@ from dashboard import theme
 from dashboard.utilization import (
     _daily_profile_chart,
     contiguous_blocks,
-    duration_curve,
     format_hour,
     headline,
     hours_above,
@@ -94,26 +93,7 @@ def test_peak_moment_handles_empty():
     assert peak_moment([]) == (0.0, theme.NO_VALUE)
 
 
-# ── Dauerlinie ───────────────────────────────────────────────
-def test_duration_curve_is_sorted_descending():
-    curve = duration_curve([0.2, 1.0, 0.5])
-    assert curve["Auslastung"].tolist() == [100.0, 50.0, 20.0]
-
-
-def test_duration_curve_x_axis_is_cumulative_hours():
-    curve = duration_curve([0.9] * 4)
-    assert curve["Stunden"].tolist() == [0.25, 0.5, 0.75, 1.0]
-
-
-def test_duration_curve_reads_off_hours_above_a_limit():
-    # 8 quarter-hours over 100 % must show up as 2.0 h on the curve
-    values = [1.5] * 8 + [0.4] * 88
-    curve = duration_curve(values)
-    over = curve[curve["Auslastung"] > 100.0]
-    assert over["Stunden"].max() == 2.0
-
-
-# ── Überlast-Matrix ──────────────────────────────────────────
+# ── Overload matrix ─────────────────────────────────────
 def test_overload_matrix_marks_only_the_steps_an_element_tripped():
     tl = _timeline([0.3] * 4, [1.4] * 4,
                    overloaded_lines=[[], ["service_0"], ["service_0"], []])

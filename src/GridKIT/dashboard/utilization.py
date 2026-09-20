@@ -73,19 +73,6 @@ def utilization_frame(timeline: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def duration_curve(values: Sequence[float]) -> pd.DataFrame:
-    """Auslastungsdauerlinie: values sorted descending against cumulative hours.
-
-    Answers "how many hours above X %" by reading straight off the curve,
-    the standard grid-planning view of the same data as the daily profile.
-    """
-    percent = np.sort(np.asarray([float(v) * 100.0 for v in values]))[::-1]
-    return pd.DataFrame({
-        "Stunden": (np.arange(len(percent)) + 1) * TIMESTEP_HOURS,
-        "Auslastung": percent,
-    })
-
-
 def hours_above(values: Iterable[float], threshold_pu: float = theme.OVERLOAD_PU) -> float:
     """Hours (not steps) strictly above a threshold in p.u.
 
@@ -320,31 +307,6 @@ def _daily_profile_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
             .properties(width="container", height=340))
 
 
-def _duration_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
-    import altair as alt
-
-    frame = duration_curve(timeline.get("max_line_loading") or [])
-    scale_max = _scale_max(timeline)
-    y_scale = alt.Scale(domain=[0, scale_max], nice=False)
-    area = (
-        alt.Chart(frame)
-        .mark_area(opacity=0.22, line={"strokeWidth": 2}, color=theme.SERIES_COLORS["line"])
-        .encode(
-            x=alt.X("Stunden:Q", title="Stunden über diesem Wert",
-                    scale=alt.Scale(domain=[0, 24], nice=False)),
-            y=alt.Y("Auslastung:Q", scale=y_scale, title="Auslastung (%)"),
-            tooltip=[alt.Tooltip("Stunden:Q", format=".2f"),
-                     alt.Tooltip("Auslastung:Q", format=".1f", title="Auslastung (%)")],
-        )
-    )
-    limit = (
-        alt.Chart(pd.DataFrame({"y": [100.0]}))
-        .mark_rule(color=theme.STATUS_COLORS["kritisch"], strokeDash=[5, 4], strokeWidth=1.4)
-        .encode(y=alt.Y("y:Q", scale=y_scale))
-    )
-    return (area + limit).properties(width="container", height=260)
-
-
 def _overload_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
     import altair as alt
 
@@ -448,13 +410,3 @@ def render_utilization(timelines: list[dict[str, Any]], key: str = "auslastung")
         st.altair_chart(_overload_chart(timeline), width="stretch")
         st.dataframe(table, width="stretch", hide_index=True)
         download_pair(table, "Überlast-Matrix", f"{key}_ueberlast")
-
-    # ── Dauerlinie ────────────────────────────────────────────
-    st.subheader("Auslastungsdauerlinie")
-    st.caption(
-        "Dieselben Werte, absteigend sortiert: direkt ablesbar, wie viele Stunden "
-        "über einer Grenze lagen. Bezieht sich auf die stärkstbelastete Leitung."
-    )
-    st.altair_chart(_duration_chart(timeline), width="stretch")
-    download_pair(duration_curve(timeline.get("max_line_loading") or []),
-                  "Dauerlinie", f"{key}_dauerlinie")
