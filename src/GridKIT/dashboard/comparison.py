@@ -21,7 +21,7 @@ import pandas as pd
 
 from dashboard import theme
 from dashboard.utilization import format_hour, hours_axis, select_timeline
-from dashboard.controls import scenario_penetration_picker
+from dashboard.controls import penetration_picker, scenario_picker
 from dashboard.export import download_pair
 
 #: (column name in summary.json, display label, unit, "higher is better")
@@ -326,12 +326,12 @@ def render_comparison(summary: list[dict[str, Any]], timelines: list[dict[str, A
         st.info("Keine Ergebnisse vorhanden. Zuerst ein Experiment ausführen.")
         return
 
-    # One picker for the whole tab, shared with every other tab: the
-    # The penetration decides which run the metrics compare, the scenario which
-    # episode is drawn below. A second selector here would collide with the
-    # shared one on its widget key and, worse, let the two halves of this tab
-    # describe different runs.
-    scenario, chosen_pen = scenario_penetration_picker(timelines or [], key)
+    # The two selectors are split across the tab, each next to what it changes.
+    # The Ausstattungsgrad decides which run EVERYTHING here describes, so it
+    # stays at the top; the scenario only picks the episode at the bottom, and
+    # sitting up here it read as though it changed the metric charts too.
+    # Both still read and write the state shared with every other tab.
+    chosen_pen = penetration_picker(timelines or [], key)
     if chosen_pen is None:
         chosen_pen = max((float(r.get("penetration", 0.0)) for r in summary), default=0.0)
 
@@ -359,6 +359,7 @@ def render_comparison(summary: list[dict[str, Any]], timelines: list[dict[str, A
 
     # ── One representative episode ───────────────────────────
     if timelines:
+        scenario = scenario_picker(timelines, key)
         st.subheader(f"Eine repräsentative 24-Stunden-Episode: {theme.scenario_short(scenario)}"
                      if scenario else "Eine repräsentative 24-Stunden-Episode")
         timeline = select_timeline(timelines, scenario, chosen_pen) if scenario else None
@@ -366,7 +367,7 @@ def render_comparison(summary: list[dict[str, Any]], timelines: list[dict[str, A
             st.info("Für diese Kombination liegt keine Episode vor.")
         else:
             st.caption(
-                "Ein einzelner Tag, von Mittag bis Mittag, für das oben gewählte Szenario. "
+                "Ein einzelner Tag, von Mittag bis Mittag, für das gewählte Szenario. "
                 "Rot hinterlegt sind die Viertelstunden, in denen §14a gegriffen hat. "
                 "Einzelne Haushalte stehen im Reiter **Geräte & Haushalte**."
             )
