@@ -310,7 +310,14 @@ def _daily_profile_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
                      alt.Tooltip("Auslastung:Q", format=".1f", title="Auslastung (%)")],
         )
     )
-    return (bands + limit + lines).properties(width="container", height=340)
+    # resolve_scale(color="independent"): a layered chart shares one colour
+    # scale by default, so the band layer's `scale=None, legend=None` silently
+    # swallowed the line legend and the two series went unlabelled. Independent
+    # scales give the lines their own legend while the bands keep their literal
+    # colours.
+    return ((bands + limit + lines)
+            .resolve_scale(color="independent")
+            .properties(width="container", height=340))
 
 
 def _duration_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)

@@ -3,6 +3,7 @@ import numpy as np
 
 from dashboard import theme
 from dashboard.utilization import (
+    _daily_profile_chart,
     contiguous_blocks,
     duration_curve,
     format_hour,
@@ -239,3 +240,38 @@ def test_select_timeline_matches_scenario_and_penetration():
 
 def test_select_timeline_returns_none_when_absent():
     assert select_timeline([_timeline([0.1], [0.1])], "3: selfish RL", 0.6) is None
+
+
+# ── Legend of the daily profile ──────────────────────────────
+def _profile_spec():
+    return _daily_profile_chart(_timeline([0.5, 0.8, 0.6], [1.2, 2.0, 1.4])).to_dict()
+
+
+def test_daily_profile_labels_its_two_series():
+    # the chart carries two series that mean entirely different things; without
+    # a legend the reader cannot tell the cable from the transformer
+    spec = _profile_spec()
+    legends = [layer["encoding"]["color"].get("legend")
+               for layer in spec["layer"]
+               if layer.get("encoding", {}).get("color", {}).get("field") == "Messgröße"]
+    assert legends and legends[0] is not None
+
+
+def test_daily_profile_resolves_colour_independently():
+    # a layered chart shares one colour scale by default, and the band layer
+    # sets scale=None/legend=None, which silently removed the line legend
+    assert spec_resolve(_profile_spec()) == "independent"
+
+
+def spec_resolve(spec):
+    return (spec.get("resolve") or {}).get("scale", {}).get("color")
+
+
+def test_daily_profile_legend_names_both_series_with_theme_colours():
+    spec = _profile_spec()
+    colour = next(layer["encoding"]["color"] for layer in spec["layer"]
+                  if layer.get("encoding", {}).get("color", {}).get("field") == "Messgröße")
+    assert colour["scale"]["domain"] == [theme.SERIES_LABELS_DE["transformer"],
+                                         theme.SERIES_LABELS_DE["line"]]
+    assert colour["scale"]["range"] == [theme.SERIES_COLORS["transformer"],
+                                        theme.SERIES_COLORS["line"]]
