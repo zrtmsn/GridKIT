@@ -361,7 +361,7 @@ def render_devices(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
         st.info("Für diesen Lauf wurden keine Haushaltsdetails aufgezeichnet.")
         return
     download_pair(frame, "Haushalt", f"{key}_haushalt",
-                  label="Alle Reihen dieses Haushalts")
+                  label="Alle Werte dieses Haushalts als Tabelle")
 
     ev_tab, batt_tab, hp_tab = st.tabs(["EV", "Batterie", "Wärmepumpe"])
 
