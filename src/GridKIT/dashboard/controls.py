@@ -1,8 +1,8 @@
 # dashboard/controls.py
 # ─────────────────────────────────────────────────────────────
-# Gemeinsame Auswahl über alle Reiter hinweg.
+# The selection shared across every tab.
 #
-# Szenario und Ausstattungsgrad are picked on more than one tab. Streamlit refuses to
+# Scenario and Ausstattungsgrad are picked on more than one tab. Streamlit refuses to
 # reuse a widget key, so each tab needs its own widget, but a user who selects
 # "eigennütziges RL bei 60 %" on one tab and finds another tab still showing a
 # different scenario has been silently shown two different runs side by side.
@@ -44,7 +44,7 @@ def _sync(widget_key: str, shared_key: str) -> None:  # pragma: no cover (UI cal
 
 def scenario_penetration_picker(timelines: list[dict[str, Any]], key: str,
                                 ) -> tuple[str | None, float | None]:  # pragma: no cover (UI)
-    """Render the shared Szenario / Ausstattungsgrad pickers; return the current choice.
+    """Render the shared scenario / penetration pickers; return the current choice.
 
     `key` only namespaces this tab's widgets; the selected value itself lives
     in session state shared by every tab.

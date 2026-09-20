@@ -1,6 +1,6 @@
 # dashboard/export.py
 # ─────────────────────────────────────────────────────────────
-# Download-Schaltflächen für die Tabellen hinter den Diagrammen.
+# Download buttons for the tables behind the charts.
 #
 # CSV here means CSV as German Excel expects it: semicolon separator, decimal
 # comma, and a UTF-8 BOM. Without the BOM Excel guesses the codepage and turns
@@ -22,7 +22,7 @@ CSV_ENCODING = "utf-8-sig"
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit, unit-testbar)
+# Pure helpers (no Streamlit, unit-tested)
 # ══════════════════════════════════════════════════════════════
 def to_csv_bytes(frame: pd.DataFrame) -> bytes:
     """CSV a German Excel opens correctly, as bytes."""
@@ -56,7 +56,7 @@ def filename(basename: str, suffix: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════
-# Streamlit-Ansicht
+# Streamlit view
 # ══════════════════════════════════════════════════════════════
 def download_pair(frame: pd.DataFrame, basename: str, key: str,
                   label: str = "Daten zu diesem Diagramm") -> None:  # pragma: no cover (UI)

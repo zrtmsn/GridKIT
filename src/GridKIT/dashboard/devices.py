@@ -1,6 +1,6 @@
-# dashboard/geraete.py
+# dashboard/devices.py
 # ─────────────────────────────────────────────────────────────
-# Geräte & Haushalte: was EV, Batterie und Wärmepumpe tatsächlich getan haben.
+# Devices & households: what the EV, the battery and the heat pump actually did.
 #
 # Reads only agreed fields:
 #   summary.json    hp_comfort_*, battery_throughput_kwh_*, battery_full_cycles_*, soc_*
@@ -23,11 +23,11 @@ import numpy as np
 import pandas as pd
 
 from dashboard import theme
-from dashboard.auslastung import format_hour, hours_axis
+from dashboard.utilization import format_hour, hours_axis
 from dashboard.controls import scenario_penetration_picker
 from dashboard.export import download_pair
 
-# ── Innenraumtemperatur: Annahmen, nicht Simulation ──────────
+# ── Indoor temperature: assumptions, not simulation ──────────
 # The environment models the heat pump as a thermal buffer (house inertia) and
 # never computes a temperature. Turning the buffer level into °C therefore needs
 # two anchors, chosen so the numbers mean something to a reader:
@@ -42,7 +42,7 @@ HP_COMFORT_MIN_SOC = 0.30       # mirrors core.constants.HP_COMFORT_MIN_SOC
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit, unit-testbar)
+# Pure helpers (no Streamlit, unit-tested)
 # ══════════════════════════════════════════════════════════════
 def indoor_temperature(thermal_soc: float) -> float:
     """Approximate indoor temperature (°C) from the heat pump's buffer level.
@@ -179,7 +179,7 @@ def scenario_devices(summary: list[dict[str, Any]], penetration: float) -> pd.Da
 
 
 # ══════════════════════════════════════════════════════════════
-# Streamlit-Ansicht
+# Streamlit view
 # ══════════════════════════════════════════════════════════════
 _HOUR_AXIS = dict(
     values=[12, 15, 18, 21, 24, 27, 30, 33, 36],
@@ -297,12 +297,12 @@ def _hp_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     return (floor + line).properties(width="container", height=240)
 
 
-def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]],
+def render_devices(summary: list[dict[str, Any]], timelines: list[dict[str, Any]],
                    key: str = "geraete") -> None:  # pragma: no cover (UI)
-    """Der Geräte-Reiter: Leistung je Gerätetyp und ein Haushalt im Detail."""
+    """The devices tab: power per device type, and one household in detail."""
     import streamlit as st
 
-    from dashboard.auslastung import select_timeline
+    from dashboard.utilization import select_timeline
 
     if not timelines:
         st.info("Keine Zeitreihen vorhanden. Zuerst ein Experiment ausführen.")
@@ -336,7 +336,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
     st.altair_chart(_device_power_chart(timeline), width="stretch")
     download_pair(device_power_frame(timeline), "Geräteleistung", f"{key}_leistung")
 
-    # ── Szenarienvergleich der Gerätekennzahlen ───────────────
+    # ── Scenario comparison of the device metrics ───────────────
     table = scenario_devices(summary or [], penetration)
     if not table.empty and table.drop(columns=["Szenario"]).notna().any().any():
         # Naming the Ausstattungsgrad only helps when there is another one to
@@ -354,7 +354,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
         )
         download_pair(table, "Gerätekennzahlen", f"{key}_kennzahlen")
 
-    # ── Ein Haushalt im Detail ────────────────────────────────
+    # ── One household in detail ────────────────────────────────
     st.subheader("Ein repräsentativer Haushalt")
     frame = household_frame(timeline)
     if frame.empty:

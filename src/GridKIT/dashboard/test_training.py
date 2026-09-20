@@ -188,7 +188,7 @@ def test_unknown_policy_falls_back_to_its_id():
     assert theme.policy_label("mystery_policy") == "mystery_policy"
 
 
-# ── Zoom auf die konvergierte Phase ──────────────────────────
+# ── Zoom on the converged phase ──────────────────────────
 def _run(values):
     """One record per value, with a spread of ±10 around it."""
     return [_record(i + 1, v, v - 10.0, v + 10.0) for i, v in enumerate(values)]
@@ -234,7 +234,7 @@ def test_iterations_outside_without_a_domain_is_zero():
     assert iterations_outside(return_frame(_run([-900.0] * 12)), None) == 0
 
 
-# ── Reward je Strategie ──────────────────────────────────────
+# ── Reward per strategy ──────────────────────────────────────
 def _summary_row(scenario, reward, std=1.0, penetration=0.6):
     return {"scenario": scenario, "penetration": penetration,
             "reward_mean": reward, "reward_std": std}

@@ -1,8 +1,8 @@
-# dashboard/test_auslastung.py
+# dashboard/test_utilization.py
 import numpy as np
 
 from dashboard import theme
-from dashboard.auslastung import (
+from dashboard.utilization import (
     contiguous_blocks,
     duration_curve,
     format_hour,
@@ -44,7 +44,7 @@ def test_format_hour_wraps_past_midnight():
     assert format_hour(14.25) == "14:15"
 
 
-# ── Schwellen stimmen mit dem Backend überein ────────────────
+# ── Thresholds agree with the backend ────────────────
 def test_exactly_rated_is_not_yet_overload():
     # run_experiment flags overload as `loading > 1.0`, strictly. If 1.0 were
     # already red the chart would contradict the overload matrix.

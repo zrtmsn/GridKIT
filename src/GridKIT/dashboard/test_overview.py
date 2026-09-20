@@ -1,9 +1,11 @@
-# dashboard/test_ueberblick.py
+# dashboard/test_overview.py
 import pandas as pd
 
-from dashboard.ueberblick import (
+from dashboard import theme
+from dashboard.overview import (
     breaking_point,
     cable_peak_pu,
+    has_overload,
     headline_numbers,
     overload_hours,
     overview_frame,
@@ -26,7 +28,7 @@ def _timeline(scenario, pen, line_peaks):
     return {"scenario": scenario, "penetration": pen, "max_line_loading": line_peaks}
 
 
-# ── Kabelspitze: neue Läufe direkt, alte über die Zeitreihe ──
+# ── Cable peak: new runs directly, old ones via the timeline ──
 def test_cable_peak_prefers_the_seed_averaged_field():
     record = _row("1: flat / immediate", 0.6, 0.8, line_peak_max=2.15)
     assert cable_peak_pu(record) == 2.15
@@ -172,7 +174,7 @@ def test_headline_survives_rows_without_any_loading():
     assert headline_numbers(frame)["status"] is None
 
 
-# ── Dauer statt Spitze: was die Szenarien wirklich trennt ────
+# ── Duration, not peak: what really separates the scenarios ────
 def test_overload_hours_uses_the_longest_affected_element():
     # max, not sum: two cables over the limit in the same quarter hour is one
     # overloaded quarter hour, not two
@@ -240,3 +242,52 @@ def test_headline_names_the_longest_overload_not_the_highest_reading():
 def test_headline_hours_are_absent_when_no_run_records_them():
     frame = overview_frame([_row("a", 0.6, 1.2)])
     assert headline_numbers(frame)["worst_hours"] is None
+
+
+# ── Scenario name in running text ───────────────────────────────
+def test_scenario_phrase_names_the_scenario_without_its_number():
+    # the banner reads "... (Szenario: konstant / sofort)"; the leading "1: "
+    # groups the strategies in tables but only clutters a sentence
+    assert theme.scenario_phrase("1: flat / immediate") == "Szenario: konstant / sofort"
+
+
+def test_scenario_short_drops_the_number_for_every_scenario():
+    for scenario in theme.SCENARIO_ORDER:
+        short = theme.scenario_short(scenario)
+        assert not short[:1].isdigit(), short
+        assert ":" not in short, short
+
+
+def test_scenario_phrase_accepts_an_already_translated_label():
+    # headline_numbers hands on the German label from the frame, not the raw key
+    assert theme.scenario_phrase("3: eigennütziges RL") == "Szenario: eigennütziges RL"
+
+
+def test_scenario_short_of_an_unknown_scenario_is_the_input():
+    assert theme.scenario_short("mystery") == "mystery"
+
+
+# ── Overload present or not ────────────────────────────
+def test_has_overload_is_false_for_a_grid_with_room_to_spare():
+    frame = overview_frame([_row("1: flat / immediate", 0.6, 0.72, line_peak_max=0.12)], [])
+    assert has_overload(frame) is False
+
+
+def test_has_overload_is_true_when_a_peak_is_over_the_limit():
+    frame = overview_frame([_row("1: flat / immediate", 0.6, 1.04, line_peak_max=0.9)], [])
+    assert has_overload(frame) is True
+
+
+def test_has_overload_is_true_when_only_the_duration_says_so():
+    # the peak is a mean over the seeds: a cable that tripped in a minority of
+    # them averages below 1.0 while the step lists still record the overload.
+    # Reading the mean alone would hide the banner on a run that overloaded.
+    frame = overview_frame(
+        [_row("1: flat / immediate", 0.6, 0.85, line_peak_max=0.95,
+              line_overload_steps={"service_2": 6.0})], [])
+    assert frame["Dauer"].max() > 0
+    assert has_overload(frame) is True
+
+
+def test_has_overload_of_an_empty_frame_is_false():
+    assert has_overload(overview_frame([], [])) is False

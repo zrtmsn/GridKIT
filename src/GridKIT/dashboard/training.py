@@ -1,6 +1,6 @@
 # dashboard/training.py
 # ─────────────────────────────────────────────────────────────
-# Trainingsverlauf: der Training-Reiter.
+# Training progress: the training tab.
 #
 # Reads iteration_metrics.json, written per penetration level by
 # rl_engine.Trainer into its checkpoint directory:
@@ -44,7 +44,7 @@ def _sync_penetration(widget_key: str) -> None:  # pragma: no cover (UI callback
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit, unit-testbar)
+# Pure helpers (no Streamlit, unit-tested)
 # ══════════════════════════════════════════════════════════════
 def penetration_of(directory_name: str) -> float | None:
     """'pen_20' → 0.2, so the training tab can share the other tabs' Ausstattungsgrad."""
@@ -165,7 +165,7 @@ def convergence(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-#: Anteil der ersten Iterationen, den die Standardansicht ausblendet.
+#: Share of the leading iterations the default view crops away.
 WARMUP_FRACTION = 0.25
 
 
@@ -241,7 +241,7 @@ def final_entropy(records: list[dict[str, Any]]) -> dict[str, float]:
 
 
 # ══════════════════════════════════════════════════════════════
-# Streamlit-Ansicht
+# Streamlit view
 # ══════════════════════════════════════════════════════════════
 def _return_chart(frame: pd.DataFrame, domain: tuple[float, float] | None = None):  # pragma: no cover (UI)
     import altair as alt
@@ -328,7 +328,7 @@ def _entropy_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
 
 def render_training(output_dir: str | Path, summary: list[dict[str, Any]] | None = None,
                     key: str = "training") -> None:  # pragma: no cover (UI)
-    """Der Training-Reiter: Reward-Konvergenz, Strategievergleich, Entropie je Policy."""
+    """The training tab: reward convergence, strategy comparison, entropy per policy."""
     import streamlit as st
 
     files = find_metric_files(output_dir)
@@ -454,7 +454,7 @@ def render_training(output_dir: str | Path, summary: list[dict[str, Any]] | None
                     "steht im Reiter Überblick."
                 )
         download_pair(rewards.drop(columns=["scenario", "gelernt"]),
-                      "Reward je Strategie", f"{key}_reward_vergleich")
+                      "Reward je Strategie", f"{key}_reward_comparison")
 
     entropy = entropy_frame(records)
     if not entropy.empty:

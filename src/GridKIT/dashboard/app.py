@@ -4,11 +4,11 @@
 #
 # It reads results from two producers, which write the same schema:
 #   · runs/<id>/          one run started from the map (scripts/train_run.py)
-#   · outputs/            the scenario × Ausstattungsgrad batch sweep
+#   · outputs/            the scenario × penetration batch sweep
 #                           (scripts/run_experiment.py)
 #
 # Entry points:
-#   streamlit run src/GridKIT/scripts/app.py    Karte + Dashboard in one app
+#   streamlit run src/GridKIT/scripts/app.py    map + dashboard in one app
 #   streamlit run src/GridKIT/dashboard/app.py  the dashboard on its own
 #
 # `render_dashboard()` is the page scripts/app.py composes: it browses saved
@@ -18,7 +18,7 @@
 #
 # This module is only the shell: it loads the result files, renders the
 # glossary and hands each tab its data. Every view lives in its own module
-# (ueberblick, auslastung, geraete, vergleich, training) and every colour and
+# (overview, utilization, devices, comparison, training) and every colour and
 # label in theme.py.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
@@ -41,11 +41,12 @@ for _p in (str(_PKG_DIR), str(_SRC_DIR)):
 import streamlit as st
 
 from core import run_store as rs
-from dashboard.auslastung import render_auslastung
-from dashboard.geraete import render_geraete
+from dashboard import theme
+from dashboard.utilization import render_utilization
+from dashboard.devices import render_devices
 from dashboard.training import render_training
-from dashboard.ueberblick import render_ueberblick
-from dashboard.vergleich import render_vergleich
+from dashboard.overview import render_overview
+from dashboard.comparison import render_comparison
 
 OUTPUT_DIR = Path(os.environ.get("GRIDKIT_OUTPUT_DIR", "outputs"))
 
@@ -83,7 +84,7 @@ def _load(name: str):
 
 
 def render_results(summary, timelines, network=None, output_dir=None) -> None:
-    """Rendert das Szenario-Vergleichs-Dashboard aus Daten im Arbeitsspeicher.
+    """Render the scenario comparison dashboard from data already in memory.
 
     `network` ist optional: wenn übergeben, wird zusätzlich die Überlastungskarte
     gezeichnet. `output_dir` sagt, wo die Trainingsmetriken dieses Laufs liegen:
@@ -97,23 +98,23 @@ def render_results(summary, timelines, network=None, output_dir=None) -> None:
 
     _render_glossary()
 
-    tab_ueberblick, tab_last, tab_geraete, tab_vergleich, tab_training = st.tabs(
+    tab_overview, tab_utilization, tab_devices, tab_comparison, tab_training = st.tabs(
         ["Überblick", "Netzauslastung", "Geräte & Haushalte", "Szenarienvergleich", "Training"]
     )
-    with tab_ueberblick:
-        render_ueberblick(summary, timelines)
-    with tab_last:
-        render_auslastung(timelines or [])
-    with tab_geraete:
-        render_geraete(summary, timelines or [])
-    with tab_vergleich:
-        render_vergleich(summary, timelines, network)
+    with tab_overview:
+        render_overview(summary, timelines)
+    with tab_utilization:
+        render_utilization(timelines or [])
+    with tab_devices:
+        render_devices(summary, timelines or [])
+    with tab_comparison:
+        render_comparison(summary, timelines, network)
     with tab_training:
         render_training(output_dir if output_dir is not None else OUTPUT_DIR, summary)
 
 
 def _render_glossary() -> None:
-    """Die Begriffe, ohne die keine Zahl auf dieser Seite lesbar ist."""
+    """The terms without which no number on this page can be read."""
     with st.expander("Wie lese ich das? Begriffe in einem Satz"):
         left, right = st.columns(2)
         left.markdown(
@@ -133,10 +134,25 @@ def _render_glossary() -> None:
             "„Eingriff“ ist eine Viertelstunde, in der das passiert.\n\n"
             "**Ladestand (SoC)**: Füllstand von Autobatterie oder Speicher, "
             "0 bis 1.\n\n"
-            "**Szenarien**: die Regelstrategie. *konstant/sofort* lädt ohne "
-            "Rücksicht, *preisorientiert* wartet auf günstigen Strom, "
-            "*eigennütziges RL* ist die gelernte Strategie."
+            "**Szenarien**: die vier Regelstrategien, die hier verglichen werden. "
+            "Was jede einzelne tut, steht unten."
         )
+        _render_scenario_glossary()
+
+
+def _render_scenario_glossary() -> None:
+    """The four strategies, one sentence each. Full width below the two
+    columns, because four entries would make one column twice as long."""
+    st.markdown("**Die vier Szenarien im Einzelnen**")
+    st.markdown("\n".join(
+        f"- **{theme.scenario_short(s)}**: {theme.scenario_description(s)}"
+        for s in theme.SCENARIO_ORDER
+    ))
+    st.caption(
+        "Bei den ersten drei Strategien sind Batterie (Eigenverbrauch) und Wärmepumpe "
+        "(Thermostat) fest geregelt, unterschieden wird nur das Laden des E-Autos. "
+        "Beim RL lernen alle drei Geräte mit."
+    )
 
 
 SUBTITLE = (
@@ -155,10 +171,10 @@ def _run_label(record: dict) -> str:
 
 
 def render_dashboard() -> None:
-    """Die Dashboard-Seite: gespeicherte Läufe durchsehen und den gewählten zeigen.
+    """The dashboard page: browse saved runs and render the selected one.
 
-    Kein `st.set_page_config` hier, damit scripts/app.py die Seite neben der
-    Karte einhängen kann; `main()` unten übernimmt das für den Einzelbetrieb.
+    No `st.set_page_config` here, so scripts/app.py can mount this page next to
+    the map; `main()` below owns the page config for standalone use.
     """
     st.title("GridKIT Dashboard")
     st.caption(SUBTITLE)
@@ -224,7 +240,7 @@ def render_dashboard() -> None:
 
 
 def render_batch() -> None:
-    """Die Ausgabe des Batch-Experiments aus OUTPUT_DIR."""
+    """The batch experiment's output, read from OUTPUT_DIR."""
     st.title("GridKIT Dashboard")
     st.caption(SUBTITLE)
     summary = _load("summary.json")
@@ -265,6 +281,7 @@ def _running_under_streamlit() -> bool:
 if __name__ == "__main__":
     main()
 elif _running_under_streamlit():
-    # `streamlit run` importiert das Modul (name != __main__); nur dann automatisch
-    # ausführen, NICHT bei einem einfachen Import (z. B. wenn die Web-App render_results importiert).
+    # `streamlit run` imports this module (name != __main__), so run automatically
+    # only in that case, NOT on a plain import (e.g. when another app imports
+    # render_results).
     main()

@@ -1,6 +1,6 @@
-# dashboard/ueberblick.py
+# dashboard/overview.py
 # ─────────────────────────────────────────────────────────────
-# Überblick: die Antwort, bevor jemand scrollt.
+# Overview: the answer, before anyone scrolls.
 #
 # Answers the project's own question: does §14a curtailment hold up with EV,
 # battery, heat pump and PV on the same low-voltage grid? Across ALL
@@ -20,7 +20,7 @@ from typing import Any
 import pandas as pd
 
 from dashboard import theme
-from dashboard.auslastung import select_timeline
+from dashboard.utilization import select_timeline
 from dashboard.export import download_pair
 
 #: Order of severity, worst first, used to reduce many combinations to one verdict.
@@ -28,7 +28,7 @@ _SEVERITY = ["kritisch", "grenzbereich", "warnung", "gut"]
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit, unit-testbar)
+# Pure helpers (no Streamlit, unit-tested)
 # ══════════════════════════════════════════════════════════════
 #: One simulation step, in hours; overload counts are recorded per step.
 TIMESTEP_HOURS = 0.25
@@ -163,6 +163,23 @@ def scenario_ranking(frame: pd.DataFrame, penetration: float) -> pd.DataFrame:
     return at.sort_values(by, na_position="last", ignore_index=True)
 
 
+def has_overload(frame: pd.DataFrame) -> bool:
+    """True when anything in this run actually went over its limit.
+
+    Two independent signals, because they can disagree. `status` comes from the
+    peak AVERAGED over the evaluation seeds, `Dauer` from the per-step overload
+    lists of the representative episode. A cable that tripped in two of six
+    seeds averages below 1.0 but did overload, so either signal alone is enough
+    to count. Getting this wrong would hide the overload views on a run that
+    overloaded.
+    """
+    if frame.empty:
+        return False
+    if (frame["status"] == "kritisch").any():
+        return True
+    return bool(frame["Dauer"].fillna(0.0).gt(0.0).any())
+
+
 def headline_numbers(frame: pd.DataFrame) -> dict[str, Any]:
     """The figures the verdict banner and KPI row read."""
     if frame.empty or frame["Spitze"].dropna().empty:
@@ -191,7 +208,7 @@ def headline_numbers(frame: pd.DataFrame) -> dict[str, Any]:
 
 
 # ══════════════════════════════════════════════════════════════
-# Streamlit-Ansicht
+# Streamlit view
 # ══════════════════════════════════════════════════════════════
 def _matrix_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     import altair as alt
@@ -286,10 +303,10 @@ def _scenario_bars(frame: pd.DataFrame):  # pragma: no cover (UI)
     return (bars + labels).properties(width="container", height=alt.Step(38))
 
 
-def render_ueberblick(summary: list[dict[str, Any]],
+def render_overview(summary: list[dict[str, Any]],
                       timelines: list[dict[str, Any]] | None = None,
                       key: str = "ueberblick") -> None:  # pragma: no cover (UI)
-    """Der Überblick-Reiter: das Urteil über alle Szenarien und Ausstattungsgrade."""
+    """The overview tab: the verdict across every scenario and penetration."""
     import streamlit as st
 
     if not summary:
@@ -313,7 +330,8 @@ def render_ueberblick(summary: list[dict[str, Any]],
     hours = head["worst_hours"]
     scenario_name = head["worst_hours_scenario"] if hours is not None else head["worst_scenario"]
     share = head["worst_hours_penetration"] if hours is not None else head["worst_penetration"]
-    where = scenario_name if not swept else f"{scenario_name} bei {share:.0%} Ausstattungsgrad"
+    named = theme.scenario_phrase(scenario_name)
+    where = named if not swept else f"{named} bei {share:.0%} Ausstattungsgrad"
 
     if hours is not None:
         worst_text = (f"am längsten überlastet: {hours:.2f} h".replace(".", ",")
@@ -321,19 +339,26 @@ def render_ueberblick(summary: list[dict[str, Any]],
     else:
         worst_text = f"Spitze {peak_percent:.0f} % ({where})"
 
-    if head["status"] == "kritisch":
+    # A grid that never went over its limit gets no banner and no overload
+    # chart: both exist to describe an overload, and on a healthy run they say
+    # nothing while taking the top of the tab. The KPI tiles still carry the
+    # peak loading, which is the number that matters in that case.
+    overloaded = has_overload(frame)
+
+    if overloaded:
         ceiling = head["safe_ceiling"]
         tail = ""
         if swept:
             tail = (f" Bis einschließlich {ceiling:.0%} Ausstattungsgrad bleibt jedes "
                     "Szenario im Rahmen." if ceiling is not None else
                     " Schon beim niedrigsten geprüften Ausstattungsgrad kommt es zur Überlast.")
-        st.error(f"**Das Netz hält nicht durch.** {worst_text.capitalize()}.{tail}")
+        first_upper = worst_text[:1].upper() + worst_text[1:]
+        st.error(f"**Das Netz hält nicht durch.** {first_upper}.{tail}")
     elif head["status"] == "grenzbereich":
+        # No overload, but no reserve either: worth saying, and not the same
+        # case as a grid with room to spare.
         st.warning(f"**Grenzwertig.** Höchste Auslastung {peak_percent:.0f} % ({where}). "
                    "Keine Überschreitung, aber ohne Reserve.")
-    else:
-        st.success(f"**Das Netz hält durch.** Höchste Auslastung {peak_percent:.0f} % ({where}).")
 
     tiles = st.columns(4 if swept else 3)
     if hours is not None:
@@ -368,16 +393,17 @@ def render_ueberblick(summary: list[dict[str, Any]],
         "mehr aus. Aussagekräftig ist der **Vergleich der Szenarien untereinander**."
     )
 
-    st.subheader("Szenario × Ausstattungsgrad" if swept else "Überlast je Szenario")
-    st.caption(
-        "**Wie lange** das am längsten betroffene Element über seiner Grenze lag. "
-        "Die Farbe zeigt die Schwere der Spitze (schlechterer Wert aus Transformator "
-        "und Kabel), die Länge bzw. Zahl die Dauer; beim Überfahren stehen beide. "
-        "Die Dauer steht vorn, weil ein einzelner schwacher Strang in jedem Szenario "
-        "annähernd dieselbe Spitze erzeugt und die Szenarien dann gleich aussehen, "
-        "obwohl sie es nicht sind. Details im Reiter **Netzauslastung**."
-    )
-    st.altair_chart(_matrix_chart(frame) if swept else _scenario_bars(frame), width="stretch")
+    if overloaded:
+        st.subheader("Szenario × Ausstattungsgrad" if swept else "Überlast je Szenario")
+        st.caption(
+            "**Wie lange** das am längsten betroffene Element über seiner Grenze lag. "
+            "Die Farbe zeigt die Schwere der Spitze (schlechterer Wert aus Transformator "
+            "und Kabel), die Länge bzw. Zahl die Dauer; beim Überfahren stehen beide. "
+            "Die Dauer steht vorn, weil ein einzelner schwacher Strang in jedem Szenario "
+            "annähernd dieselbe Spitze erzeugt und die Szenarien dann gleich aussehen, "
+            "obwohl sie es nicht sind. Details im Reiter **Netzauslastung**."
+        )
+        st.altair_chart(_matrix_chart(frame) if swept else _scenario_bars(frame), width="stretch")
     download_pair(
         frame.drop(columns=["scenario"]).rename(columns={"status": "Bewertung"}),
         "Überblick", f"{key}_matrix",

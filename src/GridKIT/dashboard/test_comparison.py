@@ -1,5 +1,5 @@
-# dashboard/test_vergleich.py
-from dashboard.vergleich import METRICS, curtailment_steps, episode_frame, metric_frame
+# dashboard/test_comparison.py
+from dashboard.comparison import METRICS, curtailment_steps, episode_frame, metric_frame
 
 
 def _summary(scenario, pen, **over):

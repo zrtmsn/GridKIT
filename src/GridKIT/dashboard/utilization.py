@@ -1,6 +1,6 @@
-# dashboard/auslastung.py
+# dashboard/utilization.py
 # ─────────────────────────────────────────────────────────────
-# Netzauslastung in Viertelstundenwerten: der Auslastungs-Reiter.
+# Grid utilisation in quarter-hour values: the utilisation tab.
 #
 # Reads only fields run_experiment.py already writes to timelines.json:
 #   transformer_loading, max_line_loading, curtailment,
@@ -33,7 +33,7 @@ TIMESTEP_HOURS = 0.25
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit, unit-testbar)
+# Pure helpers (no Streamlit, unit-tested)
 # ══════════════════════════════════════════════════════════════
 def format_hour(hour: float) -> str:
     """14.25 → "14:15". Modulo 24 because the episode runs noon → noon."""
@@ -246,7 +246,7 @@ def select_timeline(timelines: list[dict[str, Any]], scenario: str, penetration:
 
 
 # ══════════════════════════════════════════════════════════════
-# Streamlit-Ansicht
+# Streamlit view
 # ══════════════════════════════════════════════════════════════
 def _band_frame(scale_max: float) -> pd.DataFrame:
     """Severity bands clipped to the chart's y-range, as chart data."""
@@ -363,8 +363,8 @@ def _overload_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
     )
 
 
-def render_auslastung(timelines: list[dict[str, Any]], key: str = "auslastung") -> None:  # pragma: no cover (UI)
-    """Der Auslastungs-Reiter: Tagesgang, Überlast-Matrix, Dauerlinie."""
+def render_utilization(timelines: list[dict[str, Any]], key: str = "auslastung") -> None:  # pragma: no cover (UI)
+    """The utilisation tab: daily profile, overload matrix, duration curve."""
     import streamlit as st
 
     if not timelines:
