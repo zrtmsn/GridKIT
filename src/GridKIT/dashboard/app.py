@@ -263,7 +263,13 @@ def main() -> None:
             "Datenquelle", ["Lauf aus der Karte", f"Batch-Experiment ({OUTPUT_DIR})"],
             help="Läufe aus der Karte liegen unter runs/, das Batch-Experiment unter outputs/.",
         )
-        render_dashboard() if source == "Lauf aus der Karte" else render_batch()
+        # A statement, not a conditional expression: Streamlit's "magic" renders
+        # any bare expression in the main script, and both calls return None, so
+        # the expression form printed a stray "None" onto the page.
+        if source == "Lauf aus der Karte":
+            render_dashboard()
+        else:
+            render_batch()
     elif has_batch:
         render_batch()
     else:
