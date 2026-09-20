@@ -393,11 +393,12 @@ def render_utilization(timelines: list[dict[str, Any]], key: str = "auslastung")
         )
 
     # ── Überlast-Matrix ───────────────────────────────────────
-    st.subheader("Welche Elemente wann überlastet waren")
+    # The whole section describes an overload, so on a run without one it has
+    # nothing to say. The KPI row above already reports zero hours over the
+    # limit, which is the finding; a green box repeating it is noise.
     table = overload_table(timeline)
-    if table.empty:
-        st.success("Kein Element war in diesem Lauf über seiner Nennleistung.")
-    else:
+    if not table.empty:
+        st.subheader("Welche Elemente wann überlastet waren")
         st.caption(
             "Binär: überlastet oder nicht. Abgestufte Farben bräuchten die Auslastung "
             "je Element, die der Export derzeit nicht enthält. **Ein Element ist selten "

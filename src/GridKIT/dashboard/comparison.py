@@ -24,12 +24,19 @@ from dashboard.utilization import format_hour, hours_axis, select_timeline
 from dashboard.controls import penetration_picker, scenario_picker
 from dashboard.export import download_pair
 
-#: (column name in summary.json, display label, unit, "higher is better")
-METRICS: tuple[tuple[str, str, str, bool], ...] = (
-    ("curtailment_mean", "§14a-Eingriffe", "Viertelstunden", False),
-    ("soc_mean", "EV-Ziel erreicht", "Anteil", True),
-    ("hp_comfort_mean", "WP-Komfort", "Anteil", True),
-    ("bill_mean", "Stromkosten", "€ / Haushalt", False),
+#: (column name in summary.json, display label, unit, "higher is better",
+#:  sentence to show instead of an all-zero chart)
+#:
+#: The last field exists because a bar chart in which every bar is zero draws
+#: four empty rows and an axis, and says less than one sentence would. Only
+#: curtailment carries one: for the other three, all-zero would be a finding
+#: worth seeing drawn, not a non-event.
+METRICS: tuple[tuple[str, str, str, bool, str | None], ...] = (
+    ("curtailment_mean", "§14a-Eingriffe", "Viertelstunden", False,
+     "In keinem Szenario musste §14a eingreifen."),
+    ("soc_mean", "EV-Ziel erreicht", "Anteil", True, None),
+    ("hp_comfort_mean", "WP-Komfort", "Anteil", True, None),
+    ("bill_mean", "Stromkosten", "€ / Haushalt", False, None),
 )
 
 
@@ -48,7 +55,7 @@ def metric_frame(summary: list[dict[str, Any]], penetration: float | None = None
         if penetration is not None and abs(float(record.get("penetration", -1)) - penetration) > 1e-9:
             continue
         scenario = record.get("scenario", "")
-        for field, label, unit, higher_better in METRICS:
+        for field, label, unit, higher_better, _ in METRICS:
             value = record.get(field)
             if value is None:
                 continue
@@ -349,8 +356,12 @@ def render_comparison(summary: list[dict[str, Any]], timelines: list[dict[str, A
             "groß sind: eine Strategie, die das Netz schont und das Auto leer lässt, "
             "hat nichts gewonnen."
         )
-        for _, label, _, higher_better in METRICS:
+        for _, label, _, higher_better, zero_note in METRICS:
             if label not in set(metrics["Kennzahl"]):
+                continue
+            values = metrics[metrics["Kennzahl"] == label]["Wert"]
+            if zero_note and not values.empty and (values == 0).all():
+                st.markdown(f"**{label}**: {zero_note}")
                 continue
             st.markdown(f"**{label}**: {'größer ist besser' if higher_better else 'kleiner ist besser'}")
             st.altair_chart(_metric_chart(metrics, label), width="stretch")

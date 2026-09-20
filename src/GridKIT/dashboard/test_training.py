@@ -292,3 +292,17 @@ def test_evaluated_rewards_of_nothing_is_empty_but_typed():
     frame = evaluated_rewards([])
     assert frame.empty
     assert list(frame.columns) == ["scenario", "Szenario", "Reward", "Streuung", "gelernt"]
+
+
+# ── One level needs no selector ──────────────────────────────
+def test_a_sweep_over_a_single_level_offers_nothing_to_choose(tmp_path):
+    # the training tab hides its selector when there is one entry; a sweep run
+    # over one Ausstattungsgrad reaches that state too, not just a map run, and
+    # testing for SINGLE_RUN alone left a dropdown with a single option
+    _sweep(tmp_path, "pen_60")
+    assert len(find_metric_files(tmp_path)) == 1
+
+
+def test_a_sweep_over_several_levels_still_needs_the_selector(tmp_path):
+    _sweep(tmp_path, "pen_20", "pen_40", "pen_60")
+    assert len(find_metric_files(tmp_path)) == 3

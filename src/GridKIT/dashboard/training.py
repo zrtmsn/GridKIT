@@ -341,10 +341,14 @@ def render_training(output_dir: str | Path, summary: list[dict[str, Any]] | None
         return
 
     names = list(files)
-    if names == [SINGLE_RUN]:
-        # A run from the map trains one device layout, so there is nothing to
-        # choose between; a selector with a single entry would be noise.
-        chosen = SINGLE_RUN
+    if len(names) == 1:
+        # Nothing to choose between, so no selector: a run from the map trains
+        # one device layout, and a sweep can also have been run over a single
+        # Ausstattungsgrad. Testing for SINGLE_RUN alone missed the second case
+        # and left a dropdown with one option that could not change anything.
+        chosen = names[0]
+        if (only := penetration_of(chosen)) is not None:
+            st.session_state[PENETRATION_STATE] = only
     else:
         # Share the Ausstattungsgrad with the other tabs: switching to 60 % on the
         # utilisation tab should show the 60 % training run here, not whatever this
