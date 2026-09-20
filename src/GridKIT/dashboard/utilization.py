@@ -378,7 +378,7 @@ def render_utilization(timelines: list[dict[str, Any]], key: str = "auslastung")
     # ── Tagesgang ─────────────────────────────────────────────
     st.subheader("Tagesverlauf")
     st.caption(
-        "Beide Reihen gehören zusammen: im Niederspannungsnetz bindet fast immer das "
+        "Beide Linien gehören zusammen: im Niederspannungsnetz bindet fast immer das "
         "**Kabel** zuerst, nicht der Transformator. Ein entspannt wirkender Trafo-Wert "
         "kann eine deutliche thermische Verletzung im Strang verdecken."
     )
