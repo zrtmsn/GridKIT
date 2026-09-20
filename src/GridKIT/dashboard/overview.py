@@ -426,17 +426,14 @@ def render_overview(summary: list[dict[str, Any]],
         st.caption(
             "Sortiert nach Dauer der Überlast, kürzeste zuerst. Trafo und Kabel "
             "stehen getrennt: sie können weit auseinanderliegen, und ein Szenario, "
-            "das den Transformator entlastet, muss nicht auch das Kabel entlasten. "
-            "**EV-Ziel erreicht** ist die Gegenrechnung: Netzentlastung, die "
-            "niemand mitmacht, weil das Auto morgens leer ist, hilft nicht."
+            "das den Transformator entlastet, muss nicht auch das Kabel entlasten."
         )
-        table = ranking[["Szenario", "Dauer", "Trafo", "Kabel", "curtailment", "soc"]].rename(
+        table = ranking[["Szenario", "Dauer", "Trafo", "Kabel", "curtailment"]].rename(
             columns={
                 "Dauer": "Überlast (h)",
                 "Trafo": "Trafo-Spitze",
                 "Kabel": "Kabel-Spitze",
                 "curtailment": "§14a-Eingriffe",
-                "soc": "EV-Ziel erreicht",
             })
         st.dataframe(
             table.style.format({
@@ -444,7 +441,6 @@ def render_overview(summary: list[dict[str, Any]],
                 "Trafo-Spitze": lambda v: theme.NO_VALUE if pd.isna(v) else f"{v * 100:.0f} %",
                 "Kabel-Spitze": lambda v: theme.NO_VALUE if pd.isna(v) else f"{v * 100:.0f} %",
                 "§14a-Eingriffe": lambda v: theme.NO_VALUE if pd.isna(v) else f"{v:.1f}",
-                "EV-Ziel erreicht": lambda v: theme.NO_VALUE if pd.isna(v) else f"{v:.0%}",
             }),
             width="stretch", hide_index=True,
         )
