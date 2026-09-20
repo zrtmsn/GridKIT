@@ -1,6 +1,7 @@
 # dashboard/test_app.py
 import core.constants as const
-from GridKIT.dashboard.vergleich import _LOAD_COLORS, _load_style
+from dashboard import theme
+from GridKIT.dashboard.comparison import _LOAD_COLORS, _load_style
 
 
 def test_overloaded_cable_is_red_and_thickest():
@@ -20,7 +21,7 @@ def test_weight_increases_with_loading():
 
 
 def test_exactly_at_the_overload_threshold_is_not_yet_red():
-    # the environment curtails on `> threshold`, so the map must agree — a cable
+    # the environment curtails on `> threshold`, so the map must agree: a cable
     # sitting exactly at rating has not tripped
     color, _ = _load_style(const.LINE_OVERLOAD_THRESHOLD)
     assert color != "#d7191c"
@@ -35,9 +36,31 @@ def test_watch_level_still_renders_a_colour():
 
 def test_a_cable_that_tripped_reads_as_overloaded_even_when_its_mean_is_lower():
     # peaks are averaged over seeds, so a cable that violated its rating in a minority
-    # of seeds sits below 1.0 on average — the map must not contradict the trip count
+    # of seeds sits below 1.0 on average; the map must not contradict the trip count
     plain, _ = _load_style(0.85)
     tripped, weight = _load_style(0.85, tripped=True)
     assert plain != tripped
     assert tripped == "#d7191c"
     assert weight == max(w for _, _, w in _LOAD_COLORS)
+
+
+# ── Scenario explanations in the glossary ──────────────────────────
+def test_every_scenario_has_a_label_and_a_description():
+    # the glossary renders one entry per SCENARIO_ORDER key; a scenario added
+    # there without a description would print an empty bullet
+    for scenario in theme.SCENARIO_ORDER:
+        assert theme.scenario_label(scenario) != scenario, scenario
+        assert len(theme.scenario_description(scenario)) > 40, scenario
+
+
+def test_scenario_description_of_an_unknown_scenario_is_empty():
+    assert theme.scenario_description("9: something else") == ""
+
+
+def test_the_two_price_follow_descriptions_are_not_the_same_text():
+    # manual vs automated differ only in whether the households synchronise;
+    # if both read the same, the tab that compares them explains nothing
+    manual = theme.scenario_description("2: price-follow (manual)")
+    automated = theme.scenario_description("2: price-follow (automated)")
+    assert manual != automated
+    assert "gleichzeitig" in automated

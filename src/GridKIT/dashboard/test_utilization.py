@@ -1,10 +1,10 @@
-# dashboard/test_auslastung.py
+# dashboard/test_utilization.py
 import numpy as np
 
 from dashboard import theme
-from dashboard.auslastung import (
+from dashboard.utilization import (
+    _daily_profile_chart,
     contiguous_blocks,
-    duration_curve,
     format_hour,
     headline,
     hours_above,
@@ -44,7 +44,7 @@ def test_format_hour_wraps_past_midnight():
     assert format_hour(14.25) == "14:15"
 
 
-# ── Schwellen stimmen mit dem Backend überein ────────────────
+# ── Thresholds agree with the backend ────────────────
 def test_exactly_rated_is_not_yet_overload():
     # run_experiment flags overload as `loading > 1.0`, strictly. If 1.0 were
     # already red the chart would contradict the overload matrix.
@@ -93,26 +93,7 @@ def test_peak_moment_handles_empty():
     assert peak_moment([]) == (0.0, theme.NO_VALUE)
 
 
-# ── Dauerlinie ───────────────────────────────────────────────
-def test_duration_curve_is_sorted_descending():
-    curve = duration_curve([0.2, 1.0, 0.5])
-    assert curve["Auslastung"].tolist() == [100.0, 50.0, 20.0]
-
-
-def test_duration_curve_x_axis_is_cumulative_hours():
-    curve = duration_curve([0.9] * 4)
-    assert curve["Stunden"].tolist() == [0.25, 0.5, 0.75, 1.0]
-
-
-def test_duration_curve_reads_off_hours_above_a_limit():
-    # 8 quarter-hours over 100 % must show up as 2.0 h on the curve
-    values = [1.5] * 8 + [0.4] * 88
-    curve = duration_curve(values)
-    over = curve[curve["Auslastung"] > 100.0]
-    assert over["Stunden"].max() == 2.0
-
-
-# ── Überlast-Matrix ──────────────────────────────────────────
+# ── Overload matrix ─────────────────────────────────────
 def test_overload_matrix_marks_only_the_steps_an_element_tripped():
     tl = _timeline([0.3] * 4, [1.4] * 4,
                    overloaded_lines=[[], ["service_0"], ["service_0"], []])
@@ -239,3 +220,38 @@ def test_select_timeline_matches_scenario_and_penetration():
 
 def test_select_timeline_returns_none_when_absent():
     assert select_timeline([_timeline([0.1], [0.1])], "3: selfish RL", 0.6) is None
+
+
+# ── Legend of the daily profile ──────────────────────────────
+def _profile_spec():
+    return _daily_profile_chart(_timeline([0.5, 0.8, 0.6], [1.2, 2.0, 1.4])).to_dict()
+
+
+def test_daily_profile_labels_its_two_series():
+    # the chart carries two series that mean entirely different things; without
+    # a legend the reader cannot tell the cable from the transformer
+    spec = _profile_spec()
+    legends = [layer["encoding"]["color"].get("legend")
+               for layer in spec["layer"]
+               if layer.get("encoding", {}).get("color", {}).get("field") == "Messgröße"]
+    assert legends and legends[0] is not None
+
+
+def test_daily_profile_resolves_colour_independently():
+    # a layered chart shares one colour scale by default, and the band layer
+    # sets scale=None/legend=None, which silently removed the line legend
+    assert spec_resolve(_profile_spec()) == "independent"
+
+
+def spec_resolve(spec):
+    return (spec.get("resolve") or {}).get("scale", {}).get("color")
+
+
+def test_daily_profile_legend_names_both_series_with_theme_colours():
+    spec = _profile_spec()
+    colour = next(layer["encoding"]["color"] for layer in spec["layer"]
+                  if layer.get("encoding", {}).get("color", {}).get("field") == "Messgröße")
+    assert colour["scale"]["domain"] == [theme.SERIES_LABELS_DE["transformer"],
+                                         theme.SERIES_LABELS_DE["line"]]
+    assert colour["scale"]["range"] == [theme.SERIES_COLORS["transformer"],
+                                        theme.SERIES_COLORS["line"]]

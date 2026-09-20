@@ -1,6 +1,6 @@
 # dashboard/training.py
 # ─────────────────────────────────────────────────────────────
-# Trainingsverlauf — der Training-Reiter.
+# Training progress: the training tab.
 #
 # Reads iteration_metrics.json, written per penetration level by
 # rl_engine.Trainer into its checkpoint directory:
@@ -12,7 +12,7 @@
 #
 # The three entropy curves are the most informative single view here: one
 # shared policy per controllable device (EV, Batterie, Wärmepumpe), so their
-# curves show which device stops exploring first — a policy whose entropy
+# curves show which device stops exploring first: a policy whose entropy
 # collapses early has committed to a strategy while the others are still
 # searching.
 #
@@ -44,7 +44,7 @@ def _sync_penetration(widget_key: str) -> None:  # pragma: no cover (UI callback
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit — unit-testbar)
+# Pure helpers (no Streamlit, unit-tested)
 # ══════════════════════════════════════════════════════════════
 def penetration_of(directory_name: str) -> float | None:
     """'pen_20' → 0.2, so the training tab can share the other tabs' Ausstattungsgrad."""
@@ -147,7 +147,7 @@ def entropy_frame(records: list[dict[str, Any]]) -> pd.DataFrame:
 def convergence(records: list[dict[str, Any]]) -> dict[str, Any]:
     """First/last return and the change between them.
 
-    `improved` says only that the return rose over the run — with few
+    `improved` says only that the return rose over the run; with few
     iterations that is weak evidence, so the view reports the iteration count
     alongside it rather than presenting it as a verdict.
     """
@@ -165,7 +165,7 @@ def convergence(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-#: Anteil der ersten Iterationen, den die Standardansicht ausblendet.
+#: Share of the leading iterations the default view crops away.
 WARMUP_FRACTION = 0.25
 
 
@@ -173,8 +173,8 @@ def convergence_domain(frame: pd.DataFrame,
                        skip_fraction: float = WARMUP_FRACTION) -> tuple[float, float] | None:
     """y-range that shows the converged part, ignoring the first iterations.
 
-    An untrained policy starts catastrophically badly — in the reference run at
-    −13 600 against a converged −900 — so a full-range axis spends 97 % of its
+    An untrained policy starts catastrophically badly, in the reference run at
+    −13 600 against a converged −900, so a full-range axis spends 97 % of its
     height on the first few iterations and flattens the part that answers the
     question. The range is taken from the tail of the run instead, with a
     margin, and the early points fall off the top of the chart.
@@ -241,13 +241,13 @@ def final_entropy(records: list[dict[str, Any]]) -> dict[str, float]:
 
 
 # ══════════════════════════════════════════════════════════════
-# Streamlit-Ansicht
+# Streamlit view
 # ══════════════════════════════════════════════════════════════
 def _return_chart(frame: pd.DataFrame, domain: tuple[float, float] | None = None):  # pragma: no cover (UI)
     import altair as alt
 
     # clamp so a warm-up iteration far below the range is pinned to the edge
-    # rather than silently dropped — the curve stays continuous
+    # rather than silently dropped, so the curve stays continuous
     y_scale = (alt.Scale(domain=list(domain), clamp=True, nice=False)
                if domain else alt.Scale(nice=False, zero=False))
     x_scale = alt.Scale(nice=False, zero=False)
@@ -328,23 +328,27 @@ def _entropy_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
 
 def render_training(output_dir: str | Path, summary: list[dict[str, Any]] | None = None,
                     key: str = "training") -> None:  # pragma: no cover (UI)
-    """Der Training-Reiter: Reward-Konvergenz, Strategievergleich, Entropie je Policy."""
+    """The training tab: reward convergence, strategy comparison, entropy per policy."""
     import streamlit as st
 
     files = find_metric_files(output_dir)
     if not files:
         st.info(
-            f"Keine `{METRICS_FILENAME}` gefunden. Sie entsteht beim Training — "
+            f"Keine `{METRICS_FILENAME}` gefunden. Sie entsteht beim Training: "
             f"beim Batch-Experiment unter `checkpoints/pen_*/`, bei einem Lauf aus "
             f"der Karte direkt im Lauf-Ordner. Zuerst ein Training ausführen."
         )
         return
 
     names = list(files)
-    if names == [SINGLE_RUN]:
-        # A run from the map trains one device layout, so there is nothing to
-        # choose between; a selector with a single entry would be noise.
-        chosen = SINGLE_RUN
+    if len(names) == 1:
+        # Nothing to choose between, so no selector: a run from the map trains
+        # one device layout, and a sweep can also have been run over a single
+        # Ausstattungsgrad. Testing for SINGLE_RUN alone missed the second case
+        # and left a dropdown with one option that could not change anything.
+        chosen = names[0]
+        if (only := penetration_of(chosen)) is not None:
+            st.session_state[PENETRATION_STATE] = only
     else:
         # Share the Ausstattungsgrad with the other tabs: switching to 60 % on the
         # utilisation tab should show the 60 % training run here, not whatever this
@@ -450,11 +454,11 @@ def render_training(output_dir: str | Path, summary: list[dict[str, Any]] | None
                     f"Die gelernte Policy liegt auf Platz {rank} von {len(rewards)}; "
                     f"vorn liegt „{best['Szenario']}“ mit {best['Reward']:.1f} "
                     f"gegenüber {learned.iloc[0]['Reward']:.1f}. Der Reward misst "
-                    "den Eigennutz der Haushalte, nicht die Netzentlastung — die "
+                    "den Eigennutz der Haushalte, nicht die Netzentlastung; die "
                     "steht im Reiter Überblick."
                 )
         download_pair(rewards.drop(columns=["scenario", "gelernt"]),
-                      "Reward je Strategie", f"{key}_reward_vergleich")
+                      "Reward je Strategie", f"{key}_reward_comparison")
 
     entropy = entropy_frame(records)
     if not entropy.empty:

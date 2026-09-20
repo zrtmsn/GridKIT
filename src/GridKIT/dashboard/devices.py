@@ -1,6 +1,6 @@
-# dashboard/geraete.py
+# dashboard/devices.py
 # ─────────────────────────────────────────────────────────────
-# Geräte & Haushalte — was EV, Batterie und Wärmepumpe tatsächlich getan haben.
+# Devices & households: what the EV, the battery and the heat pump actually did.
 #
 # Reads only agreed fields:
 #   summary.json    hp_comfort_*, battery_throughput_kwh_*, battery_full_cycles_*, soc_*
@@ -12,7 +12,7 @@
 # The one derived value in the whole dashboard lives here: an indoor
 # temperature approximated from the heat pump's thermal buffer, because
 # "0,72" tells a reader nothing and "21,7 °C" tells them everything. It is a
-# display conversion with declared assumptions, NOT a simulated temperature —
+# display conversion with declared assumptions, NOT a simulated temperature;
 # see INDOOR_TEMP_* below.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
@@ -23,15 +23,15 @@ import numpy as np
 import pandas as pd
 
 from dashboard import theme
-from dashboard.auslastung import format_hour, hours_axis
+from dashboard.utilization import format_hour, hours_axis
 from dashboard.controls import scenario_penetration_picker
 from dashboard.export import download_pair
 
-# ── Innenraumtemperatur: Annahmen, nicht Simulation ──────────
+# ── Indoor temperature: assumptions, not simulation ──────────
 # The environment models the heat pump as a thermal buffer (house inertia) and
 # never computes a temperature. Turning the buffer level into °C therefore needs
 # two anchors, chosen so the numbers mean something to a reader:
-#   * at the model's own comfort floor the house sits at 20 °C — the German
+#   * at the model's own comfort floor the house sits at 20 °C, the German
 #     design indoor temperature for living space (DIN EN 12831),
 #   * a full buffer is 23 °C, a comfortably warm house.
 # Linear between and beyond. Change these two numbers and every temperature in
@@ -42,7 +42,7 @@ HP_COMFORT_MIN_SOC = 0.30       # mirrors core.constants.HP_COMFORT_MIN_SOC
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit — unit-testbar)
+# Pure helpers (no Streamlit, unit-tested)
 # ══════════════════════════════════════════════════════════════
 def indoor_temperature(thermal_soc: float) -> float:
     """Approximate indoor temperature (°C) from the heat pump's buffer level.
@@ -92,7 +92,7 @@ def household_frame(timeline: dict[str, Any]) -> pd.DataFrame:
     """One representative household: power, state of charge, indoor temperature.
 
     `ev_available` is carried through as a boolean so the EV chart can shade the
-    window the car was actually plugged in — an EV at a flat SoC is a completely
+    window the car was actually plugged in: an EV at a flat SoC is a completely
     different story depending on whether it was home and idle or simply away.
     """
     ev_power = timeline.get("house_ev_power") or []
@@ -179,7 +179,7 @@ def scenario_devices(summary: list[dict[str, Any]], penetration: float) -> pd.Da
 
 
 # ══════════════════════════════════════════════════════════════
-# Streamlit-Ansicht
+# Streamlit view
 # ══════════════════════════════════════════════════════════════
 _HOUR_AXIS = dict(
     values=[12, 15, 18, 21, 24, 27, 30, 33, 36],
@@ -231,7 +231,7 @@ def _ev_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     away = frame[~frame["EV angeschlossen"]]
     if away.empty:
         return soc.properties(width="container", height=240)
-    # shade the time the car was NOT plugged in — a flat SoC means something
+    # shade the time the car was NOT plugged in: a flat SoC means something
     # different depending on whether the car was home and idle or simply gone
     shade = (
         alt.Chart(away)
@@ -297,12 +297,12 @@ def _hp_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
     return (floor + line).properties(width="container", height=240)
 
 
-def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]],
+def render_devices(summary: list[dict[str, Any]], timelines: list[dict[str, Any]],
                    key: str = "geraete") -> None:  # pragma: no cover (UI)
-    """Der Geräte-Reiter: Leistung je Gerätetyp und ein Haushalt im Detail."""
+    """The devices tab: power per device type, and one household in detail."""
     import streamlit as st
 
-    from dashboard.auslastung import select_timeline
+    from dashboard.utilization import select_timeline
 
     if not timelines:
         st.info("Keine Zeitreihen vorhanden. Zuerst ein Experiment ausführen.")
@@ -336,7 +336,7 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
     st.altair_chart(_device_power_chart(timeline), width="stretch")
     download_pair(device_power_frame(timeline), "Geräteleistung", f"{key}_leistung")
 
-    # ── Szenarienvergleich der Gerätekennzahlen ───────────────
+    # ── Scenario comparison of the device metrics ───────────────
     table = scenario_devices(summary or [], penetration)
     if not table.empty and table.drop(columns=["Szenario"]).notna().any().any():
         # Naming the Ausstattungsgrad only helps when there is another one to
@@ -354,14 +354,14 @@ def render_geraete(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
         )
         download_pair(table, "Gerätekennzahlen", f"{key}_kennzahlen")
 
-    # ── Ein Haushalt im Detail ────────────────────────────────
+    # ── One household in detail ────────────────────────────────
     st.subheader("Ein repräsentativer Haushalt")
     frame = household_frame(timeline)
     if frame.empty:
         st.info("Für diesen Lauf wurden keine Haushaltsdetails aufgezeichnet.")
         return
     download_pair(frame, "Haushalt", f"{key}_haushalt",
-                  label="Alle Reihen dieses Haushalts")
+                  label="Alle Werte dieses Haushalts als Tabelle")
 
     ev_tab, batt_tab, hp_tab = st.tabs(["EV", "Batterie", "Wärmepumpe"])
 

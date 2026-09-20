@@ -60,7 +60,7 @@ def test_find_metric_files_on_missing_dir_is_empty(tmp_path):
 
 def test_finds_metrics_of_a_run_started_from_the_map(tmp_path):
     # train_run.py trains one device layout and writes the metrics at the run
-    # root, with no pen_* level — the training tab used to come up empty for
+    # root, with no pen_* level; the training tab used to come up empty for
     # exactly the runs a user creates by drawing an area
     (tmp_path / METRICS_FILENAME).write_text("[]", encoding="utf-8")
     (tmp_path / "checkpoints").mkdir()
@@ -188,7 +188,7 @@ def test_unknown_policy_falls_back_to_its_id():
     assert theme.policy_label("mystery_policy") == "mystery_policy"
 
 
-# ── Zoom auf die konvergierte Phase ──────────────────────────
+# ── Zoom on the converged phase ──────────────────────────
 def _run(values):
     """One record per value, with a spread of ±10 around it."""
     return [_record(i + 1, v, v - 10.0, v + 10.0) for i, v in enumerate(values)]
@@ -216,7 +216,7 @@ def test_convergence_domain_of_a_short_run_is_none():
 
 def test_convergence_domain_of_a_flat_run_is_none():
     # identical returns with no spread give a zero-height domain, which would
-    # collapse the chart — fall back to the automatic axis instead
+    # collapse the chart; fall back to the automatic axis instead
     frame = return_frame([_record(i, -900.0) for i in range(1, 13)])
     assert convergence_domain(frame) is None
 
@@ -234,7 +234,7 @@ def test_iterations_outside_without_a_domain_is_zero():
     assert iterations_outside(return_frame(_run([-900.0] * 12)), None) == 0
 
 
-# ── Reward je Strategie ──────────────────────────────────────
+# ── Reward per strategy ──────────────────────────────────────
 def _summary_row(scenario, reward, std=1.0, penetration=0.6):
     return {"scenario": scenario, "penetration": penetration,
             "reward_mean": reward, "reward_std": std}
@@ -292,3 +292,17 @@ def test_evaluated_rewards_of_nothing_is_empty_but_typed():
     frame = evaluated_rewards([])
     assert frame.empty
     assert list(frame.columns) == ["scenario", "Szenario", "Reward", "Streuung", "gelernt"]
+
+
+# ── One level needs no selector ──────────────────────────────
+def test_a_sweep_over_a_single_level_offers_nothing_to_choose(tmp_path):
+    # the training tab hides its selector when there is one entry; a sweep run
+    # over one Ausstattungsgrad reaches that state too, not just a map run, and
+    # testing for SINGLE_RUN alone left a dropdown with a single option
+    _sweep(tmp_path, "pen_60")
+    assert len(find_metric_files(tmp_path)) == 1
+
+
+def test_a_sweep_over_several_levels_still_needs_the_selector(tmp_path):
+    _sweep(tmp_path, "pen_20", "pen_40", "pen_60")
+    assert len(find_metric_files(tmp_path)) == 3
