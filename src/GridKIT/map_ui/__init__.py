@@ -2,21 +2,11 @@
 GridKIT map_ui package.
 
 Public API:
-    from map_ui import build_grid_network_from_bounds, AreaBounds
+    from map_ui import AreaBounds
 """
 
-from map_ui.osm_fetcher import (
-    AreaBounds,
-    MapUiBuildResult,
-    OsmFetchConfig,
-    build_grid_network_from_bounds,
-    fetch_overpass_json,
-)
+from map_ui.area_bounds import AreaBounds
 
 __all__ = [
     "AreaBounds",
-    "MapUiBuildResult",
-    "OsmFetchConfig",
-    "build_grid_network_from_bounds",
-    "fetch_overpass_json",
 ]
