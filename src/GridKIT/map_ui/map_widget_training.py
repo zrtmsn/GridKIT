@@ -34,16 +34,15 @@ def show_training_section(network, household_configuration: dict[str, Any]) -> N
         )
 
     st.caption(
-        "Speichert dieses Netz mit der aktuellen Haushaltskonfiguration unter `runs/`, sodass mehrere "
-        "Netze parallel gespeichert werden können. Trainings-Details (Iterationen, Gewichtung o. Ä.) "
-        "werden bewusst nicht angezeigt — ein Lauf verwendet immer dieselben, festen Einstellungen."
+        "Das ausgewählte Netz wird zusammen mit der aktuellen Haushaltskonfiguration gespeichert. "
+        "Dadurch können mehrere Szenarien unabhängig voneinander abgelegt und später weiterverwendet werden."
     )
 
     n_households = len(getattr(network, "household_bus_ids", []))
     default_name = f"{getattr(network, 'area_name', None) or network.network_id} ({n_households} Haushalte)"
 
     run_name = st.text_input(
-        "Name für diesen Lauf",
+        "Name der Netzwerkkonfiguration",
         value=default_name,
         help="Nur ein Anzeigename, um mehrere gespeicherte Netze auseinanderzuhalten — muss nicht eindeutig sein.",
     )
