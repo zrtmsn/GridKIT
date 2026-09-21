@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections import defaultdict, deque
 from math import cos, radians, sqrt
 from typing import Any
@@ -10,70 +9,40 @@ DEFAULT_MAP_CENTER = (49.0069, 8.4037)
 ALL_NETWORK_OPTION = "__all_network__"
 
 
-def format_transformer_option(option: str, network=None) -> str:
+def format_transformer_option(option: str) -> str:
     """
     Convert internal selectbox values into user-facing labels.
     """
     if option == ALL_NETWORK_OPTION:
         return "Gesamtes Netz anzeigen"
 
-    if network is not None:
-        return transformer_area_display_label(network, option)
-
-    return transformer_display_label(option)
+    return transformer_area_display_label(option)
 
 
-def transformer_area_display_label(network, trafo_id: str) -> str:
+def transformer_area_display_label(trafo_id: str) -> str:
     """
     Return a user-friendly label for one selectable transformer area.
+
+    Wraps the id as-is (no recomputed numbering) so the same transformer
+    reads identically here and in the dashboard's overload map, which shows
+    trafo_id directly.
     """
-    selectable_ids = selectable_transformer_ids(network)
-    trafo_id = str(trafo_id)
-
-    try:
-        area_number = selectable_ids.index(trafo_id) + 1
-    except ValueError:
-        area_number = None
-
-    info = parse_transformer_id(trafo_id)
-    lv_grid_id = info["lv_grid_id"]
-
-    if area_number is None:
-        if lv_grid_id is not None:
-            return f"Transformatorbereich – Netz {lv_grid_id}"
-
-        return "Transformatorbereich"
-
-    if lv_grid_id is not None:
-        return f"Transformatorbereich {area_number} – Netz {lv_grid_id}"
-
-    return f"Transformatorbereich {area_number}"
+    return f"Transformatorbereich {trafo_id}"
 
 
 def selectable_transformers(network) -> list[Any]:
     """
-    Return transformers that should be visible as user-facing selection options.
+    Return transformers that should be visible as user-facing selection options —
+    one per physical busbar (transformer.lv_bus), since parallel/reinforced
+    transformers on the same busbar are the same electrical area.
     """
-    selected_by_lv_grid: dict[str, Any] = {}
-    transformers_without_lv_grid: list[Any] = []
+    seen_lv_bus: dict[str, Any] = {}
 
     for transformer in getattr(network, "transformers", []):
-        trafo_id = str(transformer.trafo_id)
-        info = parse_transformer_id(trafo_id)
+        lv_bus = str(transformer.lv_bus)
+        seen_lv_bus.setdefault(lv_bus, transformer)
 
-        if info["is_reinforced"]:
-            continue
-
-        lv_grid_id = info["lv_grid_id"]
-
-        if lv_grid_id is None:
-            transformers_without_lv_grid.append(transformer)
-            continue
-
-        if lv_grid_id not in selected_by_lv_grid:
-            selected_by_lv_grid[lv_grid_id] = transformer
-
-    return list(selected_by_lv_grid.values()) + transformers_without_lv_grid
+    return list(seen_lv_bus.values())
 
 
 def selectable_transformer_ids(network) -> list[str]:
@@ -85,11 +54,8 @@ def selectable_transformer_ids(network) -> list[str]:
 
 def filter_network_by_transformer(network, trafo_id: str):
     """
-    Return a copy of the GridNetwork containing only the selected transformer area.
-
-    Household assignment is based on model/source identifiers. A household with
-    a different source assignment is not kept only because it is topologically
-    reachable through a line.
+    Return a copy of the GridNetwork containing only the selected transformer area
+    (topologically reachable from it — see reachable_bus_ids_for_transformer).
     """
     selected_transformer = transformer_by_id(network, trafo_id)
     selected_transformers = transformer_group_members(network, trafo_id)
@@ -161,17 +127,11 @@ def filter_network_by_transformer(network, trafo_id: str):
 
 def reachable_bus_ids_for_transformer(network, trafo_id: str) -> set[str]:
     """
-    Find buses belonging to the selected transformer area.
-
-    This combines:
-    - topology traversal from the selected transformer's low-voltage side
-    - explicit area assignment from source/model IDs
-
-    No geographic distance or coordinate-based household assignment is used.
+    Find buses belonging to the selected transformer area, by pure topology:
+    a line-connected BFS from the transformer's low-voltage side, stopping at
+    any other transformer's buses (each transformer area is its own island).
     """
     selected_transformer = transformer_by_id(network, trafo_id)
-    selected_transformer_info = parse_transformer_id(str(selected_transformer.trafo_id))
-    selected_lv_grid_id = selected_transformer_info["lv_grid_id"]
 
     selected_transformer_ids = {
         str(transformer.trafo_id)
@@ -213,30 +173,14 @@ def reachable_bus_ids_for_transformer(network, trafo_id: str) -> set[str]:
         visited.add(str(transformer.hv_bus))
         visited.add(str(transformer.lv_bus))
 
-    visited.update(bus_ids_for_lv_grid(network, selected_lv_grid_id))
-    visited.update(household_ids_for_lv_grid(network, selected_lv_grid_id))
-
     return visited
 
 
 def assigned_household_ids_for_transformer(network, trafo_id: str) -> set[str]:
     """
-    Return the household IDs assigned to the selected transformer area.
-
-    If the transformer has an LV-grid/source area ID, household assignment is
-    based on matching source/model identifiers. This avoids assigning households
-    only because they are topologically reachable through a line.
+    Return the household IDs assigned to the selected transformer area
+    (those topologically reachable from it — see reachable_bus_ids_for_transformer).
     """
-    selected_transformer = transformer_by_id(network, trafo_id)
-    selected_info = parse_transformer_id(str(selected_transformer.trafo_id))
-    selected_lv_grid_id = selected_info["lv_grid_id"]
-
-    if selected_lv_grid_id is not None:
-        matching_households = household_ids_for_lv_grid(network, selected_lv_grid_id)
-
-        if matching_households:
-            return matching_households
-
     reachable_bus_ids = reachable_bus_ids_for_transformer(network, trafo_id)
 
     return {
@@ -275,25 +219,13 @@ def transformer_by_id(network, trafo_id: str):
 
 def transformer_group_members(network, trafo_id: str) -> list[Any]:
     """
-    Return all transformers that belong to the same user-facing transformer area.
+    Return all transformers sharing the same physical busbar (lv_bus) as
+    trafo_id — a real ding0 "reinforced" pair is two transformers on one bus.
     """
-    selected_info = parse_transformer_id(trafo_id)
-    selected_lv_grid_id = selected_info["lv_grid_id"]
-
     selected_transformer = transformer_by_id(network, trafo_id)
+    lv_bus = str(selected_transformer.lv_bus)
 
-    if selected_lv_grid_id is None:
-        return [selected_transformer]
-
-    members = []
-
-    for transformer in network.transformers:
-        info = parse_transformer_id(str(transformer.trafo_id))
-
-        if info["lv_grid_id"] == selected_lv_grid_id:
-            members.append(transformer)
-
-    return members or [selected_transformer]
+    return [t for t in network.transformers if str(t.lv_bus) == lv_bus]
 
 
 def transformer_marker_rows(network) -> list[dict[str, Any]]:
@@ -310,7 +242,6 @@ def transformer_marker_rows(network) -> list[dict[str, Any]]:
 
         lat, lon = coords
         trafo_id = str(transformer.trafo_id)
-        trafo_info = parse_transformer_id(trafo_id)
 
         feeder_bus_ids = reachable_bus_ids_for_transformer(network, trafo_id)
         household_ids = sorted(assigned_household_ids_for_transformer(network, trafo_id))
@@ -320,11 +251,8 @@ def transformer_marker_rows(network) -> list[dict[str, Any]]:
         rows.append(
             {
                 "trafo_id": trafo_id,
-                "display_label": transformer_area_display_label(network, trafo_id),
-                "lv_grid_id": trafo_info["lv_grid_id"],
-                "trafo_number": trafo_info["trafo_number"],
-                "is_reinforced": trafo_info["is_reinforced"],
-                "role": trafo_info["role"],
+                "display_label": transformer_area_display_label(trafo_id),
+                "is_reinforced": len(transformer_group_members(network, trafo_id)) > 1,
                 "lat": lat,
                 "lon": lon,
                 "household_count": len(household_ids),
@@ -501,134 +429,20 @@ def device_summary_for_households(network, household_ids: list[str]) -> dict[str
 
 def transformer_display_label(trafo_id: str) -> str:
     """
-    Return a readable label for technical transformer IDs.
+    Return a readable label for a transformer ID (already human-readable —
+    see grid_model.builder.assign_clean_ids — so this just wraps it).
     """
-    info = parse_transformer_id(trafo_id)
-
-    if info["lv_grid_id"] is None:
-        return f"Trafo {info['raw_id']}"
-
-    trafo_number_suffix = (
-        f" {info['trafo_number']}"
-        if info["trafo_number"] is not None
-        else ""
-    )
-
-    if info["is_reinforced"]:
-        return f"LV-Grid {info['lv_grid_id']} – Verstärkungs-Trafo{trafo_number_suffix}"
-
-    return f"LV-Grid {info['lv_grid_id']} – Trafo{trafo_number_suffix}"
+    return f"Transformator {trafo_id}"
 
 
-def parse_transformer_id(trafo_id: str) -> dict[str, Any]:
-    """
-    Parse GridCreator transformer IDs into display metadata.
-    """
-    raw_id = str(trafo_id)
-    prefix = "Transformer_lv_grid_"
-
-    if not raw_id.startswith(prefix):
-        return {
-            "raw_id": raw_id,
-            "lv_grid_id": None,
-            "trafo_number": None,
-            "is_reinforced": False,
-            "role": "unknown",
-        }
-
-    rest = raw_id[len(prefix):]
-
-    if "_reinforced_" in rest:
-        lv_grid_id, trafo_number = rest.split("_reinforced_", 1)
-
-        return {
-            "raw_id": raw_id,
-            "lv_grid_id": lv_grid_id,
-            "trafo_number": trafo_number,
-            "is_reinforced": True,
-            "role": "reinforced_transformer",
-        }
-
-    parts = rest.rsplit("_", 1)
-
-    if len(parts) == 2:
-        lv_grid_id, trafo_number = parts
-    else:
-        lv_grid_id = rest
-        trafo_number = None
-
-    return {
-        "raw_id": raw_id,
-        "lv_grid_id": lv_grid_id,
-        "trafo_number": trafo_number,
-        "is_reinforced": False,
-        "role": "regular_transformer",
-    }
-
-
-def lv_grid_id_from_bus_id(bus_id: str) -> str | None:
-    """
-    Extract the LV-grid ID from a bus or household ID.
-
-    This uses only the model/source identifier and does not use coordinates.
-    """
-    bus_id = str(bus_id)
-
-    patterns = [
-        r"(?:^|_)lvgd_(\d+)(?=_|$)",
-        r"(?:^|_)lv_grid_(\d+)(?=_|$)",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, bus_id)
-
-        if match:
-            return match.group(1)
-
-    return None
-
-
-def household_ids_for_lv_grid(network, lv_grid_id: str | None) -> set[str]:
-    """
-    Return all household IDs that explicitly belong to the given LV grid.
-    """
-    if lv_grid_id is None:
-        return set()
-
-    return {
-        str(bus_id)
-        for bus_id in getattr(network, "household_bus_ids", [])
-        if lv_grid_id_from_bus_id(str(bus_id)) == str(lv_grid_id)
-    }
-
-
-def bus_ids_for_lv_grid(network, lv_grid_id: str | None) -> set[str]:
-    """
-    Return all bus IDs that explicitly belong to the given LV grid.
-    """
-    if lv_grid_id is None:
-        return set()
-
-    return {
-        str(bus.bus_id)
-        for bus in getattr(network, "buses", [])
-        if lv_grid_id_from_bus_id(str(bus.bus_id)) == str(lv_grid_id)
-    }
-
-
-def transformer_metadata_for_id(trafo_id: str) -> dict[str, Any]:
+def transformer_metadata_for_id(trafo_id: str, network) -> dict[str, Any]:
     """
     Return readable and technical metadata for one transformer ID.
     """
-    info = parse_transformer_id(trafo_id)
-
     return {
         "trafo_id": str(trafo_id),
         "display_label": transformer_display_label(trafo_id),
-        "lv_grid_id": info["lv_grid_id"],
-        "trafo_number": info["trafo_number"],
-        "is_reinforced": info["is_reinforced"],
-        "role": info["role"],
+        "is_reinforced": len(transformer_group_members(network, trafo_id)) > 1,
     }
 
 

@@ -68,10 +68,27 @@ def assign_clean_ids(
 
     trafo_id_map: dict[str, str] = {}
     bus_id_map: dict[str, str] = {}
-    for i, trafo in enumerate(sorted(transformers, key=lambda t: t.trafo_id), start=1):
-        trafo_id_map[trafo.trafo_id] = f"transformer_{i}"
-        bus_id_map.setdefault(trafo.hv_bus, f"transformer_{i}_hv")
-        bus_id_map.setdefault(trafo.lv_bus, f"transformer_{i}_lv")
+
+    # Group by lv_bus BEFORE numbering: two transformers can share one real
+    # busbar (a ding0 "reinforced" parallel pair). Numbering raw rows 1..N
+    # independently of that leaves gaps in the hv/lv bus names — the busbar
+    # keeps whichever member's number claimed it first, so the other
+    # member's own number never appears on any bus.
+    groups: dict[str, list[TransformerModel]] = {}
+    for trafo in transformers:
+        groups.setdefault(trafo.lv_bus, []).append(trafo)
+
+    for i, lv_bus in enumerate(sorted(groups, key=lambda b: min(t.trafo_id for t in groups[b])), start=1):
+        members = sorted(groups[lv_bus], key=lambda t: t.trafo_id)
+        bus_id_map[lv_bus] = f"transformer_{i}_lv"
+        for member in members:
+            bus_id_map.setdefault(member.hv_bus, f"transformer_{i}_hv")
+
+        trafo_id_map[members[0].trafo_id] = f"transformer_{i}"
+        for j, member in enumerate(members[1:], start=2):
+            trafo_id_map[member.trafo_id] = (
+                f"transformer_{i}_reinforced" if j == 2 else f"transformer_{i}_reinforced_{j}"
+            )
 
     for i, bus_id in enumerate(sorted(household_bus_ids), start=1):
         bus_id_map.setdefault(bus_id, f"household_{i}")

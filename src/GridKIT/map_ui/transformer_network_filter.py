@@ -10,18 +10,14 @@ from map_ui.transformer_network_filter_helpers import (
     ALL_NETWORK_OPTION,
     assigned_household_ids_for_transformer,
     bus_by_id,
-    bus_ids_for_lv_grid,
     device_summary,
     device_summary_for_households,
     distance_m,
     filter_network_by_transformer,
     format_transformer_option,
-    household_ids_for_lv_grid,
     line_adjacency,
-    lv_grid_id_from_bus_id,
     map_center_from_transformers_or_network,
     nearest_transformer_id,
-    parse_transformer_id,
     percent,
     reachable_bus_ids_for_transformer,
     read_object_value,
@@ -134,7 +130,7 @@ def show_transformer_selection(full_network):
         "Netzkonfiguration auswählen",
         options=options,
         index=selected_index,
-        format_func=lambda option: format_transformer_option(option, full_network),
+        format_func=format_transformer_option,
         help=(
             "Mit „Gesamtes Netz anzeigen“ wird die vollständige erzeugte Netzwerkkonfiguration angezeigt. "
             "Bei Auswahl eines Transformatorbereichs wird das Netz auf diesen Bereich gefiltert. "
@@ -185,7 +181,7 @@ def show_transformer_selection(full_network):
                     "mode": "complete_network",
                     "selected_trafo_id": None,
                     "available_transformer_areas": [
-                        transformer_metadata_for_id(trafo_id)
+                        transformer_metadata_for_id(trafo_id, full_network)
                         for trafo_id in trafo_options
                     ],
                     "internal_transformer_count": len(full_network.transformers),
@@ -201,11 +197,7 @@ def show_transformer_selection(full_network):
     st.session_state["built_network"] = filtered_network
 
     selected_transformer = transformer_by_id(full_network, active_trafo_id)
-    selected_transformer_label = transformer_area_display_label(
-        full_network,
-        selected_transformer.trafo_id,
-    )
-    selected_transformer_info = parse_transformer_id(selected_transformer.trafo_id)
+    selected_transformer_label = transformer_area_display_label(selected_transformer.trafo_id)
     filtered_device_summary = device_summary(filtered_network)
 
     st.info(
@@ -231,12 +223,9 @@ def show_transformer_selection(full_network):
                 "mode": "transformer_feeder",
                 "trafo_id": selected_transformer.trafo_id,
                 "display_label": selected_transformer_label,
-                "lv_grid_id": selected_transformer_info["lv_grid_id"],
-                "trafo_number": selected_transformer_info["trafo_number"],
-                "is_reinforced": selected_transformer_info["is_reinforced"],
-                "role": selected_transformer_info["role"],
+                "is_reinforced": len(transformer_group_members(full_network, active_trafo_id)) > 1,
                 "included_transformers": [
-                    transformer_metadata_for_id(transformer.trafo_id)
+                    transformer_metadata_for_id(transformer.trafo_id, full_network)
                     for transformer in transformer_group_members(full_network, active_trafo_id)
                 ],
                 "hv_bus": selected_transformer.hv_bus,
@@ -244,8 +233,8 @@ def show_transformer_selection(full_network):
                 "s_nom_mva": selected_transformer.s_nom_mva,
                 "vn_hv_kv": selected_transformer.vn_hv_kv,
                 "vn_lv_kv": selected_transformer.vn_lv_kv,
-                "filtering": "topology_and_model_id_based",
-                "household_assignment": "model_source_identifier_based",
+                "filtering": "topology_based",
+                "household_assignment": "topology_based",
                 "device_summary": filtered_device_summary,
             }
         )
@@ -306,11 +295,8 @@ def make_transformer_selection_map(
             else row["display_label"]
         )
 
-        lv_grid_label = row["lv_grid_id"] if row["lv_grid_id"] is not None else "Unbekannt"
-
         popup_html = f"""
         <b>{row["display_label"]}</b><br>
-        LV-Grid: {lv_grid_label}<br>
         Haushalte im Transformatorbereich: {row["household_count"]}<br>
         Knoten im Transformatorbereich: {row["bus_count"]}<br>
         Haushalte mit Elektroauto: {row["ev_count"]}<br>
@@ -338,18 +324,14 @@ __all__ = [
     "make_transformer_selection_map",
     "assigned_household_ids_for_transformer",
     "bus_by_id",
-    "bus_ids_for_lv_grid",
     "device_summary",
     "device_summary_for_households",
     "distance_m",
     "filter_network_by_transformer",
     "format_transformer_option",
-    "household_ids_for_lv_grid",
     "line_adjacency",
-    "lv_grid_id_from_bus_id",
     "map_center_from_transformers_or_network",
     "nearest_transformer_id",
-    "parse_transformer_id",
     "percent",
     "reachable_bus_ids_for_transformer",
     "read_object_value",
