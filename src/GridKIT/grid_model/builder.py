@@ -38,6 +38,82 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
+def assign_clean_ids(
+    buses: list[BusModel],
+    lines: list[LineModel],
+    transformers: list[TransformerModel],
+    household_bus_ids: list[str],
+    household_load_profile_kw: dict[str, list[float]] | None = None,
+    ev_availability: dict[str, list[bool]] | None = None,
+    household_devices: dict[str, HouseholdDevices] | None = None,
+) -> tuple[list[BusModel], list[LineModel], list[TransformerModel], list[str],
+           dict[str, list[float]], dict[str, list[bool]], dict[str, HouseholdDevices]]:
+    """Replace GridCreator's/ding0's verbose internal ids (e.g.
+    "BranchTee_mvgd_32359_lvgd_6762200004_building_5260160") with short,
+    human-readable ones — "household_1", "transformer_1_lv", "bus_3",
+    "line_7". These ids are shown directly to the user (map popups,
+    household config, the dashboard's overload map) and are used as dict
+    keys throughout the rest of the pipeline, so renaming once here, right
+    at extraction, is enough to fix it everywhere downstream.
+
+    Numbering is deterministic (alphabetical over the ORIGINAL ids), so the
+    same GridCreator/ding0 output always gets the same clean names. A bus
+    that is both a transformer's hv/lv bus and (rarely) also carries a
+    household load keeps its transformer-derived name — the electrical role
+    wins over the household numbering.
+    """
+    household_load_profile_kw = household_load_profile_kw or {}
+    ev_availability = ev_availability or {}
+    household_devices = household_devices or {}
+
+    trafo_id_map: dict[str, str] = {}
+    bus_id_map: dict[str, str] = {}
+    for i, trafo in enumerate(sorted(transformers, key=lambda t: t.trafo_id), start=1):
+        trafo_id_map[trafo.trafo_id] = f"transformer_{i}"
+        bus_id_map.setdefault(trafo.hv_bus, f"transformer_{i}_hv")
+        bus_id_map.setdefault(trafo.lv_bus, f"transformer_{i}_lv")
+
+    for i, bus_id in enumerate(sorted(household_bus_ids), start=1):
+        bus_id_map.setdefault(bus_id, f"household_{i}")
+
+    remaining = sorted(b.bus_id for b in buses if b.bus_id not in bus_id_map)
+    for i, bus_id in enumerate(remaining, start=1):
+        bus_id_map[bus_id] = f"bus_{i}"
+
+    line_id_map = {
+        ln.line_id: f"line_{i}"
+        for i, ln in enumerate(sorted(lines, key=lambda l: l.line_id), start=1)
+    }
+
+    new_buses = [b.model_copy(update={"bus_id": bus_id_map[b.bus_id]}) for b in buses]
+    new_lines = [
+        ln.model_copy(update={
+            "line_id": line_id_map[ln.line_id],
+            "from_bus": bus_id_map[ln.from_bus],
+            "to_bus": bus_id_map[ln.to_bus],
+        })
+        for ln in lines
+    ]
+    new_transformers = [
+        t.model_copy(update={
+            "trafo_id": trafo_id_map[t.trafo_id],
+            "hv_bus": bus_id_map[t.hv_bus],
+            "lv_bus": bus_id_map[t.lv_bus],
+        })
+        for t in transformers
+    ]
+    new_household_bus_ids = [bus_id_map[b] for b in household_bus_ids]
+    new_household_load_profile_kw = {bus_id_map[b]: v for b, v in household_load_profile_kw.items()}
+    new_ev_availability = {bus_id_map[b]: v for b, v in ev_availability.items()}
+    new_household_devices = {
+        bus_id_map[b]: dev.model_copy(update={"bus_id": bus_id_map[b]})
+        for b, dev in household_devices.items()
+    }
+
+    return (new_buses, new_lines, new_transformers, new_household_bus_ids,
+            new_household_load_profile_kw, new_ev_availability, new_household_devices)
+
+
 class StubNetworkBuilder(NetworkBuilderProtocol):
     """
     Loads a GridNetwork from a JSON file. Defaults to the small test stub
@@ -394,6 +470,12 @@ buses_df.to_csv(os.path.join(output_dir, 'buses.csv'))
                     if storage_kwh > 0 else None
                 ),
             )
+
+        (buses, lines, transformers, household_bus_ids,
+         household_load_profile_kw, ev_availability, household_devices) = assign_clean_ids(
+            buses, lines, transformers, household_bus_ids,
+            household_load_profile_kw, ev_availability, household_devices,
+        )
 
         return GridNetwork(
             network_id=self.scenario,

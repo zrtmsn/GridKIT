@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 from core.models import BusModel, GridNetwork, LineModel, TransformerModel
+from grid_model.builder import assign_clean_ids
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _VENDOR_GRIDCREATOR = _REPO_ROOT / "vendor" / "GridCreator"
@@ -125,6 +126,10 @@ def _network_from_pypsa(n, network_id: str, residential_only: bool) -> GridNetwo
         wanted = []
     bus_ids = {b.bus_id for b in buses}
     household_bus_ids = [b for b in wanted if b in bus_ids]
+
+    buses, lines, transformers, household_bus_ids, _, _, _ = assign_clean_ids(
+        buses, lines, transformers, household_bus_ids,
+    )
 
     return GridNetwork(
         network_id=network_id,
