@@ -37,6 +37,7 @@ def available_penetrations(timelines: list[dict[str, Any]]) -> list[float]:
 
 
 def _sync(widget_key: str, shared_key: str) -> None:  # pragma: no cover (UI callback)
+    """on_change handler: copy this tab's pick into the state every tab reads."""
     import streamlit as st
 
     st.session_state[shared_key] = st.session_state[widget_key]

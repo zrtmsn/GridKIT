@@ -2,18 +2,14 @@
 # ─────────────────────────────────────────────────────────────
 # Devices & households: what the EV, the battery and the heat pump actually did.
 #
-# Reads only agreed fields:
-#   summary.json    hp_comfort_*, battery_throughput_kwh_*, battery_full_cycles_*, soc_*
-#   timelines.json  ev_power, battery_power, hp_power, pv_generation,
-#                   house_ev_power / _soc / _available,
-#                   house_battery_power / _soc / _charge_cumulative_kwh / _discharge_cumulative_kwh,
-#                   house_hp_power / _soc
+# Reads the device fields of summary.json (comfort, throughput, cycles, SoC)
+# and the per-device and per-household series of timelines.json.
 #
 # The one derived value in the whole dashboard lives here: an indoor
-# temperature approximated from the heat pump's thermal buffer, because
-# "0,72" tells a reader nothing and "21,7 °C" tells them everything. It is a
-# display conversion with declared assumptions, NOT a simulated temperature;
-# see INDOOR_TEMP_* below.
+# temperature approximated from the heat pump's thermal buffer, because "0,72"
+# tells a reader nothing and "21,7 °C" tells them everything. A display
+# conversion with declared assumptions, NOT a simulated temperature; see
+# INDOOR_TEMP_* below.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -100,6 +96,7 @@ def household_frame(timeline: dict[str, Any]) -> pd.DataFrame:
     hours = hours_axis(n)
 
     def col(name: str) -> list[float]:
+        """One timeline field as floats, padded with NaN to the episode length."""
         values = timeline.get(name) or []
         return [float(v) for v in values] + [float("nan")] * (n - len(values))
 
@@ -188,6 +185,7 @@ _HOUR_AXIS = dict(
 
 
 def _device_power_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
+    """Power per device type over the day, one line each, summed over all households."""
     import altair as alt
 
     frame = device_power_frame(timeline)
@@ -217,6 +215,7 @@ def _device_power_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
 
 
 def _ev_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
+    """One household's EV: charging power and state of charge, with the hours away shaded."""
     import altair as alt
 
     soc = (
@@ -242,6 +241,7 @@ def _ev_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
 
 
 def _battery_chart(frame: pd.DataFrame, cycles: pd.DataFrame):  # pragma: no cover (UI)
+    """One household's battery: signed power, state of charge, and cumulative cycles."""
     import altair as alt
 
     soc = (
@@ -275,6 +275,7 @@ def _battery_chart(frame: pd.DataFrame, cycles: pd.DataFrame):  # pragma: no cov
 
 
 def _hp_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
+    """One household's heat pump: power and indoor temperature against the comfort floor."""
     import altair as alt
 
     floor = (

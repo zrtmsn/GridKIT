@@ -2,14 +2,12 @@
 # ─────────────────────────────────────────────────────────────
 # Grid utilisation in quarter-hour values: the utilisation tab.
 #
-# Reads only fields run_experiment.py already writes to timelines.json:
-#   transformer_loading, max_line_loading, curtailment,
-#   overloaded_transformers, overloaded_lines
+# Reads the loading and overload fields of timelines.json.
 #
 # Why BOTH loading series are always drawn together: a low-voltage grid is
 # cable-limited long before the transformer notices. In the 17-household
 # reference run the transformer sits at a comfortable-looking 80 % while the
-# service cables run at 295 %; showing the transformer figure alone reads
+# service cables run at 295 %, so the transformer figure alone reads
 # "unauffällig" straight through a threefold thermal violation.
 #
 # Everything above the first section is Streamlit-free so it can be unit-tested.
@@ -166,13 +164,12 @@ def contiguous_blocks(steps: list[int]) -> list[tuple[int, int]]:
 def overload_table(timeline: dict[str, Any]) -> pd.DataFrame:
     """Per overloaded element: how long in total, in how many separate stretches.
 
-    "Dauer gesamt" is the SUM of the overloaded quarter hours, which is not the
-    distance between the first and the last one: an element that trips at 13:00
-    and again at 08:45 spans twenty hours while being overloaded for six of
-    them. The earlier table showed only that span as "von … bis …", which reads
-    as one continuous period and overstated every entry. It now reports the sum,
-    how many separate stretches it took, and the longest single one, the figure
-    that decides whether a cable had time to cool down.
+    "Dauer gesamt" is the SUM of the overloaded quarter hours, not the distance
+    between the first and the last: an element tripping at 13:00 and again at
+    08:45 spans twenty hours while overloaded for six. Reporting that span
+    alone reads as one continuous period and overstates every entry, so the
+    table also gives the number of stretches and the longest single one, which
+    is what decides whether a cable had time to cool down.
     """
     matrix = overload_matrix(timeline)
     if matrix.empty:
@@ -256,6 +253,7 @@ def _scale_max(timeline: dict[str, Any]) -> float:
 
 
 def _daily_profile_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
+    """Transformer and worst-line loading over the day, on severity bands."""
     import altair as alt
 
     frame = utilization_frame(timeline)
@@ -308,6 +306,7 @@ def _daily_profile_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
 
 
 def _overload_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
+    """Which element was over its limit in which quarter hour, as a binary raster."""
     import altair as alt
 
     frame = overload_matrix(timeline)
@@ -333,7 +332,7 @@ def _overload_chart(timeline: dict[str, Any]):  # pragma: no cover (UI)
 
 
 def render_utilization(timelines: list[dict[str, Any]], key: str = "auslastung") -> None:  # pragma: no cover (UI)
-    """The utilisation tab: daily profile, overload matrix, duration curve."""
+    """The utilisation tab: KPI row, daily profile, and the overload matrix."""
     import streamlit as st
 
     if not timelines:

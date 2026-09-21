@@ -2,15 +2,12 @@
 # ─────────────────────────────────────────────────────────────
 # Scenario comparison: the four control strategies side by side.
 #
-# What the other tabs show for ONE strategy, this one shows for all four at
-# once: the same grid situation, four policies, what does each of them cost?
+# What the other tabs show for ONE strategy, this shows for all four at once:
+# the same grid, four policies, what does each of them cost?
 #
-# Deliberately NOT here: the representative household. That belongs to the
-# "Geräte & Haushalte" tab, where it is broken out by EV/battery/heat pump
-# along with the indoor temperature. Repeating it here would mean maintaining
-# the same curve twice and showing the reader the same thing twice.
-#
-# Altair charts using the colours from theme.py, like the rest of the dashboard.
+# Deliberately NOT here: the representative household. It belongs to the
+# "Geräte & Haushalte" tab, broken out per device; repeating it would mean
+# maintaining the same curve twice.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -125,10 +122,10 @@ _LOAD_COLORS = ((1.0, "#d7191c", 5.0), (0.9, "#fdae61", 4.0), (0.7, "#ffd54f", 3
 def _load_style(pu: float, tripped: bool = False) -> tuple[str, float]:
     """(colour, stroke width) for a loading in p.u.
 
-    `tripped` erzwingt die Überlastungsfarbe. Der gespeicherte Spitzenwert ist ein
-    MITTELWERT über die Seeds: ein Kabel, das in zwei von sechs Läufen seine Grenze
-    verletzt hat, liegt im Mittel unter 1.0. Es muss trotzdem als Verletzung erkennbar
-    sein, sonst würde die Karte der danebenstehenden Überlastungszahl widersprechen.
+    `tripped` forces the overload colour. The stored peak is a MEAN over the
+    seeds, so a cable that broke its limit in two of six runs averages below
+    1.0 and would otherwise be drawn as healthy, contradicting the overload
+    count next to it.
     """
     if tripped:
         return _LOAD_COLORS[0][1], _LOAD_COLORS[0][2]
@@ -141,10 +138,9 @@ def _load_style(pu: float, tripped: bool = False) -> tuple[str, float]:
 def render_overload_map(network, summary, key: str = "overload_map") -> None:
     """Draw the grid, highlighting the cables that ran hot or tripped.
 
-    `network` ist das gespeicherte GridNetwork des Laufs; `summary` liefert die
-    pro Leitung gespeicherte Spitzenauslastung je Szenario. Nicht aufgeführte
-    Leitungen blieben unter der Warnschwelle und werden blass im Hintergrund
-    gezeichnet, damit der Blick direkt zum kritischen Pfad geht.
+    `network` is the run's saved GridNetwork, `summary` the per-line peak
+    loading per scenario. Lines it does not list stayed under the warning
+    threshold and are drawn faintly, so the eye goes to the critical path.
     """
     import folium
     import streamlit as st
@@ -224,6 +220,11 @@ _HOUR_AXIS = dict(
 
 
 def _scenario_scale(frame: pd.DataFrame):  # pragma: no cover (UI)
+    """Colour scale over the scenarios present, in the project's order.
+
+    Unknown scenarios are appended in grey rather than dropped, so an added or
+    renamed one still gets a bar instead of vanishing from the chart.
+    """
     import altair as alt
 
     present = [s for s in theme.SCENARIO_ORDER if s in set(frame["scenario"])]
@@ -235,10 +236,9 @@ def _scenario_scale(frame: pd.DataFrame):  # pragma: no cover (UI)
 def _metric_chart(frame: pd.DataFrame, kennzahl: str):  # pragma: no cover (UI)
     """One metric, the scenarios as bars in the scenario palette.
 
-    One chart per metric rather than one faceted chart, because `width:
-    "container"` only applies to single-view and layered specs; inside a facet
-    or concat the child views cannot size themselves and render empty until the
-    viewer opens them fullscreen.
+    One chart per metric, never a faceted one: `width: "container"` applies
+    only to single-view and layered specs, so inside a facet the child views
+    render empty until the viewer opens them fullscreen.
     """
     import altair as alt
 

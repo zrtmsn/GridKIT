@@ -2,24 +2,17 @@
 # ─────────────────────────────────────────────────────────────
 # Streamlit dashboard for the GridKIT §14a curtailment comparison.
 #
-# It reads results from two producers, which write the same schema:
-#   · runs/<id>/          one run started from the map (scripts/train_run.py)
-#   · outputs/            the scenario × penetration batch sweep
-#                           (scripts/run_experiment.py)
+# Two producers write the same schema, and both are read here:
+#   · runs/<id>/   one run started from the map (scripts/train_run.py)
+#   · outputs/     the scenario × penetration sweep (scripts/run_experiment.py)
 #
-# Entry points:
+# Run it:
 #   streamlit run src/GridKIT/scripts/app.py    map + dashboard in one app
 #   streamlit run src/GridKIT/dashboard/app.py  the dashboard on its own
 #
-# `render_dashboard()` is the page scripts/app.py composes: it browses saved
-# runs and renders the selected one. It never starts or writes a run (except
-# deleting one on request), so it can be refreshed freely while train_run.py
-# is writing into the same directory.
-#
-# This module is only the shell: it loads the result files, renders the
-# glossary and hands each tab its data. Every view lives in its own module
-# (overview, utilization, devices, comparison, training) and every colour and
-# label in theme.py.
+# Only the shell: loads the result files, renders the glossary, hands each tab
+# its data. Every view lives in its own module (overview, utilization, devices,
+# comparison, training) and every colour and label in theme.py.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -29,9 +22,8 @@ import sys
 from pathlib import Path
 
 # ── path bootstrap (so `streamlit run` finds the packages) ──
-# Needed because this file is run directly as a script, not imported as part of
-# the package: without it `from dashboard...` below fails unless PYTHONPATH
-# happens to be set outside. Same bootstrap as scripts/grid_designer.py.
+# This file runs as a script, not as part of the package, so without it the
+# `from dashboard...` imports below fail unless PYTHONPATH is set outside.
 _PKG_DIR = Path(__file__).resolve().parent.parent   # src/GridKIT/
 _SRC_DIR = _PKG_DIR.parent                          # src/
 for _p in (str(_PKG_DIR), str(_SRC_DIR)):
@@ -62,6 +54,7 @@ STATE_LABELS_DE = {
     rs.FAILED: "fehlgeschlagen",
 }
 
+
 def _load(name: str):
     """Read one result file; None when it is missing, unreadable or malformed.
 
@@ -84,13 +77,12 @@ def _load(name: str):
 
 
 def render_results(summary, timelines, network=None, output_dir=None) -> None:
-    """Render the scenario comparison dashboard from data already in memory.
+    """Render the five result tabs from data already in memory.
 
-    `network` ist optional: wenn übergeben, wird zusätzlich die Überlastungskarte
-    gezeichnet. `output_dir` sagt, wo die Trainingsmetriken dieses Laufs liegen:
-    für einen Lauf aus der Karte sein eigenes Verzeichnis, sonst OUTPUT_DIR.
-    Ohne diesen Parameter zeigte der Training-Reiter eines Karten-Laufs die
-    Metriken des Batch-Experiments, also die eines ganz anderen Netzes.
+    `network` is optional; passing it adds the overload map. `output_dir` says
+    where this run's training metrics live: its own directory for a run from
+    the map, OUTPUT_DIR otherwise. Without it the training tab of a map run
+    showed the batch experiment's metrics, from an entirely different grid.
     """
     if not summary:
         st.info("Für diese Auswahl liegen noch keine Ergebnisse vor.")
@@ -253,6 +245,7 @@ def render_batch() -> None:
 
 
 def main() -> None:
+    """Standalone entry point: pick a data source and render it."""
     st.set_page_config(page_title="GridKIT Dashboard", layout="wide")
     # Two producers can have written results. Ask only when both actually have
     # something to show, so the usual case stays a single click-free page.
@@ -277,6 +270,7 @@ def main() -> None:
 
 
 def _running_under_streamlit() -> bool:
+    """True when `streamlit run` is executing this file, rather than a plain import."""
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
         return get_script_run_ctx() is not None

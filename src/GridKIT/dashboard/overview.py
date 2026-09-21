@@ -2,16 +2,13 @@
 # ─────────────────────────────────────────────────────────────
 # Overview: the answer, before anyone scrolls.
 #
-# Answers the project's own question: does §14a curtailment hold up with EV,
-# battery, heat pump and PV on the same low-voltage grid? Across ALL
-# scenarios and penetration levels at once. The other tabs then explain one
-# combination at a time.
+# The project's own question, across every scenario and penetration at once:
+# does §14a curtailment hold up with EV, battery, heat pump and PV on one
+# low-voltage grid? The other tabs then explain a single combination.
 #
-# Reads summary.json for the seed-averaged figures and falls back to
-# timelines.json where a run predates a field: the cable peak (line_peak_max)
-# only exists in summaries written after the two producers were unified, and an
-# overview that crashes on an older run is worse than one that quietly uses the
-# representative episode instead.
+# Reads the seed-averaged figures from summary.json, falling back to
+# timelines.json for fields an older run predates (line_peak_max). Crashing on
+# an old run would be worse than quietly using the representative episode.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -37,15 +34,13 @@ TIMESTEP_HOURS = 0.25
 def overload_hours(record: dict[str, Any], timelines: list[dict[str, Any]] | None = None) -> float | None:
     """How long the worst element of this run stayed over its limit, in hours.
 
-    This is the figure that actually separates the scenarios. The peak does not:
-    on a grid where one thin service cable spikes, every scenario reports a
-    cable peak near 200 % and the headline stops carrying information, even
-    while the transformer figures differ by forty points. Duration ranks them.
+    The figure that actually separates the scenarios. The peak does not: where
+    one thin service cable spikes, every scenario reports a cable peak near
+    200 % even while the transformer figures differ by forty points.
 
-    Taken from summary.json, where the counts are averaged over all evaluation
-    seeds, rather than from the single representative episode. The maximum over
-    elements is used rather than the sum, because two cables overloaded in the
-    same quarter hour is one overloaded quarter hour, not two.
+    Averaged over all evaluation seeds (from summary.json), not taken from the
+    single representative episode. Maximum over elements rather than sum: two
+    cables overloaded in the same quarter hour is one overloaded quarter hour.
     """
     steps: list[float] = []
     for field in ("feeder_overload_steps", "line_overload_steps"):
@@ -166,12 +161,11 @@ def scenario_ranking(frame: pd.DataFrame, penetration: float) -> pd.DataFrame:
 def has_overload(frame: pd.DataFrame) -> bool:
     """True when anything in this run actually went over its limit.
 
-    Two independent signals, because they can disagree. `status` comes from the
-    peak AVERAGED over the evaluation seeds, `Dauer` from the per-step overload
-    lists of the representative episode. A cable that tripped in two of six
-    seeds averages below 1.0 but did overload, so either signal alone is enough
-    to count. Getting this wrong would hide the overload views on a run that
-    overloaded.
+    Two signals, because they can disagree: `status` comes from the seed-
+    averaged peak, `Dauer` from the per-step overload lists. A cable that
+    tripped in two of six seeds averages below 1.0 but did overload, so either
+    one alone is enough. Reading only the mean would hide the overload views
+    on a run that overloaded.
     """
     if frame.empty:
         return False
@@ -211,6 +205,7 @@ def headline_numbers(frame: pd.DataFrame) -> dict[str, Any]:
 # Streamlit view
 # ══════════════════════════════════════════════════════════════
 def _matrix_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
+    """Scenario by penetration heatmap, coloured by severity, for a swept run."""
     import altair as alt
 
     data = frame.dropna(subset=["Spitze"]).copy()
