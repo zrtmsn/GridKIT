@@ -21,10 +21,10 @@ from map_ui.household_config import (
 )
 from map_ui.area_bounds import AreaBounds
 from map_ui.transformer_network_filter import (
-    parse_transformer_id,
     reachable_bus_ids_for_transformer,
     selectable_transformer_ids,
     transformer_area_display_label,
+    transformer_by_id,
 )
 
 
@@ -571,21 +571,11 @@ def build_transformer_bus_label_map(network) -> dict[str, list[str]]:
     """
     labels_by_bus: dict[str, list[str]] = {}
 
-    lv_grid_to_selectable_id = selectable_transformer_id_by_lv_grid(network)
+    lv_bus_to_selectable_id = selectable_transformer_id_by_lv_bus(network)
 
     for transformer in getattr(network, "transformers", []):
-        trafo_id = str(transformer.trafo_id)
-        info = parse_transformer_id(trafo_id)
-        lv_grid_id = info["lv_grid_id"]
-
-        representative_trafo_id = (
-            lv_grid_to_selectable_id.get(lv_grid_id)
-            if lv_grid_id is not None
-            else trafo_id
-        )
-
-        if representative_trafo_id is None:
-            representative_trafo_id = trafo_id
+        lv_bus = str(transformer.lv_bus)
+        representative_trafo_id = lv_bus_to_selectable_id.get(lv_bus, str(transformer.trafo_id))
 
         area_label = transformer_area_display_label(network, representative_trafo_id)
 
@@ -599,20 +589,14 @@ def build_transformer_bus_label_map(network) -> dict[str, list[str]]:
     return labels_by_bus
 
 
-def selectable_transformer_id_by_lv_grid(network) -> dict[str, str]:
-    mapping: dict[str, str] = {}
-
-    for trafo_id in selectable_transformer_ids(network):
-        info = parse_transformer_id(trafo_id)
-        lv_grid_id = info["lv_grid_id"]
-
-        if lv_grid_id is None:
-            continue
-
-        if lv_grid_id not in mapping:
-            mapping[lv_grid_id] = trafo_id
-
-    return mapping
+def selectable_transformer_id_by_lv_bus(network) -> dict[str, str]:
+    """Map each selectable transformer's lv_bus to its trafo_id (see
+    transformer_network_filter_helpers.selectable_transformers: one entry
+    per physical busbar)."""
+    return {
+        str(trafo.lv_bus): str(trafo.trafo_id)
+        for trafo in (transformer_by_id(network, tid) for tid in selectable_transformer_ids(network))
+    }
 
 
 def build_bus_label_map(
