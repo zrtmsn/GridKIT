@@ -9,35 +9,25 @@ DEFAULT_MAP_CENTER = (49.0069, 8.4037)
 ALL_NETWORK_OPTION = "__all_network__"
 
 
-def format_transformer_option(option: str, network=None) -> str:
+def format_transformer_option(option: str) -> str:
     """
     Convert internal selectbox values into user-facing labels.
     """
     if option == ALL_NETWORK_OPTION:
         return "Gesamtes Netz anzeigen"
 
-    if network is not None:
-        return transformer_area_display_label(network, option)
-
-    return transformer_display_label(option)
+    return transformer_area_display_label(option)
 
 
-def transformer_area_display_label(network, trafo_id: str) -> str:
+def transformer_area_display_label(trafo_id: str) -> str:
     """
     Return a user-friendly label for one selectable transformer area.
+
+    Wraps the id as-is (no recomputed numbering) so the same transformer
+    reads identically here and in the dashboard's overload map, which shows
+    trafo_id directly.
     """
-    selectable_ids = selectable_transformer_ids(network)
-    trafo_id = str(trafo_id)
-
-    try:
-        area_number = selectable_ids.index(trafo_id) + 1
-    except ValueError:
-        area_number = None
-
-    if area_number is None:
-        return "Transformatorbereich"
-
-    return f"Transformatorbereich {area_number}"
+    return f"Transformatorbereich {trafo_id}"
 
 
 def selectable_transformers(network) -> list[Any]:
@@ -261,7 +251,7 @@ def transformer_marker_rows(network) -> list[dict[str, Any]]:
         rows.append(
             {
                 "trafo_id": trafo_id,
-                "display_label": transformer_area_display_label(network, trafo_id),
+                "display_label": transformer_area_display_label(trafo_id),
                 "is_reinforced": len(transformer_group_members(network, trafo_id)) > 1,
                 "lat": lat,
                 "lon": lon,

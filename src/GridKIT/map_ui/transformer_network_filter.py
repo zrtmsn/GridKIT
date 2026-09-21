@@ -130,7 +130,7 @@ def show_transformer_selection(full_network):
         "Netzkonfiguration auswählen",
         options=options,
         index=selected_index,
-        format_func=lambda option: format_transformer_option(option, full_network),
+        format_func=format_transformer_option,
         help=(
             "Mit „Gesamtes Netz anzeigen“ wird die vollständige erzeugte Netzwerkkonfiguration angezeigt. "
             "Bei Auswahl eines Transformatorbereichs wird das Netz auf diesen Bereich gefiltert. "
@@ -197,10 +197,7 @@ def show_transformer_selection(full_network):
     st.session_state["built_network"] = filtered_network
 
     selected_transformer = transformer_by_id(full_network, active_trafo_id)
-    selected_transformer_label = transformer_area_display_label(
-        full_network,
-        selected_transformer.trafo_id,
-    )
+    selected_transformer_label = transformer_area_display_label(selected_transformer.trafo_id)
     filtered_device_summary = device_summary(filtered_network)
 
     st.info(

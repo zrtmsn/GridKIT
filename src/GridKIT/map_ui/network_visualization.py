@@ -577,7 +577,7 @@ def build_transformer_bus_label_map(network) -> dict[str, list[str]]:
         lv_bus = str(transformer.lv_bus)
         representative_trafo_id = lv_bus_to_selectable_id.get(lv_bus, str(transformer.trafo_id))
 
-        area_label = transformer_area_display_label(network, representative_trafo_id)
+        area_label = transformer_area_display_label(representative_trafo_id)
 
         for bus_id in (transformer.hv_bus, transformer.lv_bus):
             key = str(bus_id)
