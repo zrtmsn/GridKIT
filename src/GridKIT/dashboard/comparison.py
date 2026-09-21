@@ -1,16 +1,16 @@
-# dashboard/vergleich.py
+# dashboard/comparison.py
 # ─────────────────────────────────────────────────────────────
-# Szenarienvergleich — die vier Regelstrategien nebeneinander.
+# Scenario comparison: the four control strategies side by side.
 #
-# Was die anderen Reiter für EINE Strategie zeigen, zeigt dieser für alle vier
-# gleichzeitig: dieselbe Netzsituation, vier Politiken, was kostet welche?
+# What the other tabs show for ONE strategy, this one shows for all four at
+# once: the same grid situation, four policies, what does each of them cost?
 #
-# Was hier bewusst NICHT steht: der repräsentative Haushalt. Der hat seinen
-# Platz im Reiter "Geräte & Haushalte", dort mit EV/Batterie/Wärmepumpe
-# getrennt und der Innentemperatur; ihn hier zu wiederholen hieße, dieselbe
-# Kurve zweimal zu pflegen und dem Leser zweimal zu zeigen.
+# Deliberately NOT here: the representative household. That belongs to the
+# "Geräte & Haushalte" tab, where it is broken out by EV/battery/heat pump
+# along with the indoor temperature. Repeating it here would mean maintaining
+# the same curve twice and showing the reader the same thing twice.
 #
-# Charts in Altair mit den Farben aus theme.py, wie im Rest des Dashboards.
+# Altair charts using the colours from theme.py, like the rest of the dashboard.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -20,21 +20,28 @@ import numpy as np
 import pandas as pd
 
 from dashboard import theme
-from dashboard.auslastung import format_hour, hours_axis, select_timeline
-from dashboard.controls import scenario_penetration_picker
+from dashboard.utilization import format_hour, hours_axis, select_timeline
+from dashboard.controls import penetration_picker, scenario_picker
 from dashboard.export import download_pair
 
-#: (Spaltenname in summary.json, Anzeigename, Einheit, "höher ist besser")
-METRICS: tuple[tuple[str, str, str, bool], ...] = (
-    ("curtailment_mean", "§14a-Eingriffe", "Viertelstunden", False),
-    ("soc_mean", "EV-Ziel erreicht", "Anteil", True),
-    ("hp_comfort_mean", "WP-Komfort", "Anteil", True),
-    ("bill_mean", "Stromkosten", "€ / Haushalt", False),
+#: (column name in summary.json, display label, unit, "higher is better",
+#:  sentence to show instead of an all-zero chart)
+#:
+#: The last field exists because a bar chart in which every bar is zero draws
+#: four empty rows and an axis, and says less than one sentence would. Only
+#: curtailment carries one: for the other three, all-zero would be a finding
+#: worth seeing drawn, not a non-event.
+METRICS: tuple[tuple[str, str, str, bool, str | None], ...] = (
+    ("curtailment_mean", "§14a-Eingriffe", "Viertelstunden", False,
+     "In keinem Szenario musste §14a eingreifen."),
+    ("soc_mean", "EV-Ziel erreicht", "Anteil", True, None),
+    ("hp_comfort_mean", "WP-Komfort", "Anteil", True, None),
+    ("bill_mean", "Stromkosten", "€ / Haushalt", False, None),
 )
 
 
 # ══════════════════════════════════════════════════════════════
-# Reine Helfer (kein Streamlit — unit-testbar)
+# Pure helpers (no Streamlit, unit-tested)
 # ══════════════════════════════════════════════════════════════
 def metric_frame(summary: list[dict[str, Any]], penetration: float | None = None) -> pd.DataFrame:
     """Long-form frame of the comparison metrics, one row per scenario × metric.
@@ -48,7 +55,7 @@ def metric_frame(summary: list[dict[str, Any]], penetration: float | None = None
         if penetration is not None and abs(float(record.get("penetration", -1)) - penetration) > 1e-9:
             continue
         scenario = record.get("scenario", "")
-        for field, label, unit, higher_better in METRICS:
+        for field, label, unit, higher_better, _ in METRICS:
             value = record.get(field)
             if value is None:
                 continue
@@ -108,18 +115,18 @@ def curtailment_steps(timeline: dict[str, Any]) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════
-# Überlastungskarte — WO das Netz litt, nicht nur wie oft
+# Overload map: WHERE the grid suffered, not only how often
 # ══════════════════════════════════════════════════════════════
-#: Auslastung (p.u.) → Farbe. Ein reales NS-Netz ist kabellimitiert, lange bevor
-#: der Transformator etwas merkt — die Karte muss ein 0,9-p.u.-Kabel sichtbar machen.
+#: Loading (p.u.) → colour. A real LV grid is cable-limited long before the
+#: transformer notices, so the map has to make a 0.9 p.u. cable visible.
 _LOAD_COLORS = ((1.0, "#d7191c", 5.0), (0.9, "#fdae61", 4.0), (0.7, "#ffd54f", 3.0), (0.0, "#7cb342", 2.5))
 
 
 def _load_style(pu: float, tripped: bool = False) -> tuple[str, float]:
-    """(Farbe, Linienstärke) für eine Auslastung in p.u.
+    """(colour, stroke width) for a loading in p.u.
 
     `tripped` erzwingt die Überlastungsfarbe. Der gespeicherte Spitzenwert ist ein
-    MITTELWERT über die Seeds — ein Kabel, das in zwei von sechs Läufen seine Grenze
+    MITTELWERT über die Seeds: ein Kabel, das in zwei von sechs Läufen seine Grenze
     verletzt hat, liegt im Mittel unter 1.0. Es muss trotzdem als Verletzung erkennbar
     sein, sonst würde die Karte der danebenstehenden Überlastungszahl widersprechen.
     """
@@ -132,7 +139,7 @@ def _load_style(pu: float, tripped: bool = False) -> tuple[str, float]:
 
 
 def render_overload_map(network, summary, key: str = "overload_map") -> None:
-    """Zeichnet das Netz und hebt die Kabel hervor, die heiß liefen oder auslösten.
+    """Draw the grid, highlighting the cables that ran hot or tripped.
 
     `network` ist das gespeicherte GridNetwork des Laufs; `summary` liefert die
     pro Leitung gespeicherte Spitzenauslastung je Szenario. Nicht aufgeführte
@@ -200,7 +207,7 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
 
     worst = max(peaks.values()) if peaks else 0.0
     st.caption(
-        f"**{theme.scenario_label(chosen)}:** schlechtestes Kabel {worst:.2f} p.u. · {n_over} Kabel über der Nennlast. "
+        f"**{theme.scenario_short(chosen)}:** schlechtestes Kabel {worst:.2f} p.u. · {n_over} Kabel über der Nennlast. "
         "🟥 >1,0 überlastet · 🟧 >0,9 · 🟨 >0,7 · 🟩 belastet, aber unauffällig · grau = unter Warnschwelle. "
         "⚡ = Transformator. Zum Anzeigen des Spitzenwerts über ein Segment fahren."
     )
@@ -208,7 +215,7 @@ def render_overload_map(network, summary, key: str = "overload_map") -> None:
 
 
 # ══════════════════════════════════════════════════════════════
-# Streamlit-Ansicht
+# Streamlit view
 # ══════════════════════════════════════════════════════════════
 _HOUR_AXIS = dict(
     values=[12, 15, 18, 21, 24, 27, 30, 33, 36],
@@ -229,7 +236,7 @@ def _metric_chart(frame: pd.DataFrame, kennzahl: str):  # pragma: no cover (UI)
     """One metric, the scenarios as bars in the scenario palette.
 
     One chart per metric rather than one faceted chart, because `width:
-    "container"` only applies to single-view and layered specs — inside a facet
+    "container"` only applies to single-view and layered specs; inside a facet
     or concat the child views cannot size themselves and render empty until the
     viewer opens them fullscreen.
     """
@@ -264,7 +271,7 @@ def _metric_chart(frame: pd.DataFrame, kennzahl: str):  # pragma: no cover (UI)
     return (bars + spread + labels).properties(width="container", height=alt.Step(30))
 
 
-#: (Gruppe, y-Titel, {Reihe: Farbe}, Höhe, Grenzlinie) — je ein eigenes Diagramm.
+#: (group, y-axis title, {series: colour}, height, limit line); one chart each.
 EPISODE_PANELS: tuple[tuple[str, str, dict[str, str], int, float | None], ...] = (
     ("Auslastung", "Auslastung (%)",
      {"Trafo-Auslastung": theme.SERIES_COLORS["transformer"],
@@ -317,21 +324,21 @@ def _episode_panel(frame: pd.DataFrame, curtailed: pd.DataFrame,
     return alt.layer(*layers).properties(width="container", height=height)
 
 
-def render_vergleich(summary: list[dict[str, Any]], timelines: list[dict[str, Any]] | None = None,
+def render_comparison(summary: list[dict[str, Any]], timelines: list[dict[str, Any]] | None = None,
                      network=None, key: str = "vergleich") -> None:  # pragma: no cover (UI)
-    """Der Szenarienvergleich: alle vier Strategien auf demselben Netz."""
+    """The comparison tab: all four strategies on the same grid."""
     import streamlit as st
 
     if not summary:
         st.info("Keine Ergebnisse vorhanden. Zuerst ein Experiment ausführen.")
         return
 
-    # One picker for the whole tab, shared with every other tab: the
-    # Ausstattungsgrad decides which run the metrics compare, the Szenario which
-    # episode is drawn below. A second selector here would collide with the
-    # shared one on its widget key and, worse, let the two halves of this tab
-    # describe different runs.
-    scenario, chosen_pen = scenario_penetration_picker(timelines or [], key)
+    # The two selectors are split across the tab, each next to what it changes.
+    # The Ausstattungsgrad decides which run EVERYTHING here describes, so it
+    # stays at the top; the scenario only picks the episode at the bottom, and
+    # sitting up here it read as though it changed the metric charts too.
+    # Both still read and write the state shared with every other tab.
+    chosen_pen = penetration_picker(timelines or [], key)
     if chosen_pen is None:
         chosen_pen = max((float(r.get("penetration", 0.0)) for r in summary), default=0.0)
 
@@ -346,27 +353,32 @@ def render_vergleich(summary: list[dict[str, Any]], timelines: list[dict[str, An
             "ist die Streuung über die Auswertungsläufe: Unterschiede, die kleiner "
             "sind als dieser Strich, sind keine. **§14a-Eingriffe** und **Stromkosten** "
             "sind besser, wenn sie klein sind; **EV-Ziel** und **WP-Komfort**, wenn sie "
-            "groß sind — eine Strategie, die das Netz schont und das Auto leer lässt, "
+            "groß sind: eine Strategie, die das Netz schont und das Auto leer lässt, "
             "hat nichts gewonnen."
         )
-        for _, label, _, higher_better in METRICS:
+        for _, label, _, higher_better, zero_note in METRICS:
             if label not in set(metrics["Kennzahl"]):
                 continue
-            st.markdown(f"**{label}** — {'größer ist besser' if higher_better else 'kleiner ist besser'}")
+            values = metrics[metrics["Kennzahl"] == label]["Wert"]
+            if zero_note and not values.empty and (values == 0).all():
+                st.markdown(f"**{label}**: {zero_note}")
+                continue
+            st.markdown(f"**{label}**: {'größer ist besser' if higher_better else 'kleiner ist besser'}")
             st.altair_chart(_metric_chart(metrics, label), width="stretch")
         download_pair(metrics.drop(columns=["scenario", "kennzahl"]),
-                      "Kennzahlen je Szenario", f"{key}_kennzahlen")
+                      "Kennzahlen je Szenario", f"{key}_metrics")
 
-    # ── Eine repräsentative Episode ───────────────────────────
+    # ── One representative episode ───────────────────────────
     if timelines:
-        st.subheader(f"Eine repräsentative 24-Stunden-Episode — {theme.scenario_label(scenario)}"
+        scenario = scenario_picker(timelines, key)
+        st.subheader(f"Eine repräsentative 24-Stunden-Episode: {theme.scenario_short(scenario)}"
                      if scenario else "Eine repräsentative 24-Stunden-Episode")
         timeline = select_timeline(timelines, scenario, chosen_pen) if scenario else None
         if timeline is None:
             st.info("Für diese Kombination liegt keine Episode vor.")
         else:
             st.caption(
-                "Ein einzelner Tag, von Mittag bis Mittag, für das oben gewählte Szenario. "
+                "Ein einzelner Tag, von Mittag bis Mittag, für das gewählte Szenario. "
                 "Rot hinterlegt sind die Viertelstunden, in denen §14a gegriffen hat. "
                 "Einzelne Haushalte stehen im Reiter **Geräte & Haushalte**."
             )

@@ -4,8 +4,8 @@
 # Streamlit + Folium GUI for selecting an area and displaying
 # GridNetwork information from grid_model's OSMNetworkBuilder.
 #
-# Household configuration and training UI sections live in
-# map_ui/map_widget_sections.py to keep this file readable.
+# Household configuration and training UI sections are imported
+# directly from their dedicated files.
 #
 # Run from project root:
 #   python -m streamlit run src/GridKIT/map_ui/map_widget.py
@@ -22,13 +22,11 @@ from folium.plugins import Draw
 from streamlit_folium import st_folium
 
 from grid_model.builder import OSMNetworkBuilder
+from map_ui.area_bounds import AreaBounds
 from map_ui.household_config import default_scenario_assumptions
-from map_ui.map_widget_sections import (
-    show_household_configuration,
-    show_training_section,
-)
+from map_ui.map_widget_households import show_household_configuration
+from map_ui.map_widget_training import show_training_section
 from map_ui.network_visualization import show_network_visualization
-from map_ui.osm_fetcher import AreaBounds
 from map_ui.transformer_network_filter import (
     device_summary,
     show_transformer_selection,
@@ -41,6 +39,12 @@ DEFAULT_ZOOM = 15
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_USER_AGENT = "GridKIT-map-ui/0.1"
 
+# Internal grid_model defaults.
+# These values are intentionally not shown in the Map UI because they are
+# technical developer settings and should not be changed from the map view.
+INTERNAL_MAX_HOUSEHOLDS_PER_FEEDER = 15
+GRIDCREATOR_CONDA_ENV = "GridCreator"
+
 
 def render_map_ui() -> None:
     """Page body without st.set_page_config.
@@ -52,7 +56,7 @@ def render_map_ui() -> None:
     st.caption(
         "Ort suchen → Bereich auswählen → GridNetwork erzeugen → "
         "optional Transformator auswählen → Netzansicht visualisieren → "
-        "Haushalte konfigurieren → speichern & trainieren"
+        "Haushalte konfigurieren → Speichern & Training starten"
     )
 
     initialise_session_state()
@@ -60,8 +64,9 @@ def render_map_ui() -> None:
     with st.sidebar:
         st.header("Eingabe")
         st.write(
-            "Suche zuerst einen Ort oder zeichne direkt links ein Rechteck/Polygon. "
-            "Alternativ kannst du unten eine Bounding Box manuell eingeben."
+            "Suchen Sie zunächst einen Ort, um die Karte auf den gewünschten Bereich zu zentrieren. "
+            "Markieren Sie anschließend den Netzbereich durch Zeichnen eines Rechtecks oder Polygons "
+            "auf der Karte. Alternativ können Sie die Koordinaten des Bereichs manuell als Bounding Box eingeben."
         )
 
         st.subheader("Ort suchen")
@@ -110,7 +115,7 @@ def render_map_ui() -> None:
 
         st.divider()
 
-        area_name = st.text_input("area_name", value="selected_area")
+        area_name = st.text_input("Bezeichnung des Bereichs", value="ausgewaehlter_bereich")
 
         st.subheader("Manuelle Bounding Box")
         south = st.number_input("south / min latitude", value=49.0000, format="%.6f")
@@ -119,19 +124,6 @@ def render_map_ui() -> None:
         east = st.number_input("east / max longitude", value=8.4100, format="%.6f")
 
         use_manual_bbox = st.checkbox("Manuelle Bounding Box verwenden", value=False)
-
-        st.subheader("grid_model")
-        max_households = st.number_input(
-            "Maximale Anzahl Haushalte pro Feeder",
-            value=15,
-            min_value=1,
-            max_value=200,
-            step=1,
-        )
-
-        conda_env = st.text_input("GridCreator Conda Environment", value="GridCreator")
-
-        build_clicked = st.button("GridNetwork erzeugen", type="primary")
 
     col_map, col_out = st.columns([3, 2])
 
@@ -178,14 +170,21 @@ def render_map_ui() -> None:
     with col_out:
         st.subheader("Auswahl")
 
-        if selected_bounds:
+        if selected_bounds is not None:
             st.json(selected_bounds.model_dump())
             st.metric("Fläche ca. km²", f"{selected_bounds.approx_area_km2():.3f}")
         else:
             st.info("Noch kein Bereich ausgewählt. Zeichne ein Rechteck/Polygon auf der Karte.")
 
+        build_clicked = st.button(
+            "GridNetwork erzeugen",
+            type="primary",
+            disabled=selected_bounds is None,
+            key="build_grid_network_button",
+        )
+
         if build_clicked:
-            if not selected_bounds:
+            if selected_bounds is None:
                 st.error("Bitte zuerst einen Bereich auswählen.")
                 return
 
@@ -199,7 +198,7 @@ def render_map_ui() -> None:
                         left=selected_bounds.west,
                         right=selected_bounds.east,
                         scenario=scenario,
-                        conda_env=conda_env.strip() or "GridCreator",
+                        conda_env=GRIDCREATOR_CONDA_ENV,
                     )
 
                     full_network = builder.build()
@@ -208,7 +207,7 @@ def render_map_ui() -> None:
                     st.session_state["built_network"] = full_network
                     st.session_state["built_bounds"] = selected_bounds
                     st.session_state["built_scenario"] = scenario
-                    st.session_state["max_households"] = int(max_households)
+                    st.session_state["max_households"] = INTERNAL_MAX_HOUSEHOLDS_PER_FEEDER
 
                     # Start with the complete generated GridNetwork. A transformer
                     # filter is only applied after the user explicitly selects one.
@@ -306,6 +305,9 @@ def initialise_session_state() -> None:
 
     if "household_config_version" not in st.session_state:
         st.session_state["household_config_version"] = 0
+
+    if "max_households" not in st.session_state:
+        st.session_state["max_households"] = INTERNAL_MAX_HOUSEHOLDS_PER_FEEDER
 
 
 def make_base_map(
@@ -407,11 +409,19 @@ def bounds_from_drawings(map_data: dict[str, Any] | None) -> AreaBounds | None:
     if not map_data:
         return None
 
-    drawing = map_data.get("last_active_drawing")
+    drawings = map_data.get("all_drawings")
 
-    if not drawing:
-        drawings = map_data.get("all_drawings") or []
-        drawing = drawings[-1] if drawings else None
+    # Important:
+    # After clicking "Clear all" in the map, all_drawings becomes empty,
+    # while last_active_drawing can still contain the previously selected area.
+    # Therefore, all_drawings is the reliable source for the current map state.
+    if isinstance(drawings, list):
+        if not drawings:
+            return None
+
+        drawing = drawings[-1]
+    else:
+        drawing = map_data.get("last_active_drawing")
 
     if not drawing:
         return None
@@ -447,7 +457,7 @@ def bounds_from_drawings(map_data: dict[str, Any] | None) -> AreaBounds | None:
 
 
 def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
-    st.subheader("GridNetwork")
+    st.subheader("Netzmodell")
 
     selected_trafo_id = st.session_state.get("selected_trafo_id")
 
@@ -459,9 +469,9 @@ def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
         )
     else:
         st.caption(
-            f"Aktiver Trafo-Filter: Die Netzwerkkonfiguration ist auf Transformator "
-            f"{selected_trafo_id} begrenzt. Der JSON-Export enthält nur dieses "
-            f"topologisch gefilterte Trafo-Teilnetz."
+            "Aktiver Trafo-Filter: Es wird nur der aktuell ausgewählte "
+            "Transformatorbereich angezeigt. Der JSON-Export enthält nur die "
+            "zugehörigen Knoten, Leitungen, Transformatoren und Haushalte."
         )
 
     bus_count = len(network.buses)
@@ -471,16 +481,16 @@ def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
     devices = device_summary(network)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Buses / Knoten", bus_count)
-    c2.metric("Lines / Kanten", line_count)
-    c3.metric("Households", household_count)
-    c4.metric("Transformers", transformer_count)
+    c1.metric("Knoten", bus_count)
+    c2.metric("Leitungen", line_count)
+    c3.metric("Haushalte", household_count)
+    c4.metric("Transformatoren", transformer_count)
 
     d1, d2, d3, d4 = st.columns(4)
-    d1.metric("EV aus GridCreator", devices["ev_count"])
-    d2.metric("WP aus GridCreator", devices["heat_pump_count"])
-    d3.metric("Batterien aus GridCreator", devices["battery_count"])
-    d4.metric("PV aus GridCreator", devices["pv_count"])
+    d1.metric("Haushalte mit Elektroauto", devices["ev_count"])
+    d2.metric("Haushalte mit Wärmepumpe", devices["heat_pump_count"])
+    d3.metric("Haushalte mit Batteriespeicher", devices["battery_count"])
+    d4.metric("Haushalte mit PV-Anlage", devices["pv_count"])
 
     st.write("**Ausgewählter Kartenbereich**")
     st.json(
@@ -493,10 +503,10 @@ def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
     filtering_mode = (
         "complete_network"
         if selected_trafo_id is None
-        else "topology_based_transformer_feeder"
+        else "topology_and_lv_grid_id_based_transformer_area"
     )
 
-    st.write("**Von grid_model erzeugte Netzwerkdaten**")
+    st.write("**Erzeugte Netzwerkdaten**")
     st.json(
         {
             "network_id": network.network_id,

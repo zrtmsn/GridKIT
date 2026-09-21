@@ -1,8 +1,8 @@
-# dashboard/test_geraete.py
+# dashboard/test_devices.py
 import math
 
 import core.constants as const
-from dashboard.geraete import (
+from dashboard.devices import (
     COMFORT_FLOOR_C,
     HP_COMFORT_MIN_SOC,
     INDOOR_TEMP_AT_FULL_C,

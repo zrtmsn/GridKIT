@@ -209,8 +209,8 @@ def load_results(run_id: str, root: str | Path = DEFAULT_ROOT) -> tuple[Any | No
     timelines = _read_json(d / "timelines.json")
     if isinstance(timelines, dict):
         # train_run.py writes {scenario_label: timeline_dict} for a UI-launched
-        # run; the dashboard (ueberblick/auslastung/geraete/vergleich) — built
-        # against run_experiment.py's batch output — expects a plain list of
+        # run; the dashboard (overview/utilization/devices/comparison), built
+        # against run_experiment.py's batch output, expects a plain list of
         # timeline dicts instead. Each dict already carries its own "scenario"/
         # "penetration" keys (see scripts.run_experiment._timeline), so this is
         # a lossless reshape, not a data change.
