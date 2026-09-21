@@ -132,10 +132,35 @@ def test_assign_clean_ids_shares_busbar_name_across_parallel_transformers():
 
     _, _, new_transformers, _, _, _, _ = assign_clean_ids(buses, [], transformers, [])
 
+    # the second member of a reinforced pair is NOT "transformer_2" — that
+    # would claim a busbar number ("transformer_2_hv/_lv") that never gets
+    # created, since both members share transformer_1's busbar. It's a
+    # suffixed variant of the first member's number instead.
     assert new_transformers[0].trafo_id == "transformer_1"
-    assert new_transformers[1].trafo_id == "transformer_2"
+    assert new_transformers[1].trafo_id == "transformer_1_reinforced"
     # both point at the SAME renamed busbar — it's physically one bus
     assert new_transformers[0].lv_bus == new_transformers[1].lv_bus == "transformer_1_lv"
+
+
+def test_assign_clean_ids_reinforced_pair_does_not_skip_the_next_transformers_number():
+    # the actual bug: a reinforced pair used to consume two numbers (1 and 2)
+    # while only ever producing "transformer_1_hv/_lv" buses, so a genuinely
+    # separate third transformer became "transformer_3" with no "transformer_2"
+    # busbar ever existing. Grouping by lv_bus first closes that gap.
+    buses = [BusModel(bus_id="mv"), BusModel(bus_id="lv_a"), BusModel(bus_id="lv_b")]
+    transformers = [
+        TransformerModel(trafo_id="t_a1", hv_bus="mv", lv_bus="lv_a", s_nom_mva=0.4),
+        TransformerModel(trafo_id="t_a2", hv_bus="mv", lv_bus="lv_a", s_nom_mva=0.4),  # reinforced partner
+        TransformerModel(trafo_id="t_b", hv_bus="mv", lv_bus="lv_b", s_nom_mva=0.4),   # separate feeder
+    ]
+
+    _, _, new_transformers, _, _, _, _ = assign_clean_ids(buses, [], transformers, [])
+
+    ids = {t.trafo_id for t in new_transformers}
+    assert ids == {"transformer_1", "transformer_1_reinforced", "transformer_2"}
+
+    lv_buses = {t.lv_bus for t in new_transformers}
+    assert lv_buses == {"transformer_1_lv", "transformer_2_lv"}
 
 
 def test_assign_clean_ids_is_deterministic():
