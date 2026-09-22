@@ -5,14 +5,22 @@ from math import cos, radians, sqrt
 from typing import Any
 
 
-DEFAULT_MAP_CENTER = (49.0069, 8.4037)
+DEFAULT_MAP_CENTER = (49.0069, 8.4037)  # Karlsruhe
 ALL_NETWORK_OPTION = "__all_network__"
+
+DEFAULT_MARKER_CLICK_DISTANCE_M = 50.0
+APPROX_METERS_PER_DEGREE = 111_320.0
+COORDINATE_MEAN_DIVISOR = 2.0
+
+REINFORCED_TRANSFORMER_COUNT_THRESHOLD = 1
+
+PERCENT_FACTOR = 100.0
+PERCENT_DECIMALS = 1
+DEVICE_TOTAL_DECIMALS = 3
 
 
 def format_transformer_option(option: str) -> str:
-    """
-    Convert internal selectbox values into user-facing labels.
-    """
+    """Convert internal selectbox values into user-facing labels."""
     if option == ALL_NETWORK_OPTION:
         return "Gesamtes Netz anzeigen"
 
@@ -23,18 +31,18 @@ def transformer_area_display_label(trafo_id: str) -> str:
     """
     Return a user-friendly label for one selectable transformer area.
 
-    Wraps the id as-is (no recomputed numbering) so the same transformer
-    reads identically here and in the dashboard's overload map, which shows
-    trafo_id directly.
+    The original transformer ID is kept so labels stay consistent with the
+    dashboard and exported network data.
     """
     return f"Transformatorbereich {trafo_id}"
 
 
 def selectable_transformers(network) -> list[Any]:
     """
-    Return transformers that should be visible as user-facing selection options —
-    one per physical busbar (transformer.lv_bus), since parallel/reinforced
-    transformers on the same busbar are the same electrical area.
+    Return one visible transformer option per physical LV busbar.
+
+    Parallel or reinforced transformers with the same lv_bus belong to the
+    same electrical area and are shown as one selectable transformer area.
     """
     seen_lv_bus: dict[str, Any] = {}
 
@@ -46,16 +54,16 @@ def selectable_transformers(network) -> list[Any]:
 
 
 def selectable_transformer_ids(network) -> list[str]:
-    """
-    Return user-facing transformer IDs for dropdown and map selection.
-    """
+    """Return user-facing transformer IDs for dropdown and map selection."""
     return [str(transformer.trafo_id) for transformer in selectable_transformers(network)]
 
 
 def filter_network_by_transformer(network, trafo_id: str):
     """
-    Return a copy of the GridNetwork containing only the selected transformer area
-    (topologically reachable from it — see reachable_bus_ids_for_transformer).
+    Return a GridNetwork copy containing only one transformer area.
+
+    Buses and households are selected by topology, starting from the selected
+    transformer's LV bus. Reinforced partner transformers are kept together.
     """
     selected_transformer = transformer_by_id(network, trafo_id)
     selected_transformers = transformer_group_members(network, trafo_id)
@@ -127,9 +135,10 @@ def filter_network_by_transformer(network, trafo_id: str):
 
 def reachable_bus_ids_for_transformer(network, trafo_id: str) -> set[str]:
     """
-    Find buses belonging to the selected transformer area, by pure topology:
-    a line-connected BFS from the transformer's low-voltage side, stopping at
-    any other transformer's buses (each transformer area is its own island).
+    Find buses belonging to the selected transformer area.
+
+    The search follows line topology from the selected LV bus and stops before
+    entering buses that belong to other transformer areas.
     """
     selected_transformer = transformer_by_id(network, trafo_id)
 
@@ -139,7 +148,6 @@ def reachable_bus_ids_for_transformer(network, trafo_id: str) -> set[str]:
     }
 
     start_bus = str(selected_transformer.lv_bus)
-
     adjacency = line_adjacency(network)
 
     other_transformer_buses: set[str] = set()
@@ -169,6 +177,7 @@ def reachable_bus_ids_for_transformer(network, trafo_id: str) -> set[str]:
             if neighbour not in visited:
                 queue.append(neighbour)
 
+    # Keep all buses of reinforced transformers in the selected area.
     for transformer in transformer_group_members(network, trafo_id):
         visited.add(str(transformer.hv_bus))
         visited.add(str(transformer.lv_bus))
@@ -178,8 +187,9 @@ def reachable_bus_ids_for_transformer(network, trafo_id: str) -> set[str]:
 
 def assigned_household_ids_for_transformer(network, trafo_id: str) -> set[str]:
     """
-    Return the household IDs assigned to the selected transformer area
-    (those topologically reachable from it — see reachable_bus_ids_for_transformer).
+    Return households assigned to the selected transformer area.
+
+    Assignment is based on the reachable topology, not on geographic distance.
     """
     reachable_bus_ids = reachable_bus_ids_for_transformer(network, trafo_id)
 
@@ -191,9 +201,7 @@ def assigned_household_ids_for_transformer(network, trafo_id: str) -> set[str]:
 
 
 def line_adjacency(network) -> dict[str, set[str]]:
-    """
-    Build an undirected adjacency list from all LineModel connections.
-    """
+    """Build an undirected adjacency list from all line connections."""
     adjacency: dict[str, set[str]] = defaultdict(set)
 
     for line in network.lines:
@@ -207,9 +215,7 @@ def line_adjacency(network) -> dict[str, set[str]]:
 
 
 def transformer_by_id(network, trafo_id: str):
-    """
-    Return a transformer object by its trafo_id.
-    """
+    """Return a transformer object by its trafo_id."""
     for transformer in network.transformers:
         if str(transformer.trafo_id) == str(trafo_id):
             return transformer
@@ -219,19 +225,18 @@ def transformer_by_id(network, trafo_id: str):
 
 def transformer_group_members(network, trafo_id: str) -> list[Any]:
     """
-    Return all transformers sharing the same physical busbar (lv_bus) as
-    trafo_id — a real ding0 "reinforced" pair is two transformers on one bus.
+    Return all transformers sharing the selected transformer's LV bus.
+
+    This keeps reinforced or parallel transformers together as one area.
     """
     selected_transformer = transformer_by_id(network, trafo_id)
     lv_bus = str(selected_transformer.lv_bus)
 
-    return [t for t in network.transformers if str(t.lv_bus) == lv_bus]
+    return [transformer for transformer in network.transformers if str(transformer.lv_bus) == lv_bus]
 
 
 def transformer_marker_rows(network) -> list[dict[str, Any]]:
-    """
-    Create display rows for transformer markers and selection metadata.
-    """
+    """Create display rows for transformer map markers and metadata."""
     rows: list[dict[str, Any]] = []
 
     for transformer in selectable_transformers(network):
@@ -252,7 +257,10 @@ def transformer_marker_rows(network) -> list[dict[str, Any]]:
             {
                 "trafo_id": trafo_id,
                 "display_label": transformer_area_display_label(trafo_id),
-                "is_reinforced": len(transformer_group_members(network, trafo_id)) > 1,
+                "is_reinforced": (
+                    len(transformer_group_members(network, trafo_id))
+                    > REINFORCED_TRANSFORMER_COUNT_THRESHOLD
+                ),
                 "lat": lat,
                 "lon": lon,
                 "household_count": len(household_ids),
@@ -273,6 +281,8 @@ def transformer_marker_rows(network) -> list[dict[str, Any]]:
 def transformer_display_coordinates(network, transformer) -> tuple[float, float] | None:
     """
     Return map display coordinates for a transformer.
+
+    The LV bus is preferred. If it has no coordinates, the HV bus is used.
     """
     buses = bus_by_id(network)
 
@@ -292,13 +302,13 @@ def nearest_transformer_id(
     network,
     clicked_lat: float,
     clicked_lon: float,
-    max_distance_m: float = 50.0,
+    max_distance_m: float = DEFAULT_MARKER_CLICK_DISTANCE_M,
 ) -> str | None:
     """
     Return the closest visible transformer marker to a map click.
 
-    This is only used to identify which marker was clicked in the UI.
-    It is not used for household assignment or transformer-area filtering.
+    This only identifies the clicked marker in the UI. It is not used for
+    household assignment or transformer-area filtering.
     """
     nearest_id: str | None = None
     nearest_distance: float | None = None
@@ -325,20 +335,16 @@ def nearest_transformer_id(
 
 
 def distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """
-    Approximate the distance between two latitude/longitude points in metres.
-    """
-    mean_lat = radians((lat1 + lat2) / 2.0)
-    dx = (lon2 - lon1) * 111_320.0 * cos(mean_lat)
-    dy = (lat2 - lat1) * 111_320.0
+    """Approximate the distance between two latitude/longitude points in metres."""
+    mean_lat = radians((lat1 + lat2) / COORDINATE_MEAN_DIVISOR)
+    dx = (lon2 - lon1) * APPROX_METERS_PER_DEGREE * cos(mean_lat)
+    dy = (lat2 - lat1) * APPROX_METERS_PER_DEGREE
 
     return sqrt(dx * dx + dy * dy)
 
 
 def map_center_from_transformers_or_network(network) -> tuple[float, float]:
-    """
-    Calculate a useful map centre from transformer coordinates or bus coordinates.
-    """
+    """Calculate a useful map centre from transformer or bus coordinates."""
     transformer_rows = transformer_marker_rows(network)
 
     if transformer_rows:
@@ -363,17 +369,13 @@ def map_center_from_transformers_or_network(network) -> tuple[float, float]:
 
 
 def device_summary(network) -> dict[str, Any]:
-    """
-    Summarise real GridCreator device assignments for the current network.
-    """
+    """Summarise real GridCreator device assignments for the current network."""
     household_ids = [str(bus_id) for bus_id in getattr(network, "household_bus_ids", [])]
     return device_summary_for_households(network, household_ids)
 
 
 def device_summary_for_households(network, household_ids: list[str]) -> dict[str, Any]:
-    """
-    Summarise real GridCreator device assignments for a selected set of households.
-    """
+    """Summarise real GridCreator device assignments for selected households."""
     devices_by_bus = getattr(network, "household_devices", {}) or {}
     household_id_set = {str(bus_id) for bus_id in household_ids}
 
@@ -403,7 +405,9 @@ def device_summary_for_households(network, household_ids: list[str]) -> dict[str
 
         if has_battery:
             battery_count += 1
-            total_battery_kwh += float(read_object_value(devices, "battery_kwh", 0.0) or 0.0)
+            total_battery_kwh += float(
+                read_object_value(devices, "battery_kwh", 0.0) or 0.0
+            )
 
         if has_pv:
             pv_count += 1
@@ -421,45 +425,43 @@ def device_summary_for_households(network, household_ids: list[str]) -> dict[str
         "heat_pump_share_percent": percent(heat_pump_count, household_count),
         "battery_share_percent": percent(battery_count, household_count),
         "pv_share_percent": percent(pv_count, household_count),
-        "total_battery_kwh": round(total_battery_kwh, 3),
-        "total_pv_kwp": round(total_pv_kwp, 3),
+        "total_battery_kwh": round(total_battery_kwh, DEVICE_TOTAL_DECIMALS),
+        "total_pv_kwp": round(total_pv_kwp, DEVICE_TOTAL_DECIMALS),
         "has_gridcreator_device_data": bool(devices_by_bus),
     }
 
 
 def transformer_display_label(trafo_id: str) -> str:
     """
-    Return a readable label for a transformer ID (already human-readable —
-    see grid_model.builder.assign_clean_ids — so this just wraps it).
+    Return a readable label for a transformer ID.
+
+    The ID is already cleaned by grid_model.builder.assign_clean_ids.
     """
     return f"Transformator {trafo_id}"
 
 
 def transformer_metadata_for_id(trafo_id: str, network) -> dict[str, Any]:
-    """
-    Return readable and technical metadata for one transformer ID.
-    """
+    """Return readable and technical metadata for one transformer ID."""
     return {
         "trafo_id": str(trafo_id),
         "display_label": transformer_display_label(trafo_id),
-        "is_reinforced": len(transformer_group_members(network, trafo_id)) > 1,
+        "is_reinforced": (
+            len(transformer_group_members(network, trafo_id))
+            > REINFORCED_TRANSFORMER_COUNT_THRESHOLD
+        ),
     }
 
 
 def percent(part: int, total: int) -> float:
-    """
-    Return a percentage rounded to one decimal place.
-    """
+    """Return a percentage rounded to one decimal place."""
     if total <= 0:
         return 0.0
 
-    return round(part / total * 100.0, 1)
+    return round(part / total * PERCENT_FACTOR, PERCENT_DECIMALS)
 
 
 def read_object_value(obj: Any, attr_name: str, default: Any = None) -> Any:
-    """
-    Read a value from either a pydantic/object-like model or a plain dictionary.
-    """
+    """Read a value from either an object-like model or a dictionary."""
     if obj is None:
         return default
 
@@ -470,7 +472,5 @@ def read_object_value(obj: Any, attr_name: str, default: Any = None) -> Any:
 
 
 def bus_by_id(network) -> dict[str, Any]:
-    """
-    Return all buses keyed by bus_id.
-    """
+    """Return all buses keyed by bus_id."""
     return {str(bus.bus_id): bus for bus in network.buses}

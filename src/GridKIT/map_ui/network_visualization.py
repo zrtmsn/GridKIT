@@ -15,13 +15,18 @@ import folium
 import streamlit as st
 from streamlit_folium import st_folium
 
+from map_ui.area_bounds import AreaBounds
 from map_ui.household_config import (
     build_household_configuration,
     default_scenario_assumptions,
+    gridcreator_defaults,
 )
-from map_ui.area_bounds import AreaBounds
+from map_ui.map_widget_household_helpers import (
+    baseline_device_targets,
+    build_effective_household_overrides,
+)
 from map_ui.transformer_network_filter import (
-    reachable_bus_ids_for_transformer,
+    assigned_household_ids_for_transformer,
     selectable_transformer_ids,
     transformer_area_display_label,
     transformer_by_id,
@@ -82,17 +87,45 @@ def build_current_household_configuration_from_session(
         default_scenario_assumptions(),
     )
 
-    household_overrides = st.session_state.get("household_overrides", {})
+    individual_overrides = st.session_state.get("household_overrides", {})
+
+    gridcreator_devices = gridcreator_defaults(network)
+    uses_gridcreator_defaults = bool(gridcreator_devices)
+
+    baseline_targets = baseline_device_targets(
+        network=network,
+        saved_assumptions=saved_assumptions,
+        uses_gridcreator_defaults=uses_gridcreator_defaults,
+    )
+
+    saved_global_targets = st.session_state.get("global_device_targets")
+    active_targets = saved_global_targets or baseline_targets
+    global_targets_active = saved_global_targets is not None
+
+    saved_selection_seed = int(saved_assumptions.get("selection_seed", 42))
+    saved_global_load_scaling_factor = float(
+        saved_assumptions.get("global_load_scaling_factor", 1.0)
+    )
+
+    effective_overrides = build_effective_household_overrides(
+        household_ids=household_ids,
+        device_targets=active_targets,
+        selection_seed=saved_selection_seed,
+        individual_overrides=individual_overrides,
+        generate_global_overrides=global_targets_active or not uses_gridcreator_defaults,
+    )
 
     return build_household_configuration(
         network=network,
         selected_bounds=selected_bounds,
         household_ids=household_ids,
-        ev_share_percent=int(saved_assumptions["ev_share_percent"]),
-        heat_pump_share_percent=int(saved_assumptions["heat_pump_share_percent"]),
-        global_load_scaling_factor=float(saved_assumptions["global_load_scaling_factor"]),
-        selection_seed=int(saved_assumptions["selection_seed"]),
-        household_overrides=household_overrides,
+        ev_share_percent=float(active_targets["ev_share_percent"]),
+        heat_pump_share_percent=float(active_targets["heat_pump_share_percent"]),
+        battery_share_percent=float(active_targets["battery_share_percent"]),
+        pv_share_percent=float(active_targets["pv_share_percent"]),
+        global_load_scaling_factor=saved_global_load_scaling_factor,
+        selection_seed=saved_selection_seed,
+        household_overrides=effective_overrides,
     )
 
 
@@ -442,7 +475,7 @@ def household_label_reference_order(network) -> list[str]:
 
     for trafo_id in selectable_transformer_ids(full_network):
         try:
-            reachable_bus_ids = reachable_bus_ids_for_transformer(
+            assigned_household_ids = assigned_household_ids_for_transformer(
                 full_network,
                 trafo_id,
             )
@@ -452,7 +485,7 @@ def household_label_reference_order(network) -> list[str]:
         households_in_area = [
             household_id
             for household_id in all_household_ids
-            if household_id in reachable_bus_ids
+            if household_id in assigned_household_ids
             and household_id not in already_added
         ]
 
@@ -539,12 +572,6 @@ def household_sort_key(household_id: str) -> tuple[int, int, str]:
 def extract_building_id(bus_id: str) -> str | None:
     """
     Extract a building identifier from known household bus IDs.
-
-    Preferred pattern:
-    ..._building_1555885
-
-    Fallback:
-    use the last numeric part of the ID if no explicit building marker exists.
     """
     bus_id = str(bus_id)
 
