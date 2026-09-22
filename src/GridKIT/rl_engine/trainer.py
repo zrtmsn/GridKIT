@@ -128,10 +128,12 @@ class Trainer:
         expensive (bigger grid). Scaling the worker count by the same factor
         keeps the collection time per iteration roughly constant.
 
-        Bounds:
-        - Upper: os.cpu_count() - 1 — one core stays free for the learner;
-          more workers than cores only adds process-communication overhead.
-        - Lower: the configured default (settings.ippo_num_env_runners).
+        Worker count:
+        - Preferred value: half the machine's cores, floored
+          (os.cpu_count() // 2), but never below the configured default
+          (max(base, ...)) — the other half of the cores stays free for the
+          learner and the OS; more workers than that only adds
+          process-communication overhead.
 
         Returns None when scaling is a no-op (factor 1, or capped at the
         default) so the configured default is passed through unchanged.
@@ -142,8 +144,7 @@ class Trainer:
         scaled = base * factor
         cpus = os.cpu_count() or 0
         if cpus > 1:
-            scaled = min(scaled, cpus - 1)
-        scaled = max(scaled, base)
+            scaled = max(base, cpus // 2)
         if scaled == base:
             return None
         return scaled

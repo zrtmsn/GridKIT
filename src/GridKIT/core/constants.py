@@ -262,7 +262,7 @@ RLLIB_DEFAULT_NUM_EPISODES: int = 3            # low default for fast iteration 
 #   PIPELINE_EARLY_STOP_PATIENCE     — stop after this many iterations without a
 #                                      min_delta improvement of the reward
 # See rl_engine/convergence.py for the plateau detection itself.
-PIPELINE_MAX_TRAINING_ITERATIONS: int = 20   # hard ceiling (max) per UI-launched run
+PIPELINE_MAX_TRAINING_ITERATIONS: int = 50   # hard ceiling (max) per UI-launched run
 PIPELINE_MIN_TRAINING_ITERATIONS: int = 5    # never early-stop before this many iterations
 PIPELINE_EARLY_STOP_PATIENCE: int = 6        # stop after this many iterations without improvement
 # Smoothing window `k` for convergence detection (see rl_engine/convergence.py):
