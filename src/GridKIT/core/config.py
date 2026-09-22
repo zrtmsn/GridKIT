@@ -22,7 +22,9 @@ from core.constants import (
     DQN_REPLAY_BUFFER_SIZE,
     DQN_TARGET_UPDATE_STEPS,
     EV_PENETRATION_LEVELS,
+    IPPO_BATCH_SCALING_REF_AGENTS,
     IPPO_CLIP_EPS,
+    IPPO_EARLY_STOP_MIN_DELTA,
     IPPO_ENTROPY_COEFF,
     IPPO_EVALUATION_INTERVAL,
     IPPO_GAE_LAMBDA,
@@ -39,6 +41,9 @@ from core.constants import (
     IPPO_ROLLOUT_STEPS,
     IPPO_TRAIN_BATCH_SIZE,
     IPPO_VALUE_COEFF,
+    PIPELINE_EARLY_STOP_PATIENCE,
+    PIPELINE_EARLY_STOP_SMOOTH_WINDOW,
+    PIPELINE_MIN_TRAINING_ITERATIONS,
     RLLIB_DEFAULT_NUM_EPISODES,
     RLLIB_ENV_REGISTRY_NAME,
 )
@@ -118,10 +123,27 @@ class Settings(BaseSettings):
     ippo_evaluation_interval: int = IPPO_EVALUATION_INTERVAL
     ippo_num_gpus: int = IPPO_NUM_GPUS
     ippo_num_cpus: int = IPPO_NUM_CPUS
+    # Agent count of the reference grid that IPPO_TRAIN_BATCH_SIZE was tuned
+    # for; Trainer scales batch sizes with ceil(n_agents / this) so the
+    # transitions PER AGENT per update stay constant across grid sizes.
+    ippo_batch_scaling_ref_agents: int = IPPO_BATCH_SCALING_REF_AGENTS
+    # Plateau threshold: minimum improvement of episode_return_mean that still
+    # counts as progress for convergence-based early stopping.
+    ippo_early_stop_min_delta: float = IPPO_EARLY_STOP_MIN_DELTA
 
     # ── RLlib / Ray ───────────────────────────────────────────
     rllib_env_registry_name: str = RLLIB_ENV_REGISTRY_NAME
     rllib_default_num_episodes: int = RLLIB_DEFAULT_NUM_EPISODES
+
+    # ── Convergence-based early stopping ─────────────────────
+    # Defaults for Trainer.run(); the hard ceiling for UI-launched runs
+    # (PIPELINE_MAX_TRAINING_ITERATIONS) stays a constant in core.constants.
+    pipeline_min_training_iterations: int = PIPELINE_MIN_TRAINING_ITERATIONS
+    pipeline_early_stop_patience: int = PIPELINE_EARLY_STOP_PATIENCE
+    # Sliding window `k` for convergence smoothing: the plateau logic compares
+    # the mean of the last k per-iteration reward means (window slides; not the
+    # mean since training start, not re-averaged). 1 disables smoothing.
+    pipeline_early_stop_smooth_window: int = PIPELINE_EARLY_STOP_SMOOTH_WINDOW
 
     # ── Dashboard ────────────────────────────────────────────
     dashboard_port: int = 8501

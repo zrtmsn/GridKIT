@@ -96,7 +96,7 @@ def show_training_section(network, household_configuration: dict[str, Any]) -> N
             run_name,
             network,
             household_configuration,
-            iterations=const.PIPELINE_TRAINING_ITERATIONS,
+            iterations=const.PIPELINE_MAX_TRAINING_ITERATIONS,
             seeds=const.PIPELINE_EVALUATION_SEEDS,
             network_source=NETWORK_SOURCE_MAP_UI,
         )

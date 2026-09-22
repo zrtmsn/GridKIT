@@ -133,7 +133,7 @@ via `fetch_network.py`).
 # full experiment (writes outputs/) + dashboard
 gridkit-app --train                 # or: python -m GridKIT.scripts.app --train
 # experiment only
-python -m GridKIT.scripts.run_experiment --iterations 60 --seeds 12
+python -m GridKIT.scripts.run_experiment --max-iterations 60 --seeds 12
 # non-RL σ-sweep (scenarios 1 vs 2)
 python -m GridKIT.scripts.run_scenarios --seeds 8
 # tests

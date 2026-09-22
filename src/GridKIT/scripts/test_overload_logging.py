@@ -29,13 +29,13 @@ def analyze_overloads(timelines_path: Path) -> None:
         print("  python -m GridKIT.scripts.run_experiment \\")
         print("      --network data/stub_network.json \\")
         print("      --out outputs_test \\")
-        print("      --iterations 1 --seeds 1")
+        print("      --max-iterations 1 --seeds 1")
         print()
         print("Oder mit schwachen Zweigen (mehr Overloads):")
         print("  python -m GridKIT.scripts.run_experiment \\")
         print("      --network data/stub_network_weak_branches.json \\")
         print("      --out outputs_test_weak \\")
-        print("      --iterations 1 --seeds 1")
+        print("      --max-iterations 1 --seeds 1")
         sys.exit(1)
     
     with open(timelines_path) as f:

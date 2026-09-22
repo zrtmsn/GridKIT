@@ -9,9 +9,10 @@
 # updating run_store status live so the UI can show progress while it trains.
 #
 # Training hyperparameters (iterations/seeds) are FIXED
-# (core.constants.PIPELINE_TRAINING_ITERATIONS/PIPELINE_EVALUATION_SEEDS), not
-# read from the run config — the UI never exposes RL knobs to the user, so
-# there is nothing per-run to read here.
+# (core.constants.PIPELINE_MAX_TRAINING_ITERATIONS/PIPELINE_MIN_TRAINING_ITERATIONS/
+# PIPELINE_EARLY_STOP_PATIENCE, PIPELINE_EVALUATION_SEEDS), not read from the run
+# config — the UI never exposes RL knobs to the user, so there is nothing
+# per-run to read here.
 #
 # Launched detached by map_ui/map_widget.py:
 #   PYTHONPATH=src/GridKIT:src python -m GridKIT.scripts.train_run --run-dir runs/<id>
@@ -124,7 +125,9 @@ def main() -> None:
         household_configuration = rs.load_household_configuration(run_id, root=root) or {}
         layout = household_devices_from_config(household_configuration, list(network.household_bus_ids))
 
-        iterations = const.PIPELINE_TRAINING_ITERATIONS
+        iterations = const.PIPELINE_MAX_TRAINING_ITERATIONS
+        min_iterations = const.PIPELINE_MIN_TRAINING_ITERATIONS
+        early_stop_patience = const.PIPELINE_EARLY_STOP_PATIENCE
         seeds = list(range(const.PIPELINE_EVALUATION_SEEDS))
 
         # What the dashboard shows as the Ausstattungsgrad for this run.
@@ -143,8 +146,20 @@ def main() -> None:
         def env_factory(cfg=None):
             return GridEnvRLlibWrapper(env=GridEnv(builder=FixedNetworkBuilder(network), device_layout=layout))
 
-        def config_func(env_name):
-            return create_ippo_config(env_name=env_name, device_types=active_device_types)
+        def config_func(env_name, *, train_batch_size=None, minibatch_size=None, num_env_runners=None):
+            # Explicitly accept the agent-count-scaled values: Trainer detects
+            # them via inspect.signature and re-sizes the batch to the user's
+            # network size, so the UI pipeline benefits from the same scaling as
+            # the batch experiment. None values fall back to create_ippo_config's
+            # configured defaults.
+            kwargs = {}
+            if train_batch_size is not None:
+                kwargs["train_batch_size"] = train_batch_size
+            if minibatch_size is not None:
+                kwargs["minibatch_size"] = minibatch_size
+            if num_env_runners is not None:
+                kwargs["num_env_runners"] = num_env_runners
+            return create_ippo_config(env_name=env_name, device_types=active_device_types, **kwargs)
 
         class _StatusCallback:
             def on_iteration_end(self, iteration, reward, length):
@@ -155,11 +170,20 @@ def main() -> None:
         trainer = Trainer(env_factory=env_factory, config_func=config_func)
         # metrics_dir: without it iteration_metrics.json goes to a temp path and
         # the dashboard's Training tab stays empty for every run from the map.
-        trainer.run(num_episodes=iterations, callback=_StatusCallback(), cleanup=False,
-                    metrics_dir=run_path)
+        # num_episodes is only the ceiling: the run stops earlier once the
+        # reward has plateaued (convergence.py), so a user's network size never
+        # dictates a fixed iteration count.
+        results = trainer.run(num_episodes=iterations, callback=_StatusCallback(), cleanup=False,
+                              metrics_dir=run_path,
+                              min_iterations=min_iterations, patience=early_stop_patience)
 
+        # Report WHY training ended (reward-converged vs full budget) to the UI.
+        if results and results[-1].early_stopped:
+            converged_note = f" · konvergiert nach {len(results)}/{iterations} Iterationen"
+        else:
+            converged_note = ""
         rs.set_status(run_id, state=rs.RUNNING, progress=1.0, iteration=iterations,
-                       total_iters=iterations, message="evaluating scenarios", root=root)
+                       total_iters=iterations, message=f"evaluating scenarios{converged_note}", root=root)
         trainer.save_checkpoint(str((run_path / "checkpoints").resolve()))
         modules = {dev: trainer.get_policy_module(f"{dev}_policy") for dev in active_device_types}
         adapter = RLlibPolicyAdapter(modules)
