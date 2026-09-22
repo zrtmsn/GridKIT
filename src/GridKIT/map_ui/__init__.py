@@ -1,8 +1,7 @@
 """
-GridKIT map_ui package.
+Public interface for the GridKIT map_ui package.
 
-Public API:
-    from map_ui import AreaBounds
+Only objects that should be imported directly from map_ui are exposed here.
 """
 
 from map_ui.area_bounds import AreaBounds

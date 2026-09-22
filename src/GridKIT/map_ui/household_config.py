@@ -22,8 +22,29 @@ DEFAULT_PV_SHARE_PERCENT = 0.0
 DEFAULT_GLOBAL_LOAD_SCALING_FACTOR = 1.0
 DEFAULT_SELECTION_SEED = 42
 
+MIN_SHARE_PERCENT = 0.0
+MAX_SHARE_PERCENT = 100.0
+ROUND_TO_NEAREST_COUNT_OFFSET = 0.5
+
+CHOICE_INDEX_UNSPECIFIED = 0
+CHOICE_INDEX_YES = 1
+CHOICE_INDEX_NO = 2
+
+CHOICE_LABEL_YES = "Ja"
+CHOICE_LABEL_NO = "Nein"
+
+CONFIGURATION_VERSION = 3
+
+HOURS_PER_DAY = 24.0
+DEFAULT_TIMESTEP_HOURS = 0.25
+
+PERCENT_DECIMALS = 2
+SUMMARY_DECIMALS = 4
+TIMESTEP_DECIMALS = 6
+
 
 def default_scenario_assumptions() -> dict[str, Any]:
+    """Return the default scenario values used by the map UI."""
     return {
         "ev_share_percent": DEFAULT_EV_SHARE_PERCENT,
         "heat_pump_share_percent": DEFAULT_HEAT_PUMP_SHARE_PERCENT,
@@ -35,17 +56,19 @@ def default_scenario_assumptions() -> dict[str, Any]:
 
 
 def choice_index_from_bool(value: bool | None) -> int:
+    """Map an optional boolean value to the selectbox index."""
     if value is True:
-        return 1
+        return CHOICE_INDEX_YES
     if value is False:
-        return 2
-    return 0
+        return CHOICE_INDEX_NO
+    return CHOICE_INDEX_UNSPECIFIED
 
 
 def bool_from_choice(choice: str) -> bool | None:
-    if choice == "Ja":
+    """Map a German UI choice label back to an optional boolean."""
+    if choice == CHOICE_LABEL_YES:
         return True
-    if choice == "Nein":
+    if choice == CHOICE_LABEL_NO:
         return False
     return None
 
@@ -59,22 +82,22 @@ def select_households_by_share(
     """
     Select a deterministic subset of households based on a percentage.
 
-    share_percent can be a decimal value, for example:
-    - 16.7
-    - 33.3
-    - 66.7
-
-    The selected count is rounded to the nearest household count.
+    The selected count is rounded to the nearest household count. The salt
+    keeps different device selections independent while using the same seed.
     """
     normalized_share = normalize_share_percent(share_percent)
 
-    if not household_ids or normalized_share <= 0.0:
+    if not household_ids or normalized_share <= MIN_SHARE_PERCENT:
         return []
 
-    if normalized_share >= 100.0:
+    if normalized_share >= MAX_SHARE_PERCENT:
         return sorted(household_ids)
 
-    count = int(len(household_ids) * (normalized_share / 100.0) + 0.5)
+    count = int(
+        len(household_ids)
+        * (normalized_share / MAX_SHARE_PERCENT)
+        + ROUND_TO_NEAREST_COUNT_OFFSET
+    )
     count = max(0, min(count, len(household_ids)))
 
     shuffled_ids = list(household_ids)
@@ -89,9 +112,8 @@ def gridcreator_defaults(network: Any) -> dict[str, Any]:
     Return the per-household device assignment from GridCreator.
 
     OSMNetworkBuilder writes real GridCreator device data into
-    network.household_devices. If this dictionary is empty, the network does not
-    carry real per-household device assignments and the map UI falls back to
-    scenario-based assumptions.
+    network.household_devices. If this dictionary is empty, the map UI falls
+    back to scenario-based assumptions.
     """
     return getattr(network, "household_devices", {}) or {}
 
@@ -105,27 +127,27 @@ def build_household_configuration(
     global_load_scaling_factor: float,
     selection_seed: int,
     household_overrides: dict[str, dict[str, Any]],
+    battery_share_percent: float = DEFAULT_BATTERY_SHARE_PERCENT,
+    pv_share_percent: float = DEFAULT_PV_SHARE_PERCENT,
 ) -> dict[str, Any]:
     """
     Build the household configuration JSON for the currently displayed network.
 
     Resolution order:
     1. real GridCreator device data from network.household_devices
-    2. deterministic scenario shares if no GridCreator device data exists
+    2. deterministic device shares if no GridCreator data exists
     3. explicit overrides from the map UI
 
-    In the current map UI, household_overrides can contain two kinds of changes:
-    - generated global target overrides, created from the global target sliders
-    - individual household overrides, created by the per-household UI
-
-    This function treats both as explicit overrides and applies them after the
-    GridCreator baseline.
+    Overrides can come from global target sliders or from individual household
+    edits. Both are applied after the GridCreator baseline.
     """
     household_ids = sorted(str(bus_id) for bus_id in household_ids)
     household_id_set = set(household_ids)
 
     ev_share_percent = normalize_share_percent(ev_share_percent)
     heat_pump_share_percent = normalize_share_percent(heat_pump_share_percent)
+    battery_share_percent = normalize_share_percent(battery_share_percent)
+    pv_share_percent = normalize_share_percent(pv_share_percent)
 
     household_devices = {
         str(bus_id): devices
@@ -172,8 +194,22 @@ def build_household_configuration(
                 salt="heat_pump",
             )
         )
-        resolved_battery_ids = set()
-        resolved_pv_ids = set()
+        resolved_battery_ids = set(
+            select_households_by_share(
+                household_ids=household_ids,
+                share_percent=battery_share_percent,
+                seed=selection_seed,
+                salt="battery",
+            )
+        )
+        resolved_pv_ids = set(
+            select_households_by_share(
+                household_ids=household_ids,
+                share_percent=pv_share_percent,
+                seed=selection_seed,
+                salt="pv",
+            )
+        )
 
     pv_kwp_by_bus = {
         bus_id: float(read_object_value(devices, "pv_kwp"))
@@ -272,7 +308,7 @@ def build_household_configuration(
 
     return {
         "configuration_type": "household_scenario_configuration",
-        "version": 3,
+        "version": CONFIGURATION_VERSION,
         "topology_changed": False,
         "description": (
             "Konfiguration von GridCreator-/grid_model-Basisdaten, globalen Zielwerten, "
@@ -321,6 +357,8 @@ def build_household_configuration(
             "uses_gridcreator_defaults": uses_gridcreator_defaults,
             "ev_share_percent": float(ev_share_percent),
             "heat_pump_share_percent": float(heat_pump_share_percent),
+            "battery_share_percent": float(battery_share_percent),
+            "pv_share_percent": float(pv_share_percent),
             "global_load_scaling_factor": float(global_load_scaling_factor),
             "global_load_scaling_factor_label": "Globale Lastprofil-Skalierung für Szenarien",
             "selection_seed": int(selection_seed),
@@ -330,8 +368,8 @@ def build_household_configuration(
                 "im GridNetwork vorhanden sind. Globale Zielwerte aus der Map UI "
                 "und individuelle Haushalt-Anpassungen werden anschließend als "
                 "Overrides angewendet. Wenn keine GridCreator-Gerätedaten vorhanden "
-                "sind, werden EV und Wärmepumpe deterministisch über die angegebenen "
-                "Szenario-Anteile verteilt; Batterie und PV bleiben ohne Override aus."
+                "sind, werden EV, Wärmepumpe, Batterie und PV deterministisch über "
+                "die angegebenen Szenario-Anteile verteilt."
             ),
             "load_profile_scaling_method": (
                 "Das originale Lastprofil pro Haushalt bleibt bei einer Skalierung von 1.0 "
@@ -401,6 +439,7 @@ def build_gridcreator_device_data_by_bus(
     household_ids: list[str],
     household_devices: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
+    """Build a per-household view of the original GridCreator device data."""
     result: dict[str, dict[str, Any]] = {}
 
     for bus_id in household_ids:
@@ -439,6 +478,7 @@ def build_load_profile_summary_by_bus(
     network: Any,
     household_ids: list[str],
 ) -> dict[str, dict[str, Any]]:
+    """Summarize original household load profiles for export."""
     profiles = getattr(network, "household_load_profile_kw", {}) or {}
     result: dict[str, dict[str, Any]] = {}
 
@@ -459,16 +499,16 @@ def build_load_profile_summary_by_bus(
 
         values = [float(value) for value in profile]
         steps = len(values)
-        dt_hours = 24.0 / steps if steps else 0.25
+        dt_hours = HOURS_PER_DAY / steps if steps else DEFAULT_TIMESTEP_HOURS
 
-        daily_energy_kwh = round(sum(values) * dt_hours, 4)
-        peak_kw = round(max(values), 4)
-        mean_kw = round(sum(values) / steps, 4) if steps else 0.0
+        daily_energy_kwh = round(sum(values) * dt_hours, SUMMARY_DECIMALS)
+        peak_kw = round(max(values), SUMMARY_DECIMALS)
+        mean_kw = round(sum(values) / steps, SUMMARY_DECIMALS) if steps else 0.0
 
         result[bus_id] = {
             "has_profile": True,
             "steps": steps,
-            "timestep_hours": round(dt_hours, 6),
+            "timestep_hours": round(dt_hours, TIMESTEP_DECIMALS),
             "daily_energy_kwh": daily_energy_kwh,
             "peak_kw": peak_kw,
             "mean_kw": mean_kw,
@@ -486,6 +526,7 @@ def build_ev_availability_summary_by_bus(
     network: Any,
     household_ids: list[str],
 ) -> dict[str, dict[str, Any]]:
+    """Summarize original EV availability profiles for export."""
     availability_by_bus = getattr(network, "ev_availability", {}) or {}
     result: dict[str, dict[str, Any]] = {}
 
@@ -509,7 +550,11 @@ def build_ev_availability_summary_by_bus(
             "steps": steps,
             "connected_steps": connected_steps,
             "connected_share_percent": (
-                round(connected_steps / steps * 100.0, 2) if steps else 0.0
+                round(
+                    connected_steps / steps * MAX_SHARE_PERCENT,
+                    PERCENT_DECIMALS,
+                )
+                if steps else 0.0
             ),
         }
 
@@ -522,6 +567,7 @@ def build_gridcreator_summary(
     load_profile_summary_by_bus: dict[str, dict[str, Any]],
     ev_availability_summary_by_bus: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    """Build aggregate statistics for the original GridCreator source data."""
     household_count = len(household_ids)
 
     ev_count = 0
@@ -573,8 +619,8 @@ def build_gridcreator_summary(
         "heat_pump_share_percent": percent(heat_pump_count, household_count),
         "battery_share_percent": percent(battery_count, household_count),
         "pv_share_percent": percent(pv_count, household_count),
-        "total_battery_kwh": round(total_battery_kwh, 4),
-        "total_pv_kwp": round(total_pv_kwp, 4),
+        "total_battery_kwh": round(total_battery_kwh, SUMMARY_DECIMALS),
+        "total_pv_kwp": round(total_pv_kwp, SUMMARY_DECIMALS),
     }
 
 
@@ -588,6 +634,7 @@ def build_resolved_summary(
     battery_kwh_by_bus: dict[str, float],
     load_scaling_by_bus: dict[str, float],
 ) -> dict[str, Any]:
+    """Build aggregate statistics for the final resolved configuration."""
     load_factors = list(load_scaling_by_bus.values())
 
     return {
@@ -600,12 +647,18 @@ def build_resolved_summary(
         "heat_pump_share_percent": percent(len(resolved_heat_pump_ids), household_count),
         "battery_share_percent": percent(len(resolved_battery_ids), household_count),
         "pv_share_percent": percent(len(resolved_pv_ids), household_count),
-        "total_battery_kwh_known": round(sum(float(v) for v in battery_kwh_by_bus.values()), 4),
-        "total_pv_kwp_known": round(sum(float(v) for v in pv_kwp_by_bus.values()), 4),
+        "total_battery_kwh_known": round(
+            sum(float(v) for v in battery_kwh_by_bus.values()),
+            SUMMARY_DECIMALS,
+        ),
+        "total_pv_kwp_known": round(
+            sum(float(v) for v in pv_kwp_by_bus.values()),
+            SUMMARY_DECIMALS,
+        ),
         "load_scaling_min": min(load_factors) if load_factors else None,
         "load_scaling_max": max(load_factors) if load_factors else None,
         "load_scaling_mean": (
-            round(sum(load_factors) / len(load_factors), 4)
+            round(sum(load_factors) / len(load_factors), SUMMARY_DECIMALS)
             if load_factors else None
         ),
         "load_scaling_description": (
@@ -616,6 +669,7 @@ def build_resolved_summary(
 
 
 def bounds_to_dict(selected_bounds: Any) -> dict[str, Any]:
+    """Convert optional AreaBounds into export-friendly dictionary data."""
     if selected_bounds is None:
         return {
             "bbox": None,
@@ -629,6 +683,7 @@ def bounds_to_dict(selected_bounds: Any) -> dict[str, Any]:
 
 
 def optional_float(value: Any) -> float | None:
+    """Convert a value to float if possible, otherwise return None."""
     if value is None:
         return None
 
@@ -639,28 +694,25 @@ def optional_float(value: Any) -> float | None:
 
 
 def normalize_share_percent(value: Any) -> float:
-    """
-    Convert a percentage value to a float between 0.0 and 100.0.
-    """
+    """Convert a percentage value to a float between 0.0 and 100.0."""
     try:
         numeric = float(value)
     except (TypeError, ValueError):
-        numeric = 0.0
+        numeric = MIN_SHARE_PERCENT
 
-    return max(0.0, min(100.0, numeric))
+    return max(MIN_SHARE_PERCENT, min(MAX_SHARE_PERCENT, numeric))
 
 
 def percent(part: int, total: int) -> float:
+    """Return part divided by total as a rounded percentage."""
     if total <= 0:
         return 0.0
 
-    return round(part / total * 100.0, 2)
+    return round(part / total * MAX_SHARE_PERCENT, PERCENT_DECIMALS)
 
 
 def read_object_value(obj: Any, attr_name: str, default: Any = None) -> Any:
-    """
-    Read a value from either a normal object or a dictionary.
-    """
+    """Read a value from either a normal object or a dictionary."""
     if obj is None:
         return default
 
@@ -671,4 +723,5 @@ def read_object_value(obj: Any, attr_name: str, default: Any = None) -> Any:
 
 
 def json_dumps_pretty(data: dict[str, Any]) -> str:
+    """Serialize JSON data with stable formatting for downloads."""
     return json.dumps(data, indent=2, ensure_ascii=False)

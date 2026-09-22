@@ -20,6 +20,10 @@ import streamlit as st
 
 from map_ui.area_bounds import AreaBounds
 from map_ui.household_config import (
+    DEFAULT_GLOBAL_LOAD_SCALING_FACTOR,
+    DEFAULT_SELECTION_SEED,
+    MAX_SHARE_PERCENT,
+    MIN_SHARE_PERCENT,
     bool_from_choice,
     build_household_configuration,
     choice_index_from_bool,
@@ -47,7 +51,33 @@ from map_ui.map_widget_household_helpers import (
 from map_ui.transformer_network_filter import device_summary
 
 
+TARGET_SLIDER_STEP = 0.1
+TARGET_SLIDER_FORMAT = "%.1f"
+
+LOAD_SCALING_MIN = 0.1
+LOAD_SCALING_MAX = 5.0
+LOAD_SCALING_STEP = 0.1
+LOAD_SCALING_FORMAT = "%.2f"
+
+SELECTION_SEED_MIN = 0
+SELECTION_SEED_MAX = 99_999
+SELECTION_SEED_STEP = 1
+
+GLOBAL_TARGET_COLUMN_COUNT = 4
+ACTION_COLUMN_COUNT = 2
+HOUSEHOLD_SETTING_COLUMN_COUNT = 5
+SUMMARY_COLUMN_COUNT = 6
+
+FLOAT_COMPARISON_TOLERANCE = 1e-9
+
+
 def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[str, Any] | None:
+    """
+    Render the household configuration UI for the currently displayed network.
+
+    The UI can operate on the complete generated network or on a selected
+    transformer area, depending on the active transformer filter.
+    """
     st.subheader("Haushaltskonfiguration")
 
     selected_trafo_id = st.session_state.get("selected_trafo_id")
@@ -95,6 +125,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
     if reset_household:
         st.info(f"Individuelle Anpassung für {reset_household} wurde gelöscht.")
 
+    # Session state stores scenario settings across Streamlit reruns.
     st.session_state.setdefault("household_overrides", {})
     st.session_state.setdefault("scenario_assumptions", default_scenario_assumptions())
     st.session_state.setdefault("global_device_targets", None)
@@ -108,6 +139,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
     gridcreator_devices = gridcreator_defaults(network)
     uses_gridcreator_defaults = bool(gridcreator_devices)
 
+    # A new scope invalidates previously saved global target values.
     configuration_scope = (
         f"{getattr(network, 'network_id', 'unknown_network')}|"
         f"{selected_trafo_id or 'complete_network'}|"
@@ -131,15 +163,9 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
     active_targets = saved_global_targets or baseline_targets
     global_targets_active = saved_global_targets is not None
 
-    st.markdown("### Ausgangsdaten des Netzmodells und Szenario-Anpassungen")
+    st.markdown("### Ausgangsdaten des Netzmodells")
 
-    if uses_gridcreator_defaults:
-        st.info(
-            "Die angezeigten Haushaltsdaten bilden den aktuellen Ausgangszustand "
-            "des ausgewählten Netzes ab. Sie können diese Werte über "
-            "Szenario-Anpassungen oder individuelle Haushaltseinstellungen verändern."
-        )
-    else:
+    if not uses_gridcreator_defaults:
         st.info(
             "Für dieses Netz liegen keine vollständigen Gerätedaten pro Haushalt vor. "
             "Die Ausstattung wird deshalb über globale Zielwerte verteilt. "
@@ -150,23 +176,37 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
     show_gridcreator_device_metrics(gridcreator_summary)
 
     st.caption(
+        "Diese Werte stammen aus dem erzeugten Netzmodell und dienen als Grundlage "
+        "für die folgenden Szenario-Anpassungen."
+    )
+
+    st.divider()
+
+    st.markdown("### Szenario-Anpassungen")
+
+    st.info(
+        "Die folgenden Zielwerte sind Szenario-Annahmen. "
+        "Nach dem Speichern werden sie verwendet, um die Haushaltsausstattung "
+        "und die Lastprofile für das aktuelle Szenario anzupassen."
+    )
+
+    st.caption(
         "Für jeden Haushalt liegt ein ursprüngliches Lastprofil vor. "
-        "Es beschreibt, wie sich der Stromverbrauch über den Tag verteilt. "
         "Eine Skalierung von 1.00 bedeutet, dass dieses Profil unverändert verwendet wird. "
         "Höhere oder niedrigere Werte dienen als Szenario-Annahme, um den Verbrauch zu verändern."
     )
 
     widget_suffix = st.session_state["scenario_config_version"]
 
-    high_col1, high_col2, high_col3, high_col4 = st.columns(4)
+    high_col1, high_col2, high_col3, high_col4 = st.columns(GLOBAL_TARGET_COLUMN_COUNT)
 
     draft_ev_share_percent = high_col1.slider(
         "Ziel-Anteil Haushalte mit EV (%)",
-        min_value=0.0,
-        max_value=100.0,
+        min_value=MIN_SHARE_PERCENT,
+        max_value=MAX_SHARE_PERCENT,
         value=percent_slider_value(active_targets["ev_share_percent"]),
-        step=0.1,
-        format="%.1f",
+        step=TARGET_SLIDER_STEP,
+        format=TARGET_SLIDER_FORMAT,
         help=(
             "Ausgangswert ist der erkannte EV-Anteil im ausgewählten Netz. "
             "Nach dem Speichern kann dieser Zielwert für das Szenario geändert werden."
@@ -176,11 +216,11 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
 
     draft_heat_pump_share_percent = high_col2.slider(
         "Ziel-Anteil Haushalte mit WP (%)",
-        min_value=0.0,
-        max_value=100.0,
+        min_value=MIN_SHARE_PERCENT,
+        max_value=MAX_SHARE_PERCENT,
         value=percent_slider_value(active_targets["heat_pump_share_percent"]),
-        step=0.1,
-        format="%.1f",
+        step=TARGET_SLIDER_STEP,
+        format=TARGET_SLIDER_FORMAT,
         help=(
             "Ausgangswert ist der erkannte Wärmepumpen-Anteil im ausgewählten Netz. "
             "Nach dem Speichern kann dieser Zielwert für das Szenario geändert werden."
@@ -190,11 +230,11 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
 
     draft_battery_share_percent = high_col3.slider(
         "Ziel-Anteil Haushalte mit Batterie (%)",
-        min_value=0.0,
-        max_value=100.0,
+        min_value=MIN_SHARE_PERCENT,
+        max_value=MAX_SHARE_PERCENT,
         value=percent_slider_value(active_targets["battery_share_percent"]),
-        step=0.1,
-        format="%.1f",
+        step=TARGET_SLIDER_STEP,
+        format=TARGET_SLIDER_FORMAT,
         help=(
             "Ausgangswert ist der erkannte Batterie-Anteil im ausgewählten Netz. "
             "Nach dem Speichern kann dieser Zielwert für das Szenario geändert werden."
@@ -204,11 +244,11 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
 
     draft_pv_share_percent = high_col4.slider(
         "Ziel-Anteil Haushalte mit PV (%)",
-        min_value=0.0,
-        max_value=100.0,
+        min_value=MIN_SHARE_PERCENT,
+        max_value=MAX_SHARE_PERCENT,
         value=percent_slider_value(active_targets["pv_share_percent"]),
-        step=0.1,
-        format="%.1f",
+        step=TARGET_SLIDER_STEP,
+        format=TARGET_SLIDER_FORMAT,
         help=(
             "Ausgangswert ist der erkannte PV-Anteil im ausgewählten Netz. "
             "Nach dem Speichern kann dieser Zielwert für das Szenario geändert werden."
@@ -218,11 +258,16 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
 
     draft_global_load_scaling_factor = st.number_input(
         "Globale Lastprofil-Skalierung für Szenarien",
-        min_value=0.1,
-        max_value=5.0,
-        value=float(saved_assumptions.get("global_load_scaling_factor", 1.0)),
-        step=0.1,
-        format="%.2f",
+        min_value=LOAD_SCALING_MIN,
+        max_value=LOAD_SCALING_MAX,
+        value=float(
+            saved_assumptions.get(
+                "global_load_scaling_factor",
+                DEFAULT_GLOBAL_LOAD_SCALING_FACTOR,
+            )
+        ),
+        step=LOAD_SCALING_STEP,
+        format=LOAD_SCALING_FORMAT,
         help=(
             "Diese Skalierung wird nur als Szenario-Annahme verwendet. "
             "1.00 bedeutet: originale Lastprofile unverändert. "
@@ -235,10 +280,10 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
     with st.expander("Erweiterte Einstellungen"):
         draft_selection_seed = st.number_input(
             "Zufallswert für automatische Zielwert-Verteilung",
-            min_value=0,
-            max_value=99999,
-            value=int(saved_assumptions.get("selection_seed", 42)),
-            step=1,
+            min_value=SELECTION_SEED_MIN,
+            max_value=SELECTION_SEED_MAX,
+            value=int(saved_assumptions.get("selection_seed", DEFAULT_SELECTION_SEED)),
+            step=SELECTION_SEED_STEP,
             help=(
                 "Dieser Wert ist nur für die automatische Verteilung globaler Zielanteile relevant. "
                 "Beispiel: Wenn 30 % der Haushalte EV haben sollen, entscheidet dieser Wert, "
@@ -265,7 +310,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
         "selection_seed": int(draft_selection_seed),
     }
 
-    action_col1, action_col2 = st.columns(2)
+    action_col1, action_col2 = st.columns(ACTION_COLUMN_COUNT)
 
     if action_col1.button("Szenario-Anpassungen speichern"):
         st.session_state["global_device_targets"] = draft_device_targets
@@ -276,8 +321,10 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
 
     if action_col2.button("Auf Ausgangsdaten zurücksetzen"):
         reset_assumptions = default_scenario_assumptions()
-        reset_assumptions["global_load_scaling_factor"] = 1.0
-        reset_assumptions["selection_seed"] = int(saved_assumptions.get("selection_seed", 42))
+        reset_assumptions["global_load_scaling_factor"] = DEFAULT_GLOBAL_LOAD_SCALING_FACTOR
+        reset_assumptions["selection_seed"] = int(
+            saved_assumptions.get("selection_seed", DEFAULT_SELECTION_SEED)
+        )
 
         st.session_state["global_device_targets"] = None
         st.session_state["scenario_assumptions"] = reset_assumptions
@@ -294,16 +341,28 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
 
     if (
         draft_device_targets != active_targets
-        or float(draft_global_load_scaling_factor) != float(saved_assumptions.get("global_load_scaling_factor", 1.0))
-        or int(draft_selection_seed) != int(saved_assumptions.get("selection_seed", 42))
+        or float(draft_global_load_scaling_factor)
+        != float(
+            saved_assumptions.get(
+                "global_load_scaling_factor",
+                DEFAULT_GLOBAL_LOAD_SCALING_FACTOR,
+            )
+        )
+        or int(draft_selection_seed)
+        != int(saved_assumptions.get("selection_seed", DEFAULT_SELECTION_SEED))
     ):
         st.warning(
             "Es gibt nicht gespeicherte Änderungen in der globalen Konfiguration. "
             "Klicke auf „Szenario-Anpassungen speichern“, damit diese Werte übernommen werden."
         )
 
-    saved_global_load_scaling_factor = float(saved_assumptions.get("global_load_scaling_factor", 1.0))
-    saved_selection_seed = int(saved_assumptions.get("selection_seed", 42))
+    saved_global_load_scaling_factor = float(
+        saved_assumptions.get(
+            "global_load_scaling_factor",
+            DEFAULT_GLOBAL_LOAD_SCALING_FACTOR,
+        )
+    )
+    saved_selection_seed = int(saved_assumptions.get("selection_seed", DEFAULT_SELECTION_SEED))
 
     effective_overrides = build_effective_household_overrides(
         household_ids=household_ids,
@@ -318,7 +377,10 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
     selected_household = st.selectbox(
         "Haushalt auswählen",
         household_ids,
-        format_func=lambda household_id: household_display_label(reference_household_ids, household_id),
+        format_func=lambda household_id: household_display_label(
+            reference_household_ids,
+            household_id,
+        ),
         help=(
             "Hier kann ein konkreter Haushalt individuell angepasst werden. "
             "Die technische interne ID bleibt unverändert, wird aber in der UI vereinfacht dargestellt."
@@ -353,7 +415,9 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
         household_id=selected_household,
     )
 
-    low_col1, low_col2, low_col3, low_col4, low_col5 = st.columns(5)
+    low_col1, low_col2, low_col3, low_col4, low_col5 = st.columns(
+        HOUSEHOLD_SETTING_COLUMN_COUNT
+    )
 
     ev_choice = low_col1.selectbox(
         "EV für diesen Haushalt",
@@ -416,9 +480,15 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
     else:
         current_load_scaling_override = float(current_load_scaling_override)
 
-        if abs(current_load_scaling_override - original_load_scaling_factor) < 1e-9:
+        if (
+            abs(current_load_scaling_override - original_load_scaling_factor)
+            < FLOAT_COMPARISON_TOLERANCE
+        ):
             load_profile_mode_index = 0
-        elif abs(current_load_scaling_override - saved_global_load_scaling_factor) < 1e-9:
+        elif (
+            abs(current_load_scaling_override - saved_global_load_scaling_factor)
+            < FLOAT_COMPARISON_TOLERANCE
+        ):
             load_profile_mode_index = 1
         else:
             load_profile_mode_index = 2
@@ -438,16 +508,16 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
 
     configured_load_scaling_factor = low_col5.number_input(
         "Eigene Skalierung",
-        min_value=0.1,
-        max_value=5.0,
+        min_value=LOAD_SCALING_MIN,
+        max_value=LOAD_SCALING_MAX,
         value=float(
             current_override.get(
                 "load_scaling_factor",
                 original_load_scaling_factor,
             )
         ),
-        step=0.1,
-        format="%.2f",
+        step=LOAD_SCALING_STEP,
+        format=LOAD_SCALING_FORMAT,
         key=f"load_scaling_factor_{selected_household}_{household_widget_suffix}",
         disabled=load_profile_mode != LOAD_PROFILE_MODE_CUSTOM,
         help=(
@@ -462,7 +532,7 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
         f"Globale Szenario-Skalierung: **{saved_global_load_scaling_factor:.2f}**"
     )
 
-    individual_action_col1, individual_action_col2 = st.columns(2)
+    individual_action_col1, individual_action_col2 = st.columns(ACTION_COLUMN_COUNT)
 
     if individual_action_col1.button(
         "Individuelle Anpassung für diesen Haushalt speichern",
@@ -488,7 +558,10 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
             new_override["has_pv"] = pv_override
 
         if load_profile_mode == LOAD_PROFILE_MODE_ORIGINAL:
-            if abs(original_load_scaling_factor - saved_global_load_scaling_factor) > 1e-9:
+            if (
+                abs(original_load_scaling_factor - saved_global_load_scaling_factor)
+                > FLOAT_COMPARISON_TOLERANCE
+            ):
                 new_override["load_scaling_factor"] = float(original_load_scaling_factor)
 
         elif load_profile_mode == LOAD_PROFILE_MODE_CUSTOM:
@@ -520,6 +593,8 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
         household_ids=household_ids,
         ev_share_percent=float(active_targets["ev_share_percent"]),
         heat_pump_share_percent=float(active_targets["heat_pump_share_percent"]),
+        battery_share_percent=float(active_targets["battery_share_percent"]),
+        pv_share_percent=float(active_targets["pv_share_percent"]),
         global_load_scaling_factor=saved_global_load_scaling_factor,
         selection_seed=saved_selection_seed,
         household_overrides=effective_overrides,
@@ -529,7 +604,15 @@ def show_household_configuration(network, selected_bounds: AreaBounds) -> dict[s
 
     resolved = household_configuration["resolved"]
 
-    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5, summary_col6 = st.columns(6)
+    (
+        summary_col1,
+        summary_col2,
+        summary_col3,
+        summary_col4,
+        summary_col5,
+        summary_col6,
+    ) = st.columns(SUMMARY_COLUMN_COUNT)
+
     summary_col1.metric("Haushalte gesamt", len(household_ids))
     summary_col2.metric("Haushalte mit EV", len(resolved["ev_bus_ids"]))
     summary_col3.metric("Haushalte mit WP", len(resolved["heat_pump_bus_ids"]))
