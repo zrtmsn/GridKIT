@@ -36,7 +36,7 @@ def _timeline(n=4, **extra):
     return base
 
 
-# ── Innenraumtemperatur ──────────────────────────────────────
+# ── Indoor temperature (Innentemperatur) ─────────────────────
 def test_comfort_floor_soc_maps_to_the_comfort_temperature():
     assert indoor_temperature(HP_COMFORT_MIN_SOC) == COMFORT_FLOOR_C
 
@@ -65,7 +65,7 @@ def test_dashboard_floor_matches_the_model_constant():
     assert HP_COMFORT_MIN_SOC == const.HP_COMFORT_MIN_SOC
 
 
-# ── Geräteleistung ───────────────────────────────────────────
+# ── Device power (Leistung je Gerätetyp) ─────────────────────
 def test_device_power_frame_has_a_row_per_device_and_step():
     frame = device_power_frame(_timeline(n=3))
     assert len(frame) == 9
@@ -83,7 +83,7 @@ def test_device_power_frame_uses_german_labels():
     assert "Wärmepumpe" in set(frame["Gerät"])
 
 
-# ── Energiesummen ────────────────────────────────────────────
+# ── Energy totals ────────────────────────────────────────────
 def test_device_totals_convert_power_to_energy_over_quarter_hours():
     # 4 steps at 1 kW = 1 kWh
     assert device_totals(_timeline(n=4))["ev_kwh"] == 1.0
@@ -101,7 +101,7 @@ def test_device_totals_treat_pv_as_magnitude():
     assert totals["pv_kwh"] == 2.0
 
 
-# ── Haushaltsdetail ──────────────────────────────────────────
+# ── One household in detail (Ein repräsentativer Haushalt) ───
 def test_household_frame_adds_a_temperature_column():
     frame = household_frame(_timeline(n=3))
     assert "Innentemperatur" in frame.columns
@@ -120,7 +120,7 @@ def test_household_frame_pads_a_short_series_instead_of_failing():
     assert math.isnan(frame["Batterie-SoC"].iloc[3])
 
 
-# ── Batteriezyklen ───────────────────────────────────────────
+# ── Battery cycles ───────────────────────────────────────────
 def test_battery_cycle_frame_carries_both_directions():
     tl = _timeline(n=3,
                    house_battery_charge_cumulative_kwh=[0.0, 1.0, 2.0],
@@ -134,7 +134,7 @@ def test_battery_cycle_frame_without_the_series_is_empty():
     assert battery_cycle_frame(_timeline(n=3)).empty
 
 
-# ── Komfort ──────────────────────────────────────────────────
+# ── Comfort (WP-Komfort) ─────────────────────────────────────
 def test_comfort_breaches_counts_steps_below_the_floor():
     tl = _timeline(n=5, house_hp_soc=[0.5, 0.2, 0.1, 0.4, 0.29])
     assert comfort_breaches(tl) == 3
@@ -144,7 +144,7 @@ def test_no_breaches_when_the_buffer_stays_up():
     assert comfort_breaches(_timeline(n=4)) == 0
 
 
-# ── Szenariotabelle ──────────────────────────────────────────
+# ── Scenario table (Gerätekennzahlen je Szenario) ────────────
 def test_scenario_devices_filters_to_one_penetration():
     summary = [
         {"penetration": 0.2, "scenario": "1: flat / immediate", "soc_mean": 1.0},

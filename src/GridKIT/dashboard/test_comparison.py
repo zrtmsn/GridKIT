@@ -30,7 +30,7 @@ def _timeline(n=4, **over):
     return tl
 
 
-# ── Kennzahlen ───────────────────────────────────────────────
+# ── Metrics (Kennzahlen je Szenario) ─────────────────────────
 def test_metric_frame_has_a_row_per_scenario_and_metric():
     summary = [_summary("1: flat / immediate", 0.6), _summary("3: selfish RL", 0.6)]
     frame = metric_frame(summary, 0.6)
@@ -109,7 +109,7 @@ def test_episode_frame_of_nothing_is_empty_but_typed():
     assert frame.empty and "Gruppe" in frame.columns
 
 
-# ── Abregelung ───────────────────────────────────────────────
+# ── Curtailment (Abregelung) ─────────────────────────────────
 def test_curtailment_steps_lists_only_the_active_quarter_hours():
     frame = curtailment_steps(_timeline(n=4, curtailment=[False, True, True, False]))
     assert frame["Uhrzeit"].tolist() == ["12:15", "12:30"]

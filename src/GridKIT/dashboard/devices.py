@@ -355,7 +355,7 @@ def render_devices(summary: list[dict[str, Any]], timelines: list[dict[str, Any]
         )
         download_pair(table, "Gerätekennzahlen", f"{key}_kennzahlen")
 
-    # ── One household in detail ────────────────────────────────
+    # ── One household in detail (Ein repräsentativer Haushalt) ───
     st.subheader("Ein repräsentativer Haushalt")
     frame = household_frame(timeline)
     if frame.empty:

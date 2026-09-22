@@ -342,7 +342,7 @@ def render_comparison(summary: list[dict[str, Any]], timelines: list[dict[str, A
     if chosen_pen is None:
         chosen_pen = max((float(r.get("penetration", 0.0)) for r in summary), default=0.0)
 
-    # ── Kennzahlen nebeneinander ──────────────────────────────
+    # ── Metrics side by side (Kennzahlen je Szenario) ─────────
     metrics = metric_frame(summary, chosen_pen)
     if metrics.empty:
         st.info("Die Ergebnisse enthalten keine Vergleichskennzahlen.")
@@ -393,7 +393,7 @@ def render_comparison(summary: list[dict[str, Any]], timelines: list[dict[str, A
                 )
             download_pair(frame, "Episode", f"{key}_episode")
 
-    # ── Überlastungskarte ─────────────────────────────────────
+    # ── Overload map (Wo das Netz überlastet war) ─────────────
     if network is not None:
         st.subheader("Wo das Netz überlastet war")
         render_overload_map(network, summary)

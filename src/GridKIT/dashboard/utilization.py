@@ -351,7 +351,7 @@ def render_utilization(timelines: list[dict[str, Any]], key: str = "auslastung")
 
     head = headline(timeline)
 
-    # ── Urteil ────────────────────────────────────────────────
+    # ── Verdict ───────────────────────────────────────────────
     worst = head["worst_element"]
     hours_over = f"{head['hours_over']:.2f}".replace(".", ",")
     if head["status"] == "kritisch":
@@ -374,7 +374,7 @@ def render_utilization(timelines: list[dict[str, Any]], key: str = "auslastung")
     c3.metric("Stunden über 100 %", f"{head['hours_over']:.2f} h".replace(".", ","))
     c4.metric("§14a-Eingriffe", head["curtailment_steps"], help="Viertelstunden mit Abregelung")
 
-    # ── Tagesgang ─────────────────────────────────────────────
+    # ── Daily profile (Tagesverlauf) ──────────────────────────
     st.subheader("Tagesverlauf")
     st.caption(
         "Beide Linien gehören zusammen: im Niederspannungsnetz bindet fast immer das "
@@ -391,7 +391,7 @@ def render_utilization(timelines: list[dict[str, Any]], key: str = "auslastung")
             "die Last verteilt sich sehr ungleich über die Stränge."
         )
 
-    # ── Überlast-Matrix ───────────────────────────────────────
+    # ── Overload matrix (Überlast-Matrix) ─────────────────────
     # The whole section describes an overload, so on a run without one it has
     # nothing to say. The KPI row above already reports zero hours over the
     # limit, which is the finding; a green box repeating it is noise.

@@ -320,7 +320,7 @@ def render_overview(summary: list[dict[str, Any]],
     # data point. Only a batch sweep earns them.
     swept = frame["penetration"].nunique() > 1
 
-    # ── Urteil ────────────────────────────────────────────────
+    # ── Verdict ───────────────────────────────────────────────
     peak_percent = head["worst_peak"] * 100.0
     hours = head["worst_hours"]
     scenario_name = head["worst_hours_scenario"] if hours is not None else head["worst_scenario"]
@@ -412,7 +412,7 @@ def render_overview(summary: list[dict[str, Any]],
             "summary.json enthalten beide."
         )
 
-    # ── Rangfolge beim härtesten Fall ─────────────────────────
+    # ── Ranking at the hardest case ───────────────────────────
     hardest = frame["penetration"].max()
     ranking = scenario_ranking(frame, hardest)
     if not ranking.empty:
