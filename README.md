@@ -10,22 +10,11 @@ topologies are built from OpenStreetMap data via the vendored
 
 ---
 
-## Setup
-
-
-**Requirements**
+## Setup Requirements
 
 - ~40 GB free disk space
 - Internet connection
-
-> **Windows users:** you can skip this entire manual setup by running
-> `setup_windows_GER.ps1` from the repo root (see
-> [Automated setup (Windows)](#automated-setup-windows)). The steps below
-> describe exactly what that script does — use them for troubleshooting, or
-> on Linux/macOS, where only a manual install is provided (smaller user base,
-> no automated script maintained).
-
-
+- Windows, Linux or MacOS as operating system
 
 ## Automated setup (Windows)
 
