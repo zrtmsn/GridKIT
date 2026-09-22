@@ -55,7 +55,7 @@ def test_cable_peak_fallback_matches_on_both_scenario_and_penetration():
     assert cable_peak_pu(record, timelines) == 2.95
 
 
-# ── Übersichtsmatrix ─────────────────────────────────────────
+# ── Overview matrix (Szenario × Ausstattungsgrad) ────────────
 def test_status_follows_the_worse_of_transformer_and_cable():
     # a relaxed transformer must not hide a cable over its limit: the exact
     # misreading this dashboard exists to prevent
@@ -83,7 +83,7 @@ def test_overview_frame_of_nothing_is_empty_but_typed():
     assert frame.empty and "status" in frame.columns
 
 
-# ── Urteil über alle Kombinationen ───────────────────────────
+# ── Verdict across every combination ─────────────────────────
 def test_worst_status_picks_the_most_severe_present():
     frame = overview_frame([
         _row("a", 0.2, 0.3), _row("b", 0.4, 0.95), _row("c", 0.6, 1.4),
@@ -96,7 +96,7 @@ def test_worst_status_of_a_healthy_run():
     assert worst_status(frame) == "gut"
 
 
-# ── Belastungsgrenze ─────────────────────────────────────────
+# ── Breaking point ───────────────────────────────────────────
 def test_breaking_point_is_the_lowest_share_that_overloads():
     frame = overview_frame([
         _row("a", 0.2, 0.5), _row("a", 0.4, 1.05), _row("a", 0.6, 1.4),
@@ -128,7 +128,7 @@ def test_one_bad_scenario_disqualifies_the_whole_penetration():
     assert safe_ceiling(frame) is None
 
 
-# ── Rangfolge ────────────────────────────────────────────────
+# ── Ranking ──────────────────────────────────────────────────
 def test_scenario_ranking_is_gentlest_first():
     frame = overview_frame([
         _row("hard", 0.6, 1.5), _row("soft", 0.6, 0.4), _row("mid", 0.6, 0.9),
@@ -143,7 +143,7 @@ def test_scenario_ranking_only_covers_the_requested_share():
     assert scenario_ranking(frame, 0.6)["scenario"].tolist() == ["b"]
 
 
-# ── Kopfzahlen ───────────────────────────────────────────────
+# ── Headline numbers ─────────────────────────────────────────
 def test_headline_reports_where_the_worst_case_was():
     frame = overview_frame([
         _row("1: flat / immediate", 0.2, 0.4),

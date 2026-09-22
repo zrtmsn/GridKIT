@@ -33,7 +33,7 @@ def _record(iteration, mean, lo=None, hi=None, entropies=None):
     }
 
 
-# ── Dateien finden ───────────────────────────────────────────
+# ── Finding the metric files ─────────────────────────────────
 def _sweep(root, *pens):
     """Batch-experiment layout: checkpoints/pen_XX/iteration_metrics.json."""
     for pen in pens:
@@ -91,7 +91,7 @@ def test_load_metrics_reads_a_list(tmp_path):
     assert len(load_metrics(path)) == 1
 
 
-# ── Return-Verlauf ───────────────────────────────────────────
+# ── Return over the run ──────────────────────────────────────
 def test_return_frame_keeps_iteration_order_and_spread():
     frame = return_frame([_record(1, -500.0, -600.0, -400.0), _record(2, -300.0, -350.0, -250.0)])
     assert frame["Iteration"].tolist() == [1, 2]
@@ -117,7 +117,7 @@ def test_return_frame_of_nothing_is_empty_but_typed():
     assert list(frame.columns) == ["Iteration", "Mittel", "Minimum", "Maximum"]
 
 
-# ── Entropie ─────────────────────────────────────────────────
+# ── Entropy (Entropie) ───────────────────────────────────────
 def test_entropy_frame_has_one_row_per_policy_and_iteration():
     records = [_record(i, -100.0, entropies={"ev_policy": 1.0, "hp_policy": 0.6,
                                              "battery_policy": 1.1}) for i in (1, 2)]
@@ -157,7 +157,7 @@ def test_final_entropy_identifies_the_policy_that_stopped_exploring():
     assert min(entropies, key=entropies.get) == "hp_policy"
 
 
-# ── Konvergenz ───────────────────────────────────────────────
+# ── Convergence (Reward-Konvergenz) ──────────────────────────
 def test_convergence_reports_the_change_across_the_run():
     conv = convergence([_record(1, -500.0), _record(2, -400.0), _record(3, -300.0)])
     assert conv["iterations"] == 3
@@ -178,7 +178,7 @@ def test_convergence_of_nothing_is_safe():
     assert conv["iterations"] == 0 and conv["last"] is None
 
 
-# ── Policy-Beschriftung ──────────────────────────────────────
+# ── Policy labelling ─────────────────────────────────────────
 def test_policy_label_and_colour_match_the_device():
     assert theme.policy_label("battery_policy") == "Batterie"
     assert theme.policy_color("battery_policy") == theme.DEVICE_COLORS["battery"]

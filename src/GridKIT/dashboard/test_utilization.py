@@ -31,7 +31,7 @@ def _timeline(trafo, line, overloaded_lines=None, curtailment=None, **extra):
     }
 
 
-# ── Zeitachse ────────────────────────────────────────────────
+# ── Time axis ────────────────────────────────────────────────
 def test_hours_axis_starts_at_noon_in_quarter_steps():
     axis = hours_axis(5)
     assert list(axis) == [12.0, 12.25, 12.5, 12.75, 13.0]
@@ -54,13 +54,13 @@ def test_exactly_rated_is_not_yet_overload():
 
 def test_status_bands_cover_the_range():
     assert theme.status_of(0.0) == "gut"
-    assert theme.status_of(0.7) == "gut"          # obere Grenze einschließend
+    assert theme.status_of(0.7) == "gut"          # upper bound inclusive
     assert theme.status_of(0.71) == "warnung"
     assert theme.status_of(0.95) == "grenzbereich"
     assert theme.status_of(3.0) == "kritisch"
 
 
-# ── Auslastungsreihen ────────────────────────────────────────
+# ── Utilisation series ───────────────────────────────────────
 def test_utilization_frame_is_percent_not_pu():
     frame = utilization_frame(_timeline([0.5, 0.8], [1.2, 0.4]))
     trafo = frame[frame["reihe"] == "transformer"]["Auslastung"].tolist()
@@ -93,7 +93,7 @@ def test_peak_moment_handles_empty():
     assert peak_moment([]) == (0.0, theme.NO_VALUE)
 
 
-# ── Overload matrix ─────────────────────────────────────
+# ── Overload matrix (Überlast-Matrix) ───────────────────
 def test_overload_matrix_marks_only_the_steps_an_element_tripped():
     tl = _timeline([0.3] * 4, [1.4] * 4,
                    overloaded_lines=[[], ["service_0"], ["service_0"], []])
@@ -166,7 +166,7 @@ def test_single_step_stretch_is_written_as_one_time():
     assert row["Dauer davon (h)"] == 0.25
 
 
-# ── zusammenhängende Abschnitte ──────────────────────────────
+# ── Contiguous stretches ─────────────────────────────────────
 def test_contiguous_blocks_splits_on_gaps():
     assert contiguous_blocks([0, 1, 2, 5, 6, 9]) == [(0, 2), (5, 6), (9, 9)]
 
@@ -186,7 +186,7 @@ def test_overload_table_includes_transformers_not_just_lines():
     assert table.iloc[0]["Typ"] == "Trafo"
 
 
-# ── Kopfzahlen ───────────────────────────────────────────────
+# ── Headline numbers ─────────────────────────────────────────
 def test_headline_flags_the_cable_when_the_transformer_looks_calm():
     # the reference-run situation: transformer relaxed, cable far over limit
     tl = _timeline([0.8] * 10, [2.95] * 10,
@@ -210,7 +210,7 @@ def test_headline_on_a_healthy_grid_is_not_critical():
     assert head["worst_element"] is None
 
 
-# ── Auswahl ──────────────────────────────────────────────────
+# ── Selection ────────────────────────────────────────────────
 def test_select_timeline_matches_scenario_and_penetration():
     a = _timeline([0.1], [0.1]); a["penetration"] = 0.2
     b = _timeline([0.9], [0.9]); b["penetration"] = 0.6

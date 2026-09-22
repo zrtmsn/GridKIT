@@ -2,14 +2,12 @@
 # ─────────────────────────────────────────────────────────────
 # Download buttons for the tables behind the charts.
 #
-# CSV here means CSV as German Excel expects it: semicolon separator, decimal
-# comma, and a UTF-8 BOM. Without the BOM Excel guesses the codepage and turns
-# "Wärmepumpe" into "WÃ¤rmepumpe"; with a plain comma separator it drops every
-# row into a single column. Both make the export useless to exactly the people
-# who would open it.
+# CSV means CSV as German Excel expects it: semicolon separator, decimal comma,
+# UTF-8 BOM. Without the BOM Excel turns "Wärmepumpe" into "WÃ¤rmepumpe"; with
+# a comma separator it drops every row into one column.
 #
-# JSON is offered alongside for anything that will be read by a program rather
-# than a spreadsheet, and keeps plain dots and unescaped umlauts.
+# JSON sits alongside for anything read by a program, with plain dots and
+# unescaped umlauts.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 

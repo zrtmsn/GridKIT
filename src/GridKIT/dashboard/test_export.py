@@ -20,7 +20,7 @@ def _frame():
     })
 
 
-# ── CSV, wie deutsches Excel es erwartet ─────────────────────
+# ── CSV as German Excel expects it ───────────────────────────
 def test_csv_uses_semicolon_and_decimal_comma():
     text = to_csv_bytes(_frame()).decode("utf-8-sig")
     assert f"Gerät{CSV_SEPARATOR}Leistung" in text
@@ -59,7 +59,7 @@ def test_json_keeps_dots_as_decimal_separator():
     assert data[1]["Leistung"] == -2.25
 
 
-# ── Dateinamen ───────────────────────────────────────────────
+# ── Filenames ────────────────────────────────────────────────
 def test_filename_transliterates_umlauts_instead_of_dropping_them():
     assert filename("Überlast-Matrix", "csv") == "ueberlast-matrix.csv"
 

@@ -2,22 +2,16 @@
 # ─────────────────────────────────────────────────────────────
 # Training progress: the training tab.
 #
-# Reads iteration_metrics.json, written per penetration level by
-# rl_engine.Trainer into its checkpoint directory:
-#   outputs/checkpoints/pen_{20,40,60}/iteration_metrics.json
+# Reads iteration_metrics.json, written by rl_engine.Trainer next to the
+# checkpoints. Only four fields are used (training_iteration, episode return
+# mean/min/max, `entropy` per policy); RLlib writes ~200 more that are ignored.
 #
-# Scoped to the fields the dashboard agreed on: training_iteration,
-# episode_return_mean/min/max, and `entropy` per policy. RLlib writes ~200
-# more (timers, config, per-optimiser state) that are deliberately ignored.
+# The entropy curves are the most informative view here: one shared policy per
+# controllable device, so they show which device stops exploring first. A
+# policy whose entropy collapses early has committed while the others still
+# search.
 #
-# The three entropy curves are the most informative single view here: one
-# shared policy per controllable device (EV, Batterie, Wärmepumpe), so their
-# curves show which device stops exploring first: a policy whose entropy
-# collapses early has committed to a strategy while the others are still
-# searching.
-#
-# Everything above the Streamlit section is import-free of streamlit and
-# unit-tested.
+# Everything above the Streamlit section is import-free of streamlit and tested.
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -62,14 +56,13 @@ SINGLE_RUN = "run"
 def find_metric_files(output_dir: str | Path) -> dict[str, Path]:
     """{'pen_20': path, …} for every training run with metrics under `output_dir`.
 
-    Covers both producers, because they lay their output out differently:
-      * the batch sweep writes checkpoints/pen_{20,40,60}/iteration_metrics.json,
-      * a run started from the map writes one iteration_metrics.json at the run
-        root, since it trains a single device layout.
-    The single-run case is keyed SINGLE_RUN; it has no penetration in its path.
+    The two producers lay their output out differently: the sweep writes
+    checkpoints/pen_*/iteration_metrics.json, a run from the map writes one
+    file at the run root. The latter is keyed SINGLE_RUN, having no penetration
+    in its path.
 
-    Missing files are simply absent from the result: a sweep can be interrupted
-    part-way, and the levels already trained should still be viewable.
+    Missing files are simply absent: an interrupted sweep should still show the
+    levels it did train.
     """
     base = Path(output_dir)
     if not base.is_dir():
@@ -173,11 +166,10 @@ def convergence_domain(frame: pd.DataFrame,
                        skip_fraction: float = WARMUP_FRACTION) -> tuple[float, float] | None:
     """y-range that shows the converged part, ignoring the first iterations.
 
-    An untrained policy starts catastrophically badly, in the reference run at
-    −13 600 against a converged −900, so a full-range axis spends 97 % of its
-    height on the first few iterations and flattens the part that answers the
-    question. The range is taken from the tail of the run instead, with a
-    margin, and the early points fall off the top of the chart.
+    An untrained policy starts catastrophically badly, −13 600 against a
+    converged −900 in the reference run, so a full-range axis spends 97 % of
+    its height on the warm-up and flattens the part that answers the question.
+    The range comes from the tail of the run instead, with a margin.
 
     None when there is too little to judge: with a handful of iterations the
     whole curve is warm-up and cropping it would hide everything.
@@ -244,6 +236,10 @@ def final_entropy(records: list[dict[str, Any]]) -> dict[str, float]:
 # Streamlit view
 # ══════════════════════════════════════════════════════════════
 def _return_chart(frame: pd.DataFrame, domain: tuple[float, float] | None = None):  # pragma: no cover (UI)
+    """Mean episode return per iteration, with the min/max spread as a band.
+
+    `domain` crops the y-axis to the converged phase (see convergence_domain).
+    """
     import altair as alt
 
     # clamp so a warm-up iteration far below the range is pinned to the edge
@@ -301,6 +297,7 @@ def _reward_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
 
 
 def _entropy_chart(frame: pd.DataFrame):  # pragma: no cover (UI)
+    """Policy entropy per iteration, one line per device type."""
     import altair as alt
 
     policies = list(dict.fromkeys(frame["policy"]))
