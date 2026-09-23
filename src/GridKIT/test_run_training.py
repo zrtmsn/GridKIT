@@ -130,3 +130,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+        #TODO check if this script is obsolete now
