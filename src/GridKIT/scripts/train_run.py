@@ -117,6 +117,7 @@ def main() -> None:
         from GridKIT.grid_model.environment import GridEnv
         from GridKIT.rl_engine import (
             GridEnvRLlibWrapper, Trainer, create_ippo_config, RLlibPolicyAdapter,
+            EmptySampleIterationError,
         )
         from GridKIT.scenarios.policies import NaiveImmediatePolicy, NaivePriceFollowPolicy
         from GridKIT.scenarios.runner import run_episode, run_scenario
@@ -146,7 +147,8 @@ def main() -> None:
         def env_factory(cfg=None):
             return GridEnvRLlibWrapper(env=GridEnv(builder=FixedNetworkBuilder(network), device_layout=layout))
 
-        def config_func(env_name, *, train_batch_size=None, minibatch_size=None, num_env_runners=None):
+        def config_func(env_name, *, train_batch_size=None, minibatch_size=None, num_env_runners=None,
+                        sample_timeout_s=None, evaluation_sample_timeout_s=None):
             # Explicitly accept the agent-count-scaled values: Trainer detects
             # them via inspect.signature and re-sizes the batch to the user's
             # network size, so the UI pipeline benefits from the same scaling as
@@ -159,6 +161,10 @@ def main() -> None:
                 kwargs["minibatch_size"] = minibatch_size
             if num_env_runners is not None:
                 kwargs["num_env_runners"] = num_env_runners
+            if sample_timeout_s is not None:
+                kwargs["sample_timeout_s"] = sample_timeout_s
+            if evaluation_sample_timeout_s is not None:
+                kwargs["evaluation_sample_timeout_s"] = evaluation_sample_timeout_s
             return create_ippo_config(env_name=env_name, device_types=active_device_types, **kwargs)
 
         class _StatusCallback:
@@ -216,6 +222,23 @@ def main() -> None:
 
         rs.save_results(run_id, summary, timelines, root=root)
         trainer.stop()
+
+    except EmptySampleIterationError:
+        # Every EnvRunner hit the sample timeout → the iteration got no data
+        # (0 steps, NaN return) and no learning update could happen. That is a
+        # hardware-limit situation, not a code bug: tell the user to shrink
+        # the network instead of drowning them in RLlib internals. The
+        # dashboard renders FAILED + message automatically (dashboard/app.py).
+        rs.set_status(
+            run_id,
+            state=rs.FAILED,
+            progress=0.0,
+            message=(
+                "Das GridNetwork ist für die vorhandene Hardware zu groß. Bitte erstelle ein kleineres GridNetwork."
+            ),
+            root=root,
+        )
+        sys.exit(1)
 
     except BaseException as exc:  # noqa: BLE001 — including KeyboardInterrupt/SystemExit: this
         # process's only job is to train and report status, so however it's ending, record FAILED

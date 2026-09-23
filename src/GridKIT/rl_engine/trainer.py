@@ -17,6 +17,16 @@ from GridKIT.rl_engine.convergence import ConvergenceTracker
 from GridKIT.core.config import settings
 
 
+class EmptySampleIterationError(RuntimeError):
+    """Raised when a training iteration collected no data at all.
+
+    RLlib discards EnvRunner results that exceed `sample_timeout_s`; when every
+    runner times out the iteration is empty (0 steps, NaN return mean) and no
+    learning update can be performed. In practice this means the grid is too
+    large for the available hardware (see Trainer._is_empty_iteration).
+    """
+
+
 class Trainer:
     """
     High-level trainer that wraps Ray/RLlib complexity.
@@ -149,6 +159,46 @@ class Trainer:
             return None
         return scaled
 
+    def _scaled_timeouts(self, factor: int) -> tuple[Optional[float], Optional[float]]:
+        """Scale the sample timeouts with the agent count.
+
+        A bigger grid takes longer per EnvRunner sample() call (more agents,
+        more expensive steps). RLlib DISCARDS results that take longer than
+        `sample_timeout_s`, which yields empty iterations (0 steps, NaN return,
+        no update). So the timeouts grow proportionally with the same factor f
+        as the batch sizes:  timeout = basis × f.
+
+        Returns (sample_timeout_s, evaluation_sample_timeout_s); both None
+        when scaling is a no-op (f == 1) so the configured defaults pass
+        through unchanged.
+        """
+        if factor <= 1:
+            return None, None
+        return (
+            settings.ippo_sample_timeout_s * factor,
+            settings.ippo_evaluation_sample_timeout_s * factor,
+        )
+
+    @staticmethod
+    def _is_empty_iteration(result: dict) -> bool:
+        """True if an RLlib iteration result contained no sampled data.
+
+        A sample-timeout (`config.sample_timeout_s`) makes RLlib discard the
+        results of EnvRunners that took too long — when nothing comes back the
+        iteration has 0 steps and a NaN episode-return mean, so no learning
+        update happens. Detected on the same metric fields the dashboard reads.
+        """
+        env_r = result.get("env_runners") or {}
+        steps = env_r.get("num_agent_steps_sampled", 0)
+        episodes = env_r.get("num_episodes", 0)
+        return_mean = env_r.get("episode_return_mean", None)
+        nan_return = return_mean is None or (
+            isinstance(return_mean, float) and math.isnan(return_mean)
+        )
+        # 0 steps/episodes is always an empty iteration; a NaN (or missing)
+        # return mean with data present is just as unusable for an update.
+        return steps == 0 or episodes == 0 or nan_return
+
     def _scaled_config_kwargs(self, n_agents: int) -> dict:
         """kwargs for config_func that scale with the agent count, or {}.
 
@@ -161,14 +211,20 @@ class Trainer:
             return {}
         params = inspect.signature(self.config_func).parameters
         scaled: dict = {}
+        factor = self._scaling_factor(n_agents)
         train_batch_size, minibatch_size = self._scaled_batch_sizes(n_agents)
-        num_env_runners = self._scaled_num_env_runners(self._scaling_factor(n_agents))
+        num_env_runners = self._scaled_num_env_runners(factor)
+        sample_timeout_s, evaluation_sample_timeout_s = self._scaled_timeouts(factor)
         if "train_batch_size" in params and train_batch_size is not None:
             scaled["train_batch_size"] = train_batch_size
         if "minibatch_size" in params and minibatch_size is not None:
             scaled["minibatch_size"] = minibatch_size
         if "num_env_runners" in params and num_env_runners is not None:
             scaled["num_env_runners"] = num_env_runners
+        if "sample_timeout_s" in params and sample_timeout_s is not None:
+            scaled["sample_timeout_s"] = sample_timeout_s
+        if "evaluation_sample_timeout_s" in params and evaluation_sample_timeout_s is not None:
+            scaled["evaluation_sample_timeout_s"] = evaluation_sample_timeout_s
         if scaled:
             print(
                 f"[Trainer] {n_agents} agents — scaled train_batch_size "
@@ -176,7 +232,11 @@ class Trainer:
                 f"minibatch_size {settings.ippo_minibatch_size} → "
                 f"{scaled.get('minibatch_size', settings.ippo_minibatch_size)}, "
                 f"num_env_runners {settings.ippo_num_env_runners} → "
-                f"{scaled.get('num_env_runners', settings.ippo_num_env_runners)}"
+                f"{scaled.get('num_env_runners', settings.ippo_num_env_runners)}, "
+                f"sample_timeout_s {settings.ippo_sample_timeout_s} → "
+                f"{scaled.get('sample_timeout_s', settings.ippo_sample_timeout_s)}, "
+                f"evaluation_sample_timeout_s {settings.ippo_evaluation_sample_timeout_s} → "
+                f"{scaled.get('evaluation_sample_timeout_s', settings.ippo_evaluation_sample_timeout_s)}"
             )
         return scaled
 
@@ -264,6 +324,18 @@ class Trainer:
 
         for i in range(num_episodes):
             result = self._algo.train()
+
+            # A sample-timeout on every EnvRunner discards all data → empty
+            # iteration (0 steps, NaN return, no update). Abort immediately
+            # instead of silently "training" on nothing.
+            if self._is_empty_iteration(result):
+                if cleanup:
+                    self.stop()
+                raise EmptySampleIterationError(
+                    "Training iteration collected no samples (sample_timeout_s "
+                    "exceeded by every EnvRunner) — the grid is too large for "
+                    "the available hardware."
+                )
 
             # Store raw RLlib result dict for later saving
             raw_rllib_results.append(result)

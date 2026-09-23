@@ -115,6 +115,13 @@ IPPO_NUM_EVALUATION_ENV_RUNNERS: int = 1  # parallel environment workers for eva
 IPPO_EVALUATION_INTERVAL: int = 5  # run evaluation every N training iterations
 IPPO_NUM_GPUS: int = 0
 IPPO_NUM_CPUS: int = 0
+# Timeout for one sample() call per EnvRunner (RLlib defaults: 60 s / 120 s).
+# If a runner takes longer, RLlib DISCARDS its results → empty iteration
+# (0 steps, NaN return, no learning update). These bases sit above the RLlib
+# defaults; trainer.py additionally scales them with the grid-size factor f:
+#   timeout = basis × max(1, ceil(n_agents / IPPO_BATCH_SCALING_REF_AGENTS))
+IPPO_SAMPLE_TIMEOUT_S: float = 120.0
+IPPO_EVALUATION_SAMPLE_TIMEOUT_S: float = 240.0
 # Agent count of the reference grid that IPPO_TRAIN_BATCH_SIZE (512) was tuned
 # for. That reference is the minimal stub (`data/stub_network_minimal.json`,
 # 2 households × EV+battery+heat-pump = 6 agents, 6×96 = 576 agent-steps per

@@ -27,6 +27,7 @@ from core.constants import (
     IPPO_EARLY_STOP_MIN_DELTA,
     IPPO_ENTROPY_COEFF,
     IPPO_EVALUATION_INTERVAL,
+    IPPO_EVALUATION_SAMPLE_TIMEOUT_S,
     IPPO_GAE_LAMBDA,
     IPPO_GAMMA,
     IPPO_HIDDEN_SIZE,
@@ -39,6 +40,7 @@ from core.constants import (
     IPPO_NUM_EVALUATION_ENV_RUNNERS,
     IPPO_NUM_GPUS,
     IPPO_ROLLOUT_STEPS,
+    IPPO_SAMPLE_TIMEOUT_S,
     IPPO_TRAIN_BATCH_SIZE,
     IPPO_VALUE_COEFF,
     PIPELINE_EARLY_STOP_PATIENCE,
@@ -123,6 +125,12 @@ class Settings(BaseSettings):
     ippo_evaluation_interval: int = IPPO_EVALUATION_INTERVAL
     ippo_num_gpus: int = IPPO_NUM_GPUS
     ippo_num_cpus: int = IPPO_NUM_CPUS
+    # Timeout (s) for one sample() call per EnvRunner and per evaluation
+    # EnvRunner. RLlib discards results that exceed it → empty iteration.
+    # Bases above the RLlib defaults; Trainer scales them with the grid-size
+    # factor f, and `.env` can override both.
+    ippo_sample_timeout_s: float = IPPO_SAMPLE_TIMEOUT_S
+    ippo_evaluation_sample_timeout_s: float = IPPO_EVALUATION_SAMPLE_TIMEOUT_S
     # Agent count of the reference grid that IPPO_TRAIN_BATCH_SIZE was tuned
     # for; Trainer scales batch sizes with ceil(n_agents / this) so the
     # transitions PER AGENT per update stay constant across grid sizes.

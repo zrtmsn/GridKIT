@@ -10,7 +10,7 @@ Use factory classes to initialize components.
 # Export only the classes/functions intended for external use.
 
 from .grid_env_rllib_wrapper import GridEnvRLlibWrapper
-from .trainer import Trainer
+from .trainer import Trainer, EmptySampleIterationError
 from .ippo_config import create_ippo_config
 from .callbacks import TrainingCallback, DefaultCallback, TrainingResult
 from .rl_policy import RLlibPolicyAdapter
@@ -18,6 +18,7 @@ from .rl_policy import RLlibPolicyAdapter
 __all__ = [
     "GridEnvRLlibWrapper",
     "Trainer",
+    "EmptySampleIterationError",
     "create_ippo_config",
     "TrainingCallback",
     "DefaultCallback",
