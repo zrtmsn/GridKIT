@@ -320,7 +320,14 @@ data.save_data()
 input_path = os.path.join(os.getcwd(), 'input')
 
 bbox = [{self.left}, {self.bottom}, {self.right}, {self.top}]
-grid, bbox = mf.ding0_grid(bbox, input_path)
+# Single ding0 pass, NOT mf.ding0_grid(): that re-runs load_grid over the
+# extent of the first result. Once that extent touches a neighbouring MV grid,
+# load_buses_in_bbox keeps only the LAST folder with a hit in os.listdir order
+# (filesystem-dependent: alphabetical on Windows, arbitrary on macOS/Linux) and
+# silently swaps in a network that was never inside the user's box. The first
+# pass already pulls in each touched feeder whole, so the second adds nothing.
+grid = mf.ding0.load_grid(bbox, os.path.join(input_path, 'grids'))
+bbox = mf.func.compute_bbox_from_buses(grid)
 grid.name = {self.scenario!r}
 
 buses_df, area, features = mf.osm_data(grid, bbox, 0.0002)
