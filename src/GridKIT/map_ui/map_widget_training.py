@@ -133,7 +133,7 @@ def _launch_training(run_id: str) -> None:
     env = {
         **os.environ,
         "PYTHONPATH": f"{script_dir}{os.pathsep}{src_dir}",
-        "PYTHONIOENCODING": "utf-8",
+        "PYTHONIOENCODING": "utf-8",  # prevents a Windows crash when training prints symbols
     }
 
     with open(run_directory / TRAINING_LOG_FILENAME, "w", encoding="utf-8") as logf:
