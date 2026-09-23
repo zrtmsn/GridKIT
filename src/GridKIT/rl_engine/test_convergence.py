@@ -147,7 +147,7 @@ def test_real_pipeline_trace_stops_at_iteration_13():
 def test_real_pipeline_trace_noisier_min_delta_stops_sooner():
     # With min_delta=15 (≈ noise amplitude) no reward ever beats the first best
     # by that margin → patience counts straight from iteration 1's best and the
-    # stopper fires EARLIER (iteration 7), not later. That is the counter
+    # stopper fires EARLIER (iteration 7), not later. That is the counter-
     # intuitive consequence of the tiny default min_delta: nearly every wiggle
     # resets the clock, so the stop point is driven by RANDOM noise, not by a
     # genuine plateau.
@@ -179,11 +179,11 @@ def test_real_pipeline_trace_larger_patience_extends_the_run():
 
 
 def test_smoothed_window_is_sliding_average_not_cumulative():
-    # k=3-Fenster über [1..6]: der geglättete Wert ist der Durchschnitt der
-    # letzten k per-Iteration-Mittelwerte. Das ist weder das Mittel ALLER Werte
-    # seit Trainingsbeginn (it6 wäre dann 3.5 statt 5.0) noch ein nochmaliges
-    # Mitteln bereits gemittelter Fensterwerte (it6 = (4+5+6)/3 = 5.0). Bis das
-    # Fenster gefüllt ist, wird mit den verfügbaren Werten gemittelt.
+    # k=3 window over [1..6]: the smoothed value is the average of the last
+    # k per-iteration reward means. It is neither the mean of ALL values
+    # since training began (it6 would then be 3.5 instead of 5.0) nor a
+    # re-averaging of already averaged window values (it6 = (4+5+6)/3 = 5.0).
+    # Until the window is full, the available values are averaged.
     tracker = ConvergenceTracker(smooth_window=3)
     expected = [1.0, 1.5, 2.0, 3.0, 4.0, 5.0]
     for i, r in enumerate([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], start=1):
@@ -192,12 +192,12 @@ def test_smoothed_window_is_sliding_average_not_cumulative():
 
 
 def test_real_pipeline_trace_smoothing_removes_noise_peak_influence():
-    # Derselbe 64-Agent-Lauf, gleiche Parameter — nur das Fenster ändert sich:
-    # window=1 (Rohwerte) → der Rauschpeak in Iteration 7 (−351.09) setzt das
-    # polit-beste Niveau auf Iteration 7 → Stop bei 7 + 6 = 13. window=4 → die
-    # geglättete Kurve hebt nie über das Niveau von Iteration 1 (−362.8) → Stop
-    # deterministisch bei 1 + patience = 7. Der Stopppunkt hängt also nicht mehr
-    # davon ab, wo das Reward-Rauschen zufällig seinen höchsten Punkt hat.
+    # Same 64-agent run, same parameters — only the window changes:
+    # window=1 (raw values) → the noise peak at iteration 7 (−351.09) sets the
+    # best-so-far level to iteration 7 → stop at 7 + 6 = 13. window=4 → the
+    # smoothed curve never rises above the level of iteration 1 (−362.8) →
+    # deterministic stop at 1 + patience = 7. The stop point no longer depends
+    # on where the reward noise happens to peak.
     def run(window):
         tracker = ConvergenceTracker(
             patience=6, min_delta=1e-3, min_iterations=5, max_iterations=20,
@@ -208,20 +208,20 @@ def test_real_pipeline_trace_smoothing_removes_noise_peak_influence():
     unsmoothed = run(1)
     smoothed = run(4)
 
-    assert len(unsmoothed) == 13          # 7 (Rauschpeak) + patience 6
+    assert len(unsmoothed) == 13          # 7 (noise peak) + patience 6
     assert unsmoothed[-1].reason == "converged"
-    assert len(smoothed) == 7             # 1 (geglättetes best) + patience 6
+    assert len(smoothed) == 7             # 1 (smoothed best) + patience 6
     assert smoothed[-1].reason == "converged"
     assert smoothed[-1].stop
 
 
 def test_smoothing_keeps_late_single_lucky_peak_from_resetting_the_clock():
-    # Der Verlauf erreicht früh ein echtes (geglättetes) Plateau bei −10
-    # (Iteration 3) und rauscht danach wieder runter — mit einem EINZELNEN
-    # Glücks-Peak von roh +5 (Iteration 5). Ohne Smoothing (window=1) setzt der
-    # rohe Peak das best auf +5 → die Plateau-Uhr springt auf Iteration 5, der
-    # Stopp verzögert sich auf 5 + patience. Mit window=2 ist der Peak gedämpft
-    # (avg(−90, +5) = −42.5, unter dem Plateau-Niveau −10) → kein Reset.
+    # The trace reaches an early genuine (smoothed) plateau at −10 (iteration 3)
+    # and then drops again — with a SINGLE lucky spike of raw +5 (iteration 5).
+    # Without smoothing (window=1) the raw peak resets best to +5 → the plateau
+    # clock jumps to iteration 5, delaying the stop to 5 + patience. With
+    # window=2 the peak is damped (avg(−90, +5) = −42.5, below the plateau
+    # level −10) → no reset.
     trace = [-20.0, -10.0, -10.0, -90.0, 5.0, -90.0, -90.0, -90.0, -90.0, -90.0]
 
     def run(window):
@@ -234,10 +234,10 @@ def test_smoothing_keeps_late_single_lucky_peak_from_resetting_the_clock():
     unsmoothed = run(1)
     smoothed = run(2)
 
-    # Roh: best bei it5 (+5) → 5 + 4 = 9 (der Glücks-Peak verzögert den Stop).
+    # Raw: best at it5 (+5) → 5 + 4 = 9 (the lucky peak delays the stop).
     assert len(unsmoothed) == 9
     assert unsmoothed[-1].reason == "converged"
-    # Geglättet: best bei it3 (−10) → 3 + 4 = 7; der Einzelpeak zählt nicht.
+    # Smoothed: best at it3 (−10) → 3 + 4 = 7; the single peak does not count.
     assert len(smoothed) == 7
     assert smoothed[-1].reason == "converged"
     assert smoothed[-1].stop

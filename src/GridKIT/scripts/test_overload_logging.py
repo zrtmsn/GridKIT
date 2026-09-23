@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Test-Skript zur Überprüfung der Overload-Logging-Konsistenz.
+Test script to verify the consistency of overload logging.
 
-Analysiert timelines.json und prüft:
-1. Curtailment Steps == Overload Steps (Konsistenz)
-2. Welche Lines waren in welchen Steps überlastet?
-3. Wie oft war jede Line betroffen?
+Analyses timelines.json and checks:
+1. Curtailment steps == overload steps (consistency)
+2. Which lines were overloaded in which steps
+3. How often each line was affected
 
-Verwendung:
+Usage:
     python test_overload_logging.py [output_dir]
     
-Beispiel:
+Example:
     python test_overload_logging.py outputs_test_weak
 """
 
@@ -20,18 +20,18 @@ from pathlib import Path
 
 
 def analyze_overloads(timelines_path: Path) -> None:
-    """Analysiere Overload-Daten aus timelines.json."""
+    """Analyze overload data from timelines.json."""
     
     if not timelines_path.exists():
-        print(f"❌ FEHLER: '{timelines_path}' existiert nicht!")
+        print(f"❌ ERROR: '{timelines_path}' does not exist!")
         print()
-        print("Zuerst Training/Test laufen lassen:")
+        print("First run the training/test:")
         print("  python -m GridKIT.scripts.run_experiment \\")
         print("      --network data/stub_network.json \\")
         print("      --out outputs_test \\")
         print("      --max-iterations 1 --seeds 1")
         print()
-        print("Oder mit schwachen Zweigen (mehr Overloads):")
+        print("Or with weak branches (more overloads):")
         print("  python -m GridKIT.scripts.run_experiment \\")
         print("      --network data/stub_network_weak_branches.json \\")
         print("      --out outputs_test_weak \\")
@@ -42,10 +42,10 @@ def analyze_overloads(timelines_path: Path) -> None:
         data = json.load(f)
     
     print("=" * 70)
-    print("OVERLOAD-LOGGING ANALYSE")
+    print("OVERLOAD-LOGGING ANALYSIS")
     print("=" * 70)
-    print(f"Quelle: {timelines_path}")
-    print(f"Szenarien: {len(data)}")
+    print(f"Source: {timelines_path}")
+    print(f"Scenarios: {len(data)}")
     print()
     
     total_scenarios = len(data)
@@ -59,7 +59,7 @@ def analyze_overloads(timelines_path: Path) -> None:
         
         curtail_steps = sum(1 for x in entry.get('curtailment', []) if x)
         
-        # Robust: Felder könnten fehlen (alte timelines.json vor dem Fix)
+        # Robust: fields may be missing (old timelines.json files from before the fix)
         overloaded_lines = entry.get('overloaded_lines', [])
         overloaded_transformers = entry.get('overloaded_transformers', [])
         
@@ -86,14 +86,14 @@ def analyze_overloads(timelines_path: Path) -> None:
                 'scenario': scenario_name,
                 'penetration': penetration,
                 'curtail_steps': curtail_steps,
-                'issue': 'Curtailment aber KEINE Overloads!'
+                'issue': 'Curtailment but NO overloads!'
             })
         elif has_overloads and not has_curtailment:
             inconsistencies.append({
                 'scenario': scenario_name,
                 'penetration': penetration,
                 'overload_steps': len(overload_steps),
-                'issue': 'Overloads aber KEIN Curtailment!'
+                'issue': 'Overloads but NO curtailment!'
             })
         
         if curtail_steps > 0:
@@ -115,45 +115,45 @@ def analyze_overloads(timelines_path: Path) -> None:
                     trafo_counts[trafo] = trafo_counts.get(trafo, 0) + 1
             
             if line_counts:
-                print(f'  Einzigartige überlastete Lines: {len(line_counts)}')
+                print(f'  Unique overloaded lines: {len(line_counts)}')
                 for line, count in sorted(line_counts.items(), key=lambda x: -x[1]):
                     print(f'    {line}: {count} Steps')
             
             if trafo_counts:
-                print(f'  Einzigartige überlastete Transformers: {len(trafo_counts)}')
+                print(f'  Unique overloaded transformers: {len(trafo_counts)}')
                 for trafo, count in sorted(trafo_counts.items(), key=lambda x: -x[1]):
                     print(f'    {trafo}: {count} Steps')
             
             total_overload_steps = len(overload_steps) + len(transformer_steps)
             if curtail_steps == total_overload_steps:
-                print(f'  ✅ KONSISTENT: Curtailment = Overload Steps')
+                print(f'  ✅ CONSISTENT: Curtailment = Overload Steps')
             else:
-                print(f'  ⚠️  ABWEICHUNG: Curtailment ({curtail_steps}) ≠ Overload ({total_overload_steps})')
+                print(f'  ⚠️  MISMATCH: Curtailment ({curtail_steps}) ≠ Overload ({total_overload_steps})')
             
             if len(overload_steps) <= 10:
                 print(f'  Details:')
                 for step, lines in overload_steps:
                     print(f'    Step {step:2d}: {lines}')
             else:
-                print(f'  Erste 5 Steps:')
+                print(f'  First 5 steps:')
                 for step, lines in overload_steps[:5]:
                     print(f'    Step {step:2d}: {lines}')
             print()
     
     print("=" * 70)
-    print("ZUSAMMENFASSUNG")
+    print("SUMMARY")
     print("=" * 70)
-    print(f"Szenarien insgesamt: {total_scenarios}")
-    print(f"Szenarien mit Curtailment: {scenarios_with_curtailment}")
-    print(f"Szenarien mit Overloads: {scenarios_with_overloads}")
+    print(f"Total scenarios: {total_scenarios}")
+    print(f"Scenarios with curtailment: {scenarios_with_curtailment}")
+    print(f"Scenarios with overloads: {scenarios_with_overloads}")
     print()
     
     if inconsistencies:
-        print(f"❌ INKONSISTENZEN GEFUNDEN: {len(inconsistencies)}")
+        print(f"❌ INCONSISTENCIES FOUND: {len(inconsistencies)}")
         for inc in inconsistencies:
             print(f"  - {inc['scenario']} @ {inc['penetration']*100:.0f}%: {inc['issue']}")
     else:
-        print("✅ ALLE KONSISTENT: Curtailment immer mit Overloads gepaart!")
+        print("✅ ALL CONSISTENT: Curtailment always paired with overloads!")
     
     print()
 

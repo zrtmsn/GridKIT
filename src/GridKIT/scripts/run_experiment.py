@@ -106,10 +106,10 @@ def _timeline(env, result, label: str, penetration: float) -> dict:
         "curtailment": [bool(pf.curtailment_applied) for pf in tr],
         
         # ════════════════════════════════════════════════════════════════
-        # NEU: IDs der überlasteten Netzwerkelemente (pro Timestep)
+        # NEW: IDs of the overloaded network elements (per timestep)
         # ════════════════════════════════════════════════════════════════
-        # Loggt nur in Steps wo curtailment_applied=True (Netzregelung aktiv)
-        # Format: Liste von Listen [[], ["line_42"], ["trafo_1", "line_73"], ...]
+        # Only logged in steps with curtailment_applied=True (grid control active)
+        # Format: list of lists [[], ["line_42"], ["trafo_1", "line_73"], ...]
         "overloaded_transformers": [
             [tid for tid, loading in pf.transformer_loadings_pu.items() if loading > 1.0]
             for pf in tr
@@ -214,34 +214,34 @@ def main() -> None:
         }
         for label, policy in scenarios.items():
             # ════════════════════════════════════════════════════════════════
-            # LOGGING STUFFE 1: Evaluation über mehrere Seeds (default: 12)
+            # LOGGING STAGE 1: evaluate over multiple seeds (default: 12)
             # ════════════════════════════════════════════════════════════════
-            # run_scenario() führt 12 Episodes aus und aggregiert die Metriken
-            # zu mean±std (curtailment, SoC, peak loading, reward, bill, etc.)
+            # run_scenario() runs 12 episodes and aggregates the metrics into
+            # mean±std (curtailment, SoC, peak loading, reward, bill, etc.)
             stats = run_scenario(eval_env, policy, seeds, label=label, ev_penetration=pen)
             
             # ════════════════════════════════════════════════════════════════
-            # LOGGING STUFFE 2: Aggregierte Metriken zur summary-Liste hinzufügen
+            # LOGGING STAGE 2: append the aggregated metrics to the summary list
             # ════════════════════════════════════════════════════════════════
-            # Diese Daten landen später in summary.json (für Bar-Charts)
+            # These data later end up in summary.json (for bar charts)
             summary.append(summary_record(stats, label, pen))
             print("  " + str(stats))
             
             # ════════════════════════════════════════════════════════════════
-            # LOGGING STUFFE 3: Detaillierte Zeitreihen für EINE Episode speichern
+            # LOGGING STAGE 3: store detailed time series for ONE episode
             # ════════════════════════════════════════════════════════════════
-            # run_episode() mit seed[0] (= erste der 12 Episodes) liefert
-            # komplette 96-Step-Zeitreihen (transformer loading, device power, SoC, etc.)
-            # Diese Daten landen später in timelines.json (für Line-Charts)
+            # run_episode() with seed[0] (the first of the 12 episodes) returns
+            # complete 96-step time series (transformer loading, device power, SoC, etc.)
+            # These data later end up in timelines.json (for line charts)
             rep = run_episode(eval_env, policy, seeds[0], ev_penetration=pen)
             timelines.append(_timeline(eval_env, rep, label, pen))
 
         trainer.stop()
 
     # ════════════════════════════════════════════════════════════════════════
-    # LOGGING STUFFE 4: JSON-Dateien schreiben (summary + timelines)
+    # LOGGING STAGE 4: write the JSON files (summary + timelines)
     # ════════════════════════════════════════════════════════════════════════
-    # Diese beiden Files werden von plot_results.py gelesen um PNGs zu erzeugen
+    # These two files are read by plot_results.py to generate PNGs
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     (out / "timelines.json").write_text(json.dumps(timelines, indent=2))
     print(f"\nSaved {len(summary)} scenario results → {out/'summary.json'} and timelines → {out/'timelines.json'}")
