@@ -130,12 +130,6 @@ def _launch_training(run_id: str) -> None:
     repo_root = src_dir.parent
 
     run_directory = rs.run_dir(run_id, root=repo_root / RUNS_DIRECTORY_NAME)
-    # PYTHONIOENCODING: the child picks its stdout encoding from the locale,
-    # cp1250 on a German Windows, and stdout here is a redirected file. One
-    # non-ASCII character in any trainer log line then raises UnicodeEncodeError,
-    # train_run.py's catch-all marks the run FAILED, and the dashboard reports a
-    # crash that has nothing to do with the grid. Setting encoding= on the
-    # PARENT's open() does not help: the child writes to the raw descriptor.
     env = {
         **os.environ,
         "PYTHONPATH": f"{script_dir}{os.pathsep}{src_dir}",
