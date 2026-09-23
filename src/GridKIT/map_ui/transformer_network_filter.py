@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 import folium
 import streamlit as st
 from streamlit_folium import st_folium
@@ -33,22 +31,36 @@ from map_ui.transformer_network_filter_helpers import (
 )
 
 
+TRANSFORMER_SELECTION_MAP_HEIGHT_PX = 420
+TRANSFORMER_SELECTION_MAP_ZOOM = 15
+TRANSFORMER_MARKER_CLICK_DISTANCE_M = 50.0
+TRANSFORMER_POPUP_MAX_WIDTH = 400
+
+INITIAL_CONFIG_VERSION = 0
+REINFORCED_TRANSFORMER_COUNT_THRESHOLD = 1
+
+COMPLETE_NETWORK_MAP_KEY_SUFFIX = "complete_network"
+MAP_TILES = "OpenStreetMap"
+
+MARKER_COLOR_SELECTED = "orange"
+MARKER_COLOR_DEFAULT = "blue"
+MARKER_ICON_NAME = "bolt"
+MARKER_ICON_PREFIX = "fa"
+
+MODE_COMPLETE_NETWORK = "complete_network"
+MODE_TRANSFORMER_FEEDER = "transformer_feeder"
+
+FILTERING_NONE = "none"
+FILTERING_TOPOLOGY_BASED = "topology_based"
+HOUSEHOLD_ASSIGNMENT_TOPOLOGY_BASED = "topology_based"
+
+
 def show_transformer_selection(full_network):
     """
     Render the transformer selection UI for a generated GridNetwork.
 
-    Initial state:
-    - no transformer is selected
-    - the complete generated GridNetwork is displayed
-
-    After a transformer is selected:
-    - the network is filtered to the selected transformer area
-    - households are assigned using model/source identifiers
-    - topology traversal is still used for connected non-household buses and lines
-    - only assigned households, matching household data and related entries remain
-
-    Reinforcement transformers are kept internally in the GridNetwork, but they are
-    not shown as separate user-facing selection options.
+    The complete network is shown by default. When a transformer area is
+    selected, the displayed network is filtered by topology.
     """
     st.subheader("Trafo-Auswahl")
 
@@ -88,11 +100,15 @@ def show_transformer_selection(full_network):
             selected_trafo_id=current_selected,
         )
 
-        map_key_suffix = current_selected if current_selected is not None else "complete_network"
+        map_key_suffix = (
+            current_selected
+            if current_selected is not None
+            else COMPLETE_NETWORK_MAP_KEY_SUFFIX
+        )
 
         clicked_data = st_folium(
             transformer_map,
-            height=420,
+            height=TRANSFORMER_SELECTION_MAP_HEIGHT_PX,
             width=None,
             returned_objects=["last_object_clicked"],
             key=f"transformer_selection_map_{map_key_suffix}",
@@ -109,10 +125,13 @@ def show_transformer_selection(full_network):
                     full_network,
                     clicked_lat=float(clicked_lat),
                     clicked_lon=float(clicked_lon),
-                    max_distance_m=50.0,
+                    max_distance_m=TRANSFORMER_MARKER_CLICK_DISTANCE_M,
                 )
 
-                if clicked_trafo_id and clicked_trafo_id != st.session_state.get("selected_trafo_id"):
+                if (
+                    clicked_trafo_id
+                    and clicked_trafo_id != st.session_state.get("selected_trafo_id")
+                ):
                     apply_network_selection(full_network, clicked_trafo_id)
                     st.rerun()
     else:
@@ -134,7 +153,7 @@ def show_transformer_selection(full_network):
         help=(
             "Mit „Gesamtes Netz anzeigen“ wird die vollständige erzeugte Netzwerkkonfiguration angezeigt. "
             "Bei Auswahl eines Transformatorbereichs wird das Netz auf diesen Bereich gefiltert. "
-            "Die Haushaltszuordnung erfolgt anhand der eindeutigen Zuordnung aus den Modelldaten. "
+            "Die Haushalte werden anhand der erzeugten Netzstruktur aus dem Modell zugeordnet. "
             "Technische Zusatztransformatoren werden intern berücksichtigt, aber nicht als eigene "
             "Auswahloption angezeigt."
         ),
@@ -167,7 +186,11 @@ def show_transformer_selection(full_network):
             f"**{len(full_network.buses)} Knoten**, "
             f"**{len(full_network.lines)} Leitungen**, "
             f"**{len(full_network.household_bus_ids)} Haushalte**, "
+            f"**{len(full_network.transformers)} interne Transformatoren**, "
             f"**{len(trafo_options)} auswählbare Transformatorbereiche**.\n\n"
+            f"Hinweis: Die Anzahl der internen Transformatoren kann höher sein als die Anzahl "
+            f"der auswählbaren Transformatorbereiche, weil parallele oder verstärkte Transformatoren "
+            f"mit demselben Niederspannungsbus gemeinsam als ein Transformatorbereich angezeigt werden.\n\n"
             f"Erkannte Ausstattung: "
             f"**{full_device_summary['ev_count']} Haushalte mit Elektroauto**, "
             f"**{full_device_summary['heat_pump_count']} Haushalte mit Wärmepumpe**, "
@@ -178,7 +201,7 @@ def show_transformer_selection(full_network):
         with st.expander("Verfügbare Transformatorbereiche anzeigen"):
             st.json(
                 {
-                    "mode": "complete_network",
+                    "mode": MODE_COMPLETE_NETWORK,
                     "selected_trafo_id": None,
                     "available_transformer_areas": [
                         transformer_metadata_for_id(trafo_id, full_network)
@@ -186,7 +209,7 @@ def show_transformer_selection(full_network):
                     ],
                     "internal_transformer_count": len(full_network.transformers),
                     "selectable_transformer_area_count": len(trafo_options),
-                    "filtering": "none",
+                    "filtering": FILTERING_NONE,
                     "device_summary": full_device_summary,
                 }
             )
@@ -205,7 +228,7 @@ def show_transformer_selection(full_network):
         f"Die folgenden Abschnitte beziehen sich nun auf diesen Transformatorbereich. "
         f"Die Netzwerkkonfiguration, die Netzvisualisierung, die Haushaltskonfiguration "
         f"sowie der JSON-Export enthalten nur die Knoten, Leitungen und Haushalte, "
-        f"die diesem Bereich zugeordnet wurden.\n\n"
+        f"die diesem Bereich über die erzeugte Netzstruktur zugeordnet wurden.\n\n"
         f"Umfang des ausgewählten Transformatorbereichs: "
         f"**{len(filtered_network.buses)} Knoten**, "
         f"**{len(filtered_network.lines)} Leitungen**, "
@@ -220,10 +243,13 @@ def show_transformer_selection(full_network):
     with st.expander("Technische Trafo-Details anzeigen"):
         st.json(
             {
-                "mode": "transformer_feeder",
+                "mode": MODE_TRANSFORMER_FEEDER,
                 "trafo_id": selected_transformer.trafo_id,
                 "display_label": selected_transformer_label,
-                "is_reinforced": len(transformer_group_members(full_network, active_trafo_id)) > 1,
+                "is_reinforced": (
+                    len(transformer_group_members(full_network, active_trafo_id))
+                    > REINFORCED_TRANSFORMER_COUNT_THRESHOLD
+                ),
                 "included_transformers": [
                     transformer_metadata_for_id(transformer.trafo_id, full_network)
                     for transformer in transformer_group_members(full_network, active_trafo_id)
@@ -233,8 +259,8 @@ def show_transformer_selection(full_network):
                 "s_nom_mva": selected_transformer.s_nom_mva,
                 "vn_hv_kv": selected_transformer.vn_hv_kv,
                 "vn_lv_kv": selected_transformer.vn_lv_kv,
-                "filtering": "topology_based",
-                "household_assignment": "topology_based",
+                "filtering": FILTERING_TOPOLOGY_BASED,
+                "household_assignment": HOUSEHOLD_ASSIGNMENT_TOPOLOGY_BASED,
                 "device_summary": filtered_device_summary,
             }
         )
@@ -245,6 +271,9 @@ def show_transformer_selection(full_network):
 def apply_network_selection(full_network, trafo_id: str | None) -> None:
     """
     Apply either the complete network or a transformer-filtered network.
+
+    Changing the selected transformer resets scenario and household overrides,
+    because the visible household set may change.
     """
     previous_trafo_id = st.session_state.get("selected_trafo_id")
 
@@ -261,10 +290,10 @@ def apply_network_selection(full_network, trafo_id: str | None) -> None:
         st.session_state["global_device_targets"] = None
         st.session_state["global_device_target_scope"] = None
 
-        st.session_state.setdefault("household_config_version", 0)
+        st.session_state.setdefault("household_config_version", INITIAL_CONFIG_VERSION)
         st.session_state["household_config_version"] += 1
 
-        st.session_state.setdefault("scenario_config_version", 0)
+        st.session_state.setdefault("scenario_config_version", INITIAL_CONFIG_VERSION)
         st.session_state["scenario_config_version"] += 1
 
 
@@ -273,22 +302,25 @@ def make_transformer_selection_map(
     selected_trafo_id: str | None = None,
 ) -> folium.Map:
     """
-    Build a small Folium map with clickable transformer markers.
+    Build a Folium map with clickable transformer markers.
+
+    Marker clicks are only used for selecting a transformer area in the UI.
+    Household assignment remains topology-based.
     """
     rows = transformer_marker_rows(full_network)
     center = map_center_from_transformers_or_network(full_network)
 
     fmap = folium.Map(
         location=center,
-        zoom_start=15,
-        tiles="OpenStreetMap",
+        zoom_start=TRANSFORMER_SELECTION_MAP_ZOOM,
+        tiles=MAP_TILES,
         control_scale=True,
     )
 
     for row in rows:
         is_selected = selected_trafo_id is not None and row["trafo_id"] == selected_trafo_id
 
-        icon_color = "orange" if is_selected else "blue"
+        icon_color = MARKER_COLOR_SELECTED if is_selected else MARKER_COLOR_DEFAULT
         tooltip = (
             f"Ausgewählt: {row['display_label']}"
             if is_selected
@@ -310,8 +342,12 @@ def make_transformer_selection_map(
         folium.Marker(
             location=[row["lat"], row["lon"]],
             tooltip=tooltip,
-            popup=folium.Popup(popup_html, max_width=400),
-            icon=folium.Icon(color=icon_color, icon="bolt", prefix="fa"),
+            popup=folium.Popup(popup_html, max_width=TRANSFORMER_POPUP_MAX_WIDTH),
+            icon=folium.Icon(
+                color=icon_color,
+                icon=MARKER_ICON_NAME,
+                prefix=MARKER_ICON_PREFIX,
+            ),
         ).add_to(fmap)
 
     return fmap

@@ -389,13 +389,6 @@ def render_training(output_dir: str | Path, summary: list[dict[str, Any]] | None
         c3.metric("Niedrigste Entropie", theme.policy_label(quietest),
                   help=f"{entropies[quietest]:.3f}; diese Policy exploriert am wenigsten")
 
-    if conv["iterations"] < 10:
-        st.warning(
-            f"Nur {conv['iterations']} Iterationen, zu wenig, um aus dem Verlauf auf "
-            "die Qualität der Policy zu schließen. Für belastbare Aussagen mit den "
-            "voreingestellten 40 Iterationen trainieren."
-        )
-
     st.subheader("Reward-Konvergenz")
     st.caption(
         "Linie: mittlerer Episoden-Return je Iteration. Fläche: Spanne zwischen "

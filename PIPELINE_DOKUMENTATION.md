@@ -86,15 +86,20 @@ export PYTHONPATH="$(pwd)/src/GridKIT:$(pwd)/src"
 python -m GridKIT.scripts.run_experiment \
     --network data/stub_network.json \
     --out outputs \
-    --iterations 40 \
+    --max-iterations 40 \
     --seeds 12
 ```
 
 **Parameter:**
-- `--iterations`: IPPO Training-Episoden pro Penetration-Level (default: 40)
+- `--max-iterations`: **Obergrenze (Ceiling)** der IPPO-Training-Iterationen pro Penetration-Level (default: 40). Das Training stoppt **vorher automatisch**, sobald der mittlere Episoden-Reward konvergiert ist (Reward-Plateau) — die Netzwerkgröße bestimmt damit die tatsächliche Trainingsdauer, nicht eine fixe Zahl.
+- `--min-iterations`: Frühester möglicher Konvergenz-Stopp (default: 5) — schützt vor einem Abbruch auf einem zufälligen Anfangswert.
+- `--patience`: Abbruch nach N Iterationen ohne Verbesserung des Rewards (default: 6).
+- `smooth_window` (kein separater CLI-Flag; Setting `PIPELINE_EARLY_STOP_SMOOTH_WINDOW`, default: 4): gleitendes Fenster `k` für den **geglätteten** Reward. Der Plateau-Vergleich arbeitet auf dem Durchschnitt der *letzten k* Iterations-Reward-Mittelwerte (das Fenster verschiebt sich — es ist **kein** Durchschnitt aller Werte seit Trainingsbeginn und **kein** erneutes Mitteln bereits gemittelter Werte). So zählt ein einzelner Glücks-Rauschpeak nicht mehr als Fortschritt, und der Stopppunkt hängt nicht mehr von der Position des Rauschmaximums ab. `k=1` deaktiviert die Glättung (unglättet, wie früher).
 - `--seeds`: Evaluierungs-Episoden pro Szenario (default: 12)
 - `--network`: Pfad zur `grid_network.json` aus Phase 1
 - `--out`: Ausgabeverzeichnis (default: `outputs/`)
+
+**Hinweis:** Die Batch-Größen (`train_batch_size`/`minibatch_size` und die Anzahl der Env-Runner) werden automatisch mit der Agentenzahl des Netzwerks skaliert (Referenz: der 6-Agenten-Minimal-Stub), sodass die Transitions **pro Agent pro PPO-Update** bei jeder Netzwerkgröße konstant bleiben — dadurch gilt „Konvergenz nach ~N Updates" unabhängig von der vom Nutzer konfigurierten Netzwerkgröße (Details: `rl_engine/convergence.py`, `rl_engine/trainer.py`).
 
 ---
 
@@ -106,7 +111,10 @@ python -m GridKIT.scripts.run_experiment \
    ```python
    for pen in [0.2, 0.4, 0.6]:
        # 1. IPPO Policy trainieren (Scenario 3: selfish RL)
-       trainer.run(num_episodes=args.iterations)
+       #    num_episodes ist die OBERE Grenze: der Trainer stoppt früher,
+       #    sobald der Reward auf einem Plateau ist (Early Stop, s. convergence.py).
+       trainer.run(num_episodes=args.max_iterations,
+                   min_iterations=args.min_iterations, patience=args.patience)
        
        # 2. Checkpoint speichern
        trainer.save_checkpoint(f"outputs/checkpoints/pen_{int(pen*100)}")
@@ -374,7 +382,7 @@ Für aussagekräftigere Tests wurde ein Netzwerk mit schwachen Zweigleitungen er
 python -m GridKIT.scripts.run_experiment \
     --network data/stub_network_weak_branches.json \
     --out outputs_test_weak \
-    --iterations 1 --seeds 1
+    --max-iterations 1 --seeds 1
 ```
 
 **Ergebnis:** Bis zu **5 verschiedene Lines** gleichzeitig überlastet bei 60% Penetration!

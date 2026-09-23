@@ -2,7 +2,7 @@
 """
 Callbacks for RL training monitoring.
 """
-from typing import Protocol
+from typing import Optional, Protocol
 from dataclasses import dataclass
 
 
@@ -12,6 +12,11 @@ class TrainingResult:
     iteration: int
     episode_return_mean: float
     episode_len_mean: float
+    # Stamped on the LAST result of a training run so callers can tell whether
+    # the loop ended because it converged or because it hit the max-iteration
+    # ceiling.
+    early_stopped: bool = False
+    stop_reason: Optional[str] = None     # "converged" | "max_iterations" | None
 
 
 class TrainingCallback(Protocol):

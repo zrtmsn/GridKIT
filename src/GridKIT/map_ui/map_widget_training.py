@@ -2,6 +2,9 @@
 # map_ui/map_widget_training.py
 #
 # Save and training section for map_widget.py.
+#
+# This module stores the generated network together with the current
+# household configuration and can start a training run.
 # ─────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -11,11 +14,20 @@ from typing import Any
 import streamlit as st
 
 
-def show_training_section(network, household_configuration: dict[str, Any]) -> None:
-    """Save the current network and household configuration.
+ACTION_COLUMN_COUNT = 2
 
-    Optionally launches a training run in the background. Progress and results
-    are viewed in the dashboard app; this section only creates or launches runs.
+NETWORK_SOURCE_MAP_UI = "map_ui"
+RUNS_DIRECTORY_NAME = "runs"
+TRAINING_LOG_FILENAME = "train.log"
+TRAINING_MODULE = "GridKIT.scripts.train_run"
+
+
+def show_training_section(network, household_configuration: dict[str, Any]) -> None:
+    """
+    Show the save and training controls for the current configuration.
+
+    Training progress and results are shown in the dashboard app. This section
+    only saves configurations and starts new training runs.
     """
     import core.constants as const
     from core import run_store as rs
@@ -47,20 +59,21 @@ def show_training_section(network, household_configuration: dict[str, Any]) -> N
         help="Nur ein Anzeigename, um mehrere gespeicherte Netze auseinanderzuhalten — muss nicht eindeutig sein.",
     )
 
+    # Avoid starting multiple expensive training processes at the same time.
     active_runs = [
-        r for r in rs.list_runs()
-        if r["state"] == rs.RUNNING and not r.get("stale")
+        run for run in rs.list_runs()
+        if run["state"] == rs.RUNNING and not run.get("stale")
     ]
 
     if active_runs:
-        names = ", ".join(f"**{r.get('name') or r['run_id']}**" for r in active_runs)
+        names = ", ".join(f"**{run.get('name') or run['run_id']}**" for run in active_runs)
         st.warning(
             f"Es läuft bereits ein Training ({names}). Mehrere gleichzeitige Trainings können den "
             "Rechner überlasten und Abstürze verursachen — bitte warten, bis es fertig ist "
             "(Fortschritt im Dashboard), bevor ein weiteres gestartet wird. Speichern allein ist weiterhin möglich."
         )
 
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns(ACTION_COLUMN_COUNT)
     save_only_clicked = col1.button("Nur speichern")
     save_and_train_clicked = col2.button(
         "Speichern & Training starten",
@@ -73,7 +86,7 @@ def show_training_section(network, household_configuration: dict[str, Any]) -> N
             run_name,
             network,
             household_configuration,
-            network_source="map_ui",
+            network_source=NETWORK_SOURCE_MAP_UI,
         )
         st.session_state["last_saved_run_id"] = run_id
         st.rerun()
@@ -83,9 +96,9 @@ def show_training_section(network, household_configuration: dict[str, Any]) -> N
             run_name,
             network,
             household_configuration,
-            iterations=const.PIPELINE_TRAINING_ITERATIONS,
+            iterations=const.PIPELINE_MAX_TRAINING_ITERATIONS,
             seeds=const.PIPELINE_EVALUATION_SEEDS,
-            network_source="map_ui",
+            network_source=NETWORK_SOURCE_MAP_UI,
         )
 
         try:
@@ -100,7 +113,11 @@ def show_training_section(network, household_configuration: dict[str, Any]) -> N
 
 
 def _launch_training(run_id: str) -> None:
-    """Spawn a detached scripts.train_run subprocess writing into runs/<run_id>/."""
+    """
+    Start a detached training subprocess for one saved run.
+
+    The subprocess writes its output to runs/<run_id>/train.log.
+    """
     import os
     import subprocess
     import sys
@@ -112,15 +129,15 @@ def _launch_training(run_id: str) -> None:
     src_dir = script_dir.parent
     repo_root = src_dir.parent
 
-    run_directory = rs.run_dir(run_id, root=repo_root / "runs")
+    run_directory = rs.run_dir(run_id, root=repo_root / RUNS_DIRECTORY_NAME)
     env = {**os.environ, "PYTHONPATH": f"{script_dir}{os.pathsep}{src_dir}"}
 
-    with open(run_directory / "train.log", "w") as logf:
+    with open(run_directory / TRAINING_LOG_FILENAME, "w") as logf:
         subprocess.Popen(
             [
                 sys.executable,
                 "-m",
-                "GridKIT.scripts.train_run",
+                TRAINING_MODULE,
                 "--run-dir",
                 str(run_directory),
             ],

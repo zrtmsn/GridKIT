@@ -4,7 +4,7 @@
 # Headless training entry point. Wires GridEnv → GridEnvRLlibWrapper →
 # Trainer(create_ippo_config) and runs a (by default short) training loop.
 #
-# Usage:  python -m GridKIT.scripts.train [--iterations N]
+# Usage:  python -m GridKIT.scripts.train [--max-iterations N]
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ def _setup_paths() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="GridKIT scenario-3 IPPO training")
-    parser.add_argument("--iterations", type=int, default=3,
-                        help="training iterations (small default = smoke run, not convergence)")
+    parser.add_argument("--max-iterations", type=int, default=3,
+                        help="training iterations (ceiling; small default = smoke run, not convergence)")
     args = parser.parse_args()
 
     _setup_paths()
@@ -42,7 +42,7 @@ def main() -> None:
         return GridEnvRLlibWrapper(env=GridEnv())
 
     trainer = Trainer(env_factory=env_factory, config_func=create_ippo_config)
-    results = trainer.run(num_episodes=args.iterations)
+    results = trainer.run(num_episodes=args.max_iterations)
 
     print(f"\nTraining finished — {len(results)} iterations.")
     for r in results:

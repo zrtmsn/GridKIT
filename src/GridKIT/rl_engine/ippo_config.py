@@ -46,6 +46,8 @@ def create_ippo_config(
     clip_param: float = settings.ippo_clip_eps,
     entropy_coeff: float = settings.ippo_entropy_coeff,
     evaluation_interval: int = settings.ippo_evaluation_interval,
+    sample_timeout_s: float = settings.ippo_sample_timeout_s,
+    evaluation_sample_timeout_s: float = settings.ippo_evaluation_sample_timeout_s,
     device_types: tuple[str, ...] = const.CONTROLLABLE_DEVICE_TYPES,
 ) -> PPOConfig:
     """
@@ -63,6 +65,11 @@ def create_ippo_config(
         clip_param: PPO clipping range to prevent large policy updates.
         entropy_coeff: Bonus weight to encourage exploration.
         evaluation_interval: Run evaluation every N iterations.
+        sample_timeout_s: Timeout (s) for one sample() call per training
+            EnvRunner. Results slower than this are discarded by RLlib (→
+            empty iteration); the Trainer scales it with the grid-size factor.
+        evaluation_sample_timeout_s: Timeout (s) for one sample() call per
+            evaluation EnvRunner (same mechanism, evaluation workers).
         device_types: Which device types to declare a shared policy for. Must
             match the device types actually present in the training env's
             device layout — RLlib's new API stack cannot derive a policy's
@@ -77,7 +84,10 @@ def create_ippo_config(
     return (
         PPOConfig()
         .environment(env=env_name)
-        .env_runners(num_env_runners=num_env_runners)
+        # Timeout bases come from settings (constants.py), well above RLlib's
+        # 60 s default — a GridKIT iteration can take longer than that. The
+        # Trainer additionally scales both with the grid-size factor f.
+        .env_runners(num_env_runners=num_env_runners, sample_timeout_s=sample_timeout_s)
         .multi_agent(
             policies={
                 f"{device}_policy": PolicySpec(
@@ -103,5 +113,8 @@ def create_ippo_config(
         .evaluation(
             evaluation_num_env_runners=settings.ippo_num_evaluation_env_runners,
             evaluation_interval=evaluation_interval,
+            # Base well above RLlib's 120 s default; scaled by the Trainer
+            # together with sample_timeout_s (see env_runners above).
+            evaluation_sample_timeout_s=evaluation_sample_timeout_s,
         )
     )

@@ -115,6 +115,25 @@ IPPO_NUM_EVALUATION_ENV_RUNNERS: int = 1  # parallel environment workers for eva
 IPPO_EVALUATION_INTERVAL: int = 5  # run evaluation every N training iterations
 IPPO_NUM_GPUS: int = 0
 IPPO_NUM_CPUS: int = 0
+# Timeout for one sample() call per EnvRunner (RLlib defaults: 60 s / 120 s).
+# If a runner takes longer, RLlib DISCARDS its results → empty iteration
+# (0 steps, NaN return, no learning update). These bases sit above the RLlib
+# defaults; trainer.py additionally scales them with the grid-size factor f:
+#   timeout = basis × max(1, ceil(n_agents / IPPO_BATCH_SCALING_REF_AGENTS))
+IPPO_SAMPLE_TIMEOUT_S: float = 120.0
+IPPO_EVALUATION_SAMPLE_TIMEOUT_S: float = 240.0
+# Agent count of the reference grid that IPPO_TRAIN_BATCH_SIZE (512) was tuned
+# for. That reference is the minimal stub (`data/stub_network_minimal.json`,
+# 2 households × EV+battery+heat-pump = 6 agents, 6×96 = 576 agent-steps per
+# episode ≈ one update per episode with batch 512). Trainer.run() scales
+# train_batch_size/minibatch_size by ceil(n_agents / this) — only UPWARD
+# (factor floor is 1): a grid with fewer agents than the reference keeps the
+# tuned defaults unchanged, it never shrinks the batch below one episode of
+# data. Overridable via `.env` (settings.ippo_batch_scaling_ref_agents).
+IPPO_BATCH_SCALING_REF_AGENTS: int = 6
+# Minimum improvement of episode_return_mean that still counts as progress for
+# convergence-based early stopping — see rl_engine/convergence.py.
+IPPO_EARLY_STOP_MIN_DELTA: float = 1e-3
 
 # ── Observation / action dims ────────────────────────────────
 OBS_DIM: int = 7   # [soc_progress, time_urgency, price, base_load, temp, local_voltage, recent_curtailment]
@@ -239,5 +258,24 @@ RLLIB_DEFAULT_NUM_EPISODES: int = 3            # low default for fast iteration 
 # The map UI never exposes these — a user picks a network + device mix, not
 # RL hyperparameters. Fixed here so "launch training" behaves the same for
 # every run regardless of who clicks it.
-PIPELINE_TRAINING_ITERATIONS: int = 20   # IPPO training iterations per UI-launched run
-PIPELINE_EVALUATION_SEEDS: int = 5       # evaluation episodes per scenario after training
+#
+# Training length is no longer one fixed constant: the run stops early as soon
+# as the reward has plateaued, so bigger user grids automatically get more
+# iterations instead of being cut short at a fixed count (and small grids stop
+# as soon as they have converged). These three knobs are the safety net:
+#   PIPELINE_MAX_TRAINING_ITERATIONS — hard ceiling, never train longer than this
+#   PIPELINE_MIN_TRAINING_ITERATIONS — minimum run, guards against stopping on an
+#                                      unlucky first score
+#   PIPELINE_EARLY_STOP_PATIENCE     — stop after this many iterations without a
+#                                      min_delta improvement of the reward
+# See rl_engine/convergence.py for the plateau detection itself.
+PIPELINE_MAX_TRAINING_ITERATIONS: int = 50   # hard ceiling (max) per UI-launched run
+PIPELINE_MIN_TRAINING_ITERATIONS: int = 5    # never early-stop before this many iterations
+PIPELINE_EARLY_STOP_PATIENCE: int = 6        # stop after this many iterations without improvement
+# Smoothing window `k` for convergence detection (see rl_engine/convergence.py):
+# the plateau logic compares the mean of the LAST k per-iteration reward means
+# (sliding window — NOT the mean since training started, NOT re-averaged).
+# k=1 disables smoothing (raw values). Damps single lucky noise peaks, so the
+# stop point no longer depends on where the reward noise happens to peak.
+PIPELINE_EARLY_STOP_SMOOTH_WINDOW: int = 4
+PIPELINE_EVALUATION_SEEDS: int = 5           # evaluation episodes per scenario after training

@@ -9,7 +9,7 @@
 #   timelines.json  — a representative 24 h episode per (penetration, scenario)
 #   checkpoints/    — trained policy per penetration
 #
-# Usage:  python -m GridKIT.scripts.run_experiment [--iterations N] [--seeds M]
+# Usage:  python -m GridKIT.scripts.run_experiment [--max-iterations N] [--seeds M]
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 
@@ -149,7 +149,13 @@ def _timeline(env, result, label: str, penetration: float) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="GridKIT full scenario × penetration experiment")
-    parser.add_argument("--iterations", type=int, default=40, help="IPPO training iterations per penetration")
+    parser.add_argument("--max-iterations", type=int, default=40,
+                        help="MAX IPPO training iterations per penetration (hard ceiling; "
+                             "training stops earlier once the reward has converged)")
+    parser.add_argument("--min-iterations", type=int, default=5,
+                        help="never early-stop before this many iterations (default 5)")
+    parser.add_argument("--patience", type=int, default=6,
+                        help="stop after this many iterations without reward improvement (default 6)")
     parser.add_argument("--seeds", type=int, default=12, help="evaluation episodes per scenario")
     parser.add_argument("--out", type=str, default="outputs", help="output directory")
     parser.add_argument("--network", type=str, default="data/feeder_20.json",
@@ -177,7 +183,7 @@ def main() -> None:
     timelines: list[dict] = []
 
     for pen in penetrations:
-        print(f"\n=== EV penetration {pen:.0%} — training scenario 3 ({args.iterations} iters) ===")
+        print(f"\n=== EV penetration {pen:.0%} — training scenario 3 (≤{args.max_iterations} iters, early stop) ===")
 
         def env_factory(cfg=None, _pen=pen):
             return GridEnvRLlibWrapper(env=GridEnv(ev_penetration=_pen, builder=StubNetworkBuilder(path=network_path)))
@@ -190,7 +196,8 @@ def main() -> None:
         # It used to go to a temp file and be copied back from a hardcoded "/tmp/..."
         # path, which does not exist on Windows — so the copy silently did nothing and
         # the dashboard's training tab never found any metrics.
-        trainer.run(num_episodes=args.iterations, cleanup=False, metrics_dir=checkpoint_dir)
+        trainer.run(num_episodes=args.max_iterations, cleanup=False, metrics_dir=checkpoint_dir,
+                    min_iterations=args.min_iterations, patience=args.patience)
 
         trainer.save_checkpoint(str(checkpoint_dir.resolve()))
         print(f"  Saved iteration metrics → {checkpoint_dir / 'iteration_metrics.json'}")
