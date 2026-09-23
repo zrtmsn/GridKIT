@@ -35,6 +35,7 @@ from map_ui.transformer_network_filter import (
 
 DEFAULT_CENTER = (49.0069, 8.4037)  # Karlsruhe
 DEFAULT_ZOOM = 15
+DEFAULT_BOUNDS_PADDING_DEG = 0.002  # ~200m, keeps AreaBounds valid for a degenerate/point extent
 
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_USER_AGENT = "GridKIT-map-ui/0.1"
@@ -125,6 +126,9 @@ def render_map_ui() -> None:
 
         use_manual_bbox = st.checkbox("Manuelle Bounding Box verwenden", value=False)
 
+        st.divider()
+        show_cached_network_loader()
+
     col_map, col_out = st.columns([3, 2])
 
     with col_map:
@@ -202,23 +206,14 @@ def render_map_ui() -> None:
                     )
 
                     full_network = builder.build()
+                    apply_built_network(full_network, selected_bounds, scenario)
 
-                    st.session_state["full_network"] = full_network
-                    st.session_state["built_network"] = full_network
-                    st.session_state["built_bounds"] = selected_bounds
-                    st.session_state["built_scenario"] = scenario
-                    st.session_state["max_households"] = INTERNAL_MAX_HOUSEHOLDS_PER_FEEDER
-
-                    # Start with the complete generated GridNetwork. A transformer
-                    # filter is only applied after the user explicitly selects one.
-                    st.session_state["selected_trafo_id"] = None
-
-                    # Reset all interactive configuration state for a new network.
-                    st.session_state["household_overrides"] = {}
-                    st.session_state["global_device_targets"] = None
-                    st.session_state["global_device_target_scope"] = None
-                    st.session_state["household_config_version"] += 1
-                    st.session_state["scenario_config_version"] += 1
+                    from core import run_store as rs
+                    n_households = len(full_network.household_bus_ids)
+                    cache_name = f"{scenario} ({n_households} Haushalte)"
+                    st.session_state["last_cached_run_id"] = rs.save_network_only(
+                        cache_name, full_network, {}, network_source="map_ui",
+                    )
 
                 except Exception as exc:
                     if is_overpass_timeout_error(exc):
@@ -240,7 +235,10 @@ def render_map_ui() -> None:
 
                     return
 
-            st.success("GridNetwork erzeugt.")
+            st.success(
+                f"GridNetwork erzeugt und als **{st.session_state['last_cached_run_id']}** "
+                "zwischengespeichert."
+            )
 
     full_network = st.session_state.get("full_network")
     built_bounds = st.session_state.get("built_bounds")
@@ -454,6 +452,86 @@ def bounds_from_drawings(map_data: dict[str, Any] | None) -> AreaBounds | None:
         north=max(lats),
         east=max(lons),
     )
+
+
+def bounds_from_network(network) -> AreaBounds:
+    """Reconstruct a display bounding box from a network's own bus coordinates.
+
+    Used when loading a cached network (no drawn bbox available) — also more
+    accurate than the originally drawn bbox, since GridCreator pulls whole
+    feeders in regardless of the bbox (see ding0_grid_generator.py).
+    """
+    lons = [b.x_coord for b in network.buses if b.x_coord is not None]
+    lats = [b.y_coord for b in network.buses if b.y_coord is not None]
+
+    if not lons or not lats:
+        lat, lon = DEFAULT_CENTER
+        lons, lats = [lon], [lat]
+
+    pad = DEFAULT_BOUNDS_PADDING_DEG
+    return AreaBounds(
+        south=min(lats) - pad,
+        north=max(lats) + pad,
+        west=min(lons) - pad,
+        east=max(lons) + pad,
+    )
+
+
+def apply_built_network(network, bounds: AreaBounds, scenario: str) -> None:
+    """Reset all session state to reflect a newly built or freshly loaded network."""
+    st.session_state["full_network"] = network
+    st.session_state["built_network"] = network
+    st.session_state["built_bounds"] = bounds
+    st.session_state["built_scenario"] = scenario
+    st.session_state["max_households"] = INTERNAL_MAX_HOUSEHOLDS_PER_FEEDER
+
+    # Start with the complete network. A transformer filter is only applied
+    # after the user explicitly selects one.
+    st.session_state["selected_trafo_id"] = None
+
+    # Reset all interactive configuration state for a new/reloaded network.
+    st.session_state["household_overrides"] = {}
+    st.session_state["global_device_targets"] = None
+    st.session_state["global_device_target_scope"] = None
+    st.session_state["household_config_version"] += 1
+    st.session_state["scenario_config_version"] += 1
+
+
+def show_cached_network_loader() -> None:
+    """Sidebar section: load a network previously cached via save_network_only
+    (either automatically on build, or explicitly via "Nur speichern"),
+    skipping the GridCreator rebuild entirely."""
+    from core import run_store as rs
+
+    st.subheader("Gespeichertes Netzwerk laden")
+
+    runs = rs.list_runs()
+    if not runs:
+        st.caption("Noch keine gespeicherten Netzwerke vorhanden.")
+        return
+
+    def _label(r: dict) -> str:
+        return f"{r.get('name') or r['run_id']} — {r.get('n_households', 0)} Haushalte ({r['run_id']})"
+
+    selected_run_id = st.selectbox(
+        "Netzwerk auswählen",
+        options=[r["run_id"] for r in runs],
+        format_func=lambda rid: _label(next(r for r in runs if r["run_id"] == rid)),
+        key="cached_network_run_id",
+    )
+
+    if st.button("Netzwerk laden", key="load_cached_network_button"):
+        try:
+            network = rs.load_network(selected_run_id)
+        except Exception as exc:
+            st.error("Das gespeicherte Netzwerk konnte nicht geladen werden.")
+            st.exception(exc)
+            return
+
+        config = rs.load_config(selected_run_id) or {}
+        scenario = config.get("name") or getattr(network, "area_name", None) or network.network_id
+        apply_built_network(network, bounds_from_network(network), scenario)
+        st.rerun()
 
 
 def show_grid_model_result(network, selected_bounds: AreaBounds) -> None:
