@@ -226,16 +226,20 @@ class Trainer:
         if "evaluation_sample_timeout_s" in params and evaluation_sample_timeout_s is not None:
             scaled["evaluation_sample_timeout_s"] = evaluation_sample_timeout_s
         if scaled:
+            # ASCII only, deliberately. This runs in a detached subprocess whose
+            # stdout is a redirected file, so its encoding comes from the locale.
+            # No legacy Windows codepage (cp1250, cp1252, cp850) can encode an
+            # arrow, and a log line must never be able to kill the run.
             print(
-                f"[Trainer] {n_agents} agents — scaled train_batch_size "
-                f"{settings.ippo_train_batch_size} → {scaled.get('train_batch_size', settings.ippo_train_batch_size)}, "
-                f"minibatch_size {settings.ippo_minibatch_size} → "
+                f"[Trainer] {n_agents} agents, scaled train_batch_size "
+                f"{settings.ippo_train_batch_size} -> {scaled.get('train_batch_size', settings.ippo_train_batch_size)}, "
+                f"minibatch_size {settings.ippo_minibatch_size} -> "
                 f"{scaled.get('minibatch_size', settings.ippo_minibatch_size)}, "
-                f"num_env_runners {settings.ippo_num_env_runners} → "
+                f"num_env_runners {settings.ippo_num_env_runners} -> "
                 f"{scaled.get('num_env_runners', settings.ippo_num_env_runners)}, "
-                f"sample_timeout_s {settings.ippo_sample_timeout_s} → "
+                f"sample_timeout_s {settings.ippo_sample_timeout_s} -> "
                 f"{scaled.get('sample_timeout_s', settings.ippo_sample_timeout_s)}, "
-                f"evaluation_sample_timeout_s {settings.ippo_evaluation_sample_timeout_s} → "
+                f"evaluation_sample_timeout_s {settings.ippo_evaluation_sample_timeout_s} -> "
                 f"{scaled.get('evaluation_sample_timeout_s', settings.ippo_evaluation_sample_timeout_s)}"
             )
         return scaled

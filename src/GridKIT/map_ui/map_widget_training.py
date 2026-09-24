@@ -130,9 +130,13 @@ def _launch_training(run_id: str) -> None:
     repo_root = src_dir.parent
 
     run_directory = rs.run_dir(run_id, root=repo_root / RUNS_DIRECTORY_NAME)
-    env = {**os.environ, "PYTHONPATH": f"{script_dir}{os.pathsep}{src_dir}"}
+    env = {
+        **os.environ,
+        "PYTHONPATH": f"{script_dir}{os.pathsep}{src_dir}",
+        "PYTHONIOENCODING": "utf-8",  # prevents a Windows crash when training prints symbols
+    }
 
-    with open(run_directory / TRAINING_LOG_FILENAME, "w") as logf:
+    with open(run_directory / TRAINING_LOG_FILENAME, "w", encoding="utf-8") as logf:
         subprocess.Popen(
             [
                 sys.executable,

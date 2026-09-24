@@ -16,7 +16,7 @@ topologies are built from OpenStreetMap data via the vendored
 - Internet connection
 - Windows, Linux or MacOS as operating system
 
-## Automated setup (Windows)
+## Automated setup (Windows x86-64)
 
 On Windows everything above is automated by `setup_windows_GER.ps1` in the
 repo root (German console output, matching GridKIT's German UI):

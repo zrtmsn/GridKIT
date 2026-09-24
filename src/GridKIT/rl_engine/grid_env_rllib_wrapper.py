@@ -16,8 +16,8 @@ from GridKIT.core.models import (
     Observation,
     StepResult,
     PowerFlowResult,
-    EpisodeMetrics, #TODO remove or use
-    SimResult, #TODO remove or use
+    EpisodeMetrics,  # TODO: remove or use
+    SimResult,  # TODO: remove or use
     device_of,
 )
 from GridKIT.rl_engine.obs_norm import normalize_observation_multidevice

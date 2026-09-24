@@ -84,9 +84,9 @@ def run_episode(
     policy.reset(env.day_ahead_prices(), np.random.default_rng(seed))
 
     # ════════════════════════════════════════════════════════════════
-    # LOGGING: Sammelbehälter für Episode-Daten initialisieren
+    # LOGGING: initialise the collectors for episode data
     # ════════════════════════════════════════════════════════════════
-    timestep_results: list[PowerFlowResult] = []  # ← 96 PowerFlowResults (pro Step einer)
+    timestep_results: list[PowerFlowResult] = []  # ← one PowerFlowResult per step (96 in total)
     per_agent_return: dict[str, float] = {aid: 0.0 for aid in obs}
     final_soc: dict[str, float] = {}
     soc_satisfied: dict[str, bool] = {}
@@ -101,9 +101,9 @@ def run_episode(
         step_results, power_flow = env.step(actions)
         
         # ════════════════════════════════════════════════════════════════
-        # LOGGING STUFFE A: PowerFlowResult pro Timestep speichern
+        # LOGGING STAGE A: store one PowerFlowResult per timestep
         # ════════════════════════════════════════════════════════════════
-        # Enthält: transformer_loading, line_loadings, curtailment_applied,
+        # Contains: transformer_loading, line_loadings, curtailment_applied,
         # device_power_kw (ev/battery/hp), sample_household (SoC, etc.)
         timestep_results.append(power_flow)
 
@@ -150,9 +150,9 @@ def run_episode(
     hp_comfort_rate = (hp_comfort_steps / hp_total_steps) if hp_total_steps else 0.0
     
     # ════════════════════════════════════════════════════════════════
-    # LOGGING STUFFE B: EpisodeMetrics aus gesammelten Daten berechnen
+    # LOGGING STAGE B: compute EpisodeMetrics from the collected data
     # ════════════════════════════════════════════════════════════════
-    # Aggregiert: peak_loading, curtailment_events, feeder/line overload stats
+    # Aggregates: peak_loading, curtailment_events, feeder/line overload stats
     metrics = compute_episode_metrics(seed, timestep_results, per_agent_return, soc_satisfied,
                                       bill_by_household, hp_comfort_rate,
                                       battery_charge_kwh, battery_discharge_kwh)
@@ -160,10 +160,10 @@ def run_episode(
         episode=seed,
         network_id=env.network.network_id,
         ev_penetration=ev_penetration,
-        timestep_results=timestep_results,  # ← 96 PowerFlowResults (für timelines.json)
+        timestep_results=timestep_results,  # ← 96 PowerFlowResults (for timelines.json)
         final_soc_per_agent=final_soc,
         soc_satisfied=soc_satisfied,
-        metrics=metrics,  # ← EpisodeMetrics (für summary.json)
+        metrics=metrics,  # ← EpisodeMetrics (for summary.json)
     )
 
 

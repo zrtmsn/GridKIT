@@ -200,16 +200,6 @@ def _import_ding0_generator():
     return ding0_grid_generator
 
 
-def _bbox_from_buses(net) -> list[float]:
-    """[min_x, min_y, max_x, max_y] over a network's bus coordinates.
-
-    Mirrors GridCreator's `functions.compute_bbox_from_buses`, reimplemented here
-    so we don't import that heavyweight module for four lines of arithmetic.
-    """
-    b = net.buses
-    return [float(b["x"].min()), float(b["y"].min()), float(b["x"].max()), float(b["y"].max())]
-
-
 def build_grid_network_from_ding0(
     south: float,
     west: float,
@@ -226,9 +216,11 @@ def build_grid_network_from_ding0(
     not import another feature module (only `core`). The caller converts.
 
     Reproduces GridCreator step 1 (`main_functions.ding0_grid`): pick every ding0
-    bus inside the box, walk each one to its nearest LV transformer so feeders
-    come out whole, then re-extract over the resulting extent to pull in the rest
-    of the touched feeders.
+    bus inside the box and walk each one to its nearest LV transformer, pulling in
+    the whole touched feeder. GridCreator's own second pass over the resulting
+    extent is deliberately omitted: it adds nothing (feeders are already whole)
+    and, when that extent touches a neighbouring MV grid, swaps in whichever grid
+    `os.listdir` happens to list last — a network never inside the requested box.
 
     Raises `Ding0DataMissing` when the archive is absent and
     `Ding0AreaNotCovered` when it holds nothing for this box.
@@ -252,11 +244,6 @@ def build_grid_network_from_ding0(
             "No ding0 grid covers this area. The archive holds German LV grids only, "
             "and only the districts you downloaded — try an area inside one of them."
         )
-
-    # widen to the full extent of the feeders we touched, then take them whole
-    grid = ding0.load_grid(_bbox_from_buses(grid), str(root))
-    if grid.buses.empty:  # pragma: no cover (first pass succeeded, so this cannot normally happen)
-        raise Ding0AreaNotCovered("ding0 extraction returned an empty grid for this area.")
 
     default_id = f"ding0_{south:.4f}_{west:.4f}_{north:.4f}_{east:.4f}"
     return _network_from_pypsa(grid, network_id or default_id, residential_only)
