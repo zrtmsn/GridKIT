@@ -4,6 +4,27 @@ Diese Dokumentation erklärt den kompletten Datenfluss von der Netzwerkerstellun
 
 ---
 
+## 🧰 Voraussetzungen (einmalig)
+
+Alle Befehle in dieser Dokumentation werden **im Repo-Wurzelverzeichnis** ausgeführt — dem
+Ordner, in dem `src/`, `pyproject.toml` und `.venv/` liegen. Der exakte Installationsort ist
+dabei egal (z. B. `cd "$(git rev-parse --show-toplevel)"`), nur die **relativen Pfade**
+(`src/...`, `data/...`, `.venv/...`) bleiben überall gleich.
+
+Umgebung einmal pro Terminal-Sitzung aktivieren:
+
+```bash
+source .venv/bin/activate
+export PYTHONPATH="$(pwd)/src/GridKIT:$(pwd)/src"   # GridKIT ist nicht pip-installiert → Quelle sind die src-Ordner
+```
+
+Ab dann funktionieren alle `python -m GridKIT.scripts.*`- und `python src/GridKIT/...`-Befehle
+aus dieser Dokumentation unverändert. Wer die Package-Installation nutzt (`pip install -e .`),
+braucht den `PYTHONPATH`-Export nicht.
+
+---
+
+
 ## 📊 Übersicht: Die 4 Phasen der Pipeline
 
 ```
@@ -78,7 +99,7 @@ python -m grid_model.cli build --ding0 \
 
 ## Phase 2: Training (Experiment) 🎯
 
-### 2.1 Start-Command
+### 2.1 Start-Command <sub>(ausgeführt vom Repo-Wurzelverzeichnis — siehe Voraussetzungen oben)</sub>
 
 **Befehl:**
 ```bash
@@ -316,22 +337,32 @@ overloaded_lines = ['lv_to_0']  # Line war bei 1.05 p.u. (> 1.0!)
 
 #### Konsistenz-Check:
 
-**Test-Skript:** `test_overload_logging.py`
+**Test-Skript:** `src/GridKIT/scripts/test_overload_logging.py`
+
+Das Skript **startet kein Training** — es analysiert nur die `timelines.json` aus einem
+vorangegangenen `run_experiment`-Lauf. Soll die Datei noch fehlen, erst Daten erzeugen
+(siehe „So testest du die Overload-Logging-Konsistenz" weiter unten).
 
 ```bash
-# Analyse aller Overload-Events
-python test_overload_logging.py outputs_test_weak
+# Vom Repo-Wurzelverzeichnis (siehe „Voraussetzungen" oben):
+python src/GridKIT/scripts/test_overload_logging.py outputs_test_weak
 ```
 
-**Erwartete Ausgabe:**
+**Erwartete Ausgabe (Auszug):**
 ```
-✅ KONSISTENT: Curtailment = Overload Steps
-  Einzigartige überlastete Lines: 5
-    1_to_2: 19 Steps
-    3_to_4: 17 Steps
-    0_to_1: 16 Steps
-    2_to_3: 12 Steps
-    lv_to_0: 5 Steps
+======================================================================
+OVERLOAD-LOGGING ANALYSIS
+...
+1: flat / immediate @ 20%:
+  Curtailment Steps: 3
+  Overload Steps: 3
+  Unique overloaded lines: 2
+  ✅ CONSISTENT: Curtailment = Overload Steps
+...
+======================================================================
+SUMMARY
+...
+✅ ALL CONSISTENT: Curtailment always paired with overloads!
 ```
 
 #### Verwendung im Dashboard:
@@ -377,12 +408,28 @@ Für aussagekräftigere Tests wurde ein Netzwerk mit schwachen Zweigleitungen er
 }
 ```
 
-**Training testen:**
+**So testest du die Overload-Logging-Konsistenz (Schritt für Schritt):**
+
+**Schritt 1 — Trainingsdaten erzeugen** (vom Repo-Wurzelverzeichnis; erzeugt
+`outputs_test_weak/{summary.json, timelines.json, checkpoints/}`):
+
 ```bash
+source .venv/bin/activate
+export PYTHONPATH="$(pwd)/src/GridKIT:$(pwd)/src"
 python -m GridKIT.scripts.run_experiment \
     --network data/stub_network_weak_branches.json \
     --out outputs_test_weak \
     --max-iterations 1 --seeds 1
+```
+
+(≈ 40 s mit 1 Iteration × 3 Penetrationsstufen; die Defaults von `--max-iterations`
+kommen aus `PIPELINE_MAX_TRAINING_ITERATIONS`, das Training stoppt dank
+Konvergenz-Erkennung ohnehin früher.)
+
+**Schritt 2 — Konsistenz analysieren** (kein Training, nur Auswertung):
+
+```bash
+python src/GridKIT/scripts/test_overload_logging.py outputs_test_weak
 ```
 
 **Ergebnis:** Bis zu **5 verschiedene Lines** gleichzeitig überlastet bei 60% Penetration!

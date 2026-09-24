@@ -245,13 +245,9 @@ This is the batch-sweep layout written by `scripts/run_experiment.py`
 (`--out`, default `outputs/`); `graphs/` is produced separately by
 `scripts/plot_results.py`.
 
-To gain examplary JSON-files, these runs can be triggerd headlessly, simply by running:
-
-```
-python src/GridKIT/scripts/run_experiment.py
-```
-
+To gain examplary JSON-files, these runs can be triggerd headlessly.
 It defaults to using the `/data/feeder_20.json` GridNetwork.
+-> View 'Batch experiment (no map)' in `README` for guidance on running the script.
 
 Runs started from the map UI store the same result files under `runs/<id>/` instead — see below.
 
