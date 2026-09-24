@@ -402,7 +402,7 @@ class Trainer:
 
         if metrics_dir is not None:
             log_dir = Path(metrics_dir)
-            # the name the dashboard and DATENSTRUKTUR_DOKUMENTATION.md expect
+            # the name the dashboard expects
             filename = "iteration_metrics.json"
         else:
             log_dir = Path(tempfile.gettempdir()) / "gridkit_rl_logs"

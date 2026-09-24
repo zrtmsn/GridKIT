@@ -345,7 +345,7 @@ grid = mf.pypsa_preparation(grid)
 # CSV export and buses_df) rather than calling ding0_grid_generator.save_output_data(),
 # which also writes area.gpkg/features.gpkg — geopandas/pyogrio exports of raw
 # OSM tag data we never use, and which can fail on arbitrary OSM tag values
-# (e.g. a literal 'FIXME' tag) unrelated to anything we need.
+# unrelated to anything we need.
 output_dir = os.path.join('output', {self.scenario!r}, 'step_5')
 os.makedirs(output_dir, exist_ok=True)
 if not grid.buses.empty:
