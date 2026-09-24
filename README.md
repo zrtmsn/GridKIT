@@ -263,6 +263,10 @@ src/GridKIT/
 └── scripts/       # entry points (app.py, train_run.py, run_experiment.py, ...)
 ```
 
+## Further documentation
+
+For further project documentation as of the initial release, see `GridKIT/docs_initial_release`.
+
 
 ## Acknowledgements
 

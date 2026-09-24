@@ -2,7 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-The repo's `README.md` describes an earlier/aspirational version of the project and is out of date — everything below was verified by reading the current code and actually running it (tests, the CLI, and a live RLlib training iteration), not from the README.
+The repo's `README.md` describes an earlier/aspirational version of the project and is now up to date — yet everything below was verified by reading the current code and actually running it (tests, the CLI, and a live RLlib training iteration), not from the README.
+
+Also see `GridKIT/docs_initial_release`for up to date project documentation and `GridKIT/docs_legacy_files` for legacy docs (the latter only if required to look at previous (and probably reconsidered) decisions in the development cycle – some of them remain outdated since months.)
 
 ## What this is
 
