@@ -14,6 +14,7 @@ from ray.tune.registry import register_env
 
 from GridKIT.rl_engine.callbacks import TrainingCallback, DefaultCallback, TrainingResult
 from GridKIT.rl_engine.convergence import ConvergenceTracker
+from GridKIT.core.constants import PIPELINE_MAX_TRAINING_ITERATIONS
 from GridKIT.core.config import settings
 
 
@@ -246,7 +247,7 @@ class Trainer:
 
     def run(
         self,
-        num_episodes: int = settings.rllib_default_num_episodes,
+        max_iterations: int = PIPELINE_MAX_TRAINING_ITERATIONS,
         callback: Optional[TrainingCallback] = None,
         cleanup: bool = True,
         metrics_dir=None,
@@ -258,7 +259,7 @@ class Trainer:
         """
         Run the training loop, stopping once the reward has converged.
 
-        The run length is NOT a fixed constant: `num_episodes` is only the hard
+        The run length is NOT a fixed constant: `max_iterations` is only the hard
         ceiling. Training stops early when the mean episode return has stopped
         improving (plateau, `patience`/`min_delta` — see convergence.py), so a
         small grid converges in a few iterations while a large user-configured
@@ -268,7 +269,7 @@ class Trainer:
         iteration — constant across network sizes.
 
         Args:
-            num_episodes: MAXIMUM number of training iterations (hard ceiling).
+            max_iterations: MAXIMUM number of training iterations (hard ceiling).
             callback: Optional callback for progress updates.
             cleanup: If True, stop the algorithm and Ray when done. Pass False to
                 keep the trained policy alive for evaluation (get_policy_module).
@@ -307,16 +308,16 @@ class Trainer:
 
         # Use default callback if none provided
         if callback is None:
-            callback = DefaultCallback(total=num_episodes)
+            callback = DefaultCallback(total=max_iterations)
 
         # Plateau-based convergence detector (never stops before min_iterations,
-        # hard-capped at max_iterations = num_episodes). It compares the smoothed
+        # never longer than max_iterations). It compares the smoothed
         # sliding-window reward (see convergence.py) against the best seen.
         tracker = ConvergenceTracker(
             patience=patience,
             min_delta=min_delta,
             min_iterations=min_iterations,
-            max_iterations=num_episodes,
+            max_iterations=max_iterations,
             smooth_window=smooth_window,
         )
 
@@ -326,7 +327,7 @@ class Trainer:
         early_stopped = False
         stop_reason: Optional[str] = None
 
-        for i in range(num_episodes):
+        for i in range(max_iterations):
             result = self._algo.train()
 
             # A sample-timeout on every EnvRunner discards all data → empty
@@ -372,7 +373,7 @@ class Trainer:
         if results:
             results[-1].early_stopped = early_stopped
             results[-1].stop_reason = stop_reason
-        print(f"[Trainer] Training finished after {len(results)}/{num_episodes} iterations "
+        print(f"[Trainer] Training finished after {len(results)}/{max_iterations} iterations "
               f"(reason: {stop_reason})")
 
         # Save raw RLlib results to JSON file after training completes
@@ -401,7 +402,7 @@ class Trainer:
 
         if metrics_dir is not None:
             log_dir = Path(metrics_dir)
-            # the name the dashboard and DATENSTRUKTUR_DOKUMENTATION.md expect
+            # the name the dashboard expects
             filename = "iteration_metrics.json"
         else:
             log_dir = Path(tempfile.gettempdir()) / "gridkit_rl_logs"

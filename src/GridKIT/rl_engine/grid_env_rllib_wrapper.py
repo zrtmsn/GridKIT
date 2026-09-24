@@ -16,8 +16,6 @@ from GridKIT.core.models import (
     Observation,
     StepResult,
     PowerFlowResult,
-    EpisodeMetrics,  # TODO: remove or use
-    SimResult,  # TODO: remove or use
     device_of,
 )
 from GridKIT.rl_engine.obs_norm import normalize_observation_multidevice
@@ -92,9 +90,8 @@ class GridEnvRLlibWrapper(MultiAgentEnv):
         self.action_space = gym.spaces.Dict(
             {aid: self._action_space_by_device[device_of(aid)] for aid in self._agent_ids}
         )
-        #TODO add option for the user to pass a boolean when initializing the wrapper
-        # to determine wether to run in discrete or continuous mode
-        #TODO add functinality for continuous mode
+        # Note: the wrapper currently runs in discrete mode only; a continuous
+        # mode is not implemented yet. Left for future work.
 
 
         # For MultiAgentEnv compatibility

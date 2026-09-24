@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────
 # Scenario 3 — selfish, congestion-aware RL (shared-policy IPPO).
 # Headless training entry point. Wires GridEnv → GridEnvRLlibWrapper →
-# Trainer(create_ippo_config) and runs a (by default short) training loop.
+# Trainer(create_ippo_config) and runs a training loop (stops early on convergence).
 #
 # Usage:  python -m GridKIT.scripts.train [--max-iterations N]
 # ─────────────────────────────────────────────────────────────
@@ -27,22 +27,24 @@ def _setup_paths() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="GridKIT scenario-3 IPPO training")
-    parser.add_argument("--max-iterations", type=int, default=3,
-                        help="training iterations (ceiling; small default = smoke run, not convergence)")
-    args = parser.parse_args()
-
     _setup_paths()
+
+    from GridKIT.core.constants import PIPELINE_MAX_TRAINING_ITERATIONS
+
+    parser = argparse.ArgumentParser(description="GridKIT scenario-3 IPPO training")
+    parser.add_argument("--max-iterations", type=int, default=PIPELINE_MAX_TRAINING_ITERATIONS,
+                        help="training iterations (hard ceiling; convergence-based early stop breaks early)")
+    args = parser.parse_args()
 
     from GridKIT.grid_model.environment import GridEnv
     from GridKIT.rl_engine import GridEnvRLlibWrapper, Trainer, create_ippo_config
 
     def env_factory(config=None):
-        # fresh Env + Wrapper per Ray worker; OBS_DIM=7 obs space is read from constants
+        # fresh Env + Wrapper per Ray worker; OBS_DIM of obs space is read from constants
         return GridEnvRLlibWrapper(env=GridEnv())
 
     trainer = Trainer(env_factory=env_factory, config_func=create_ippo_config)
-    results = trainer.run(num_episodes=args.max_iterations)
+    results = trainer.run(max_iterations=args.max_iterations)
 
     print(f"\nTraining finished — {len(results)} iterations.")
     for r in results:

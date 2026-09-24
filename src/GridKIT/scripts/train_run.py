@@ -176,10 +176,10 @@ def main() -> None:
         trainer = Trainer(env_factory=env_factory, config_func=config_func)
         # metrics_dir: without it iteration_metrics.json goes to a temp path and
         # the dashboard's Training tab stays empty for every run from the map.
-        # num_episodes is only the ceiling: the run stops earlier once the
+        # max_iterations is only the ceiling: the run stops earlier once the
         # reward has plateaued (convergence.py), so a user's network size never
         # dictates a fixed iteration count.
-        results = trainer.run(num_episodes=iterations, callback=_StatusCallback(), cleanup=False,
+        results = trainer.run(max_iterations=iterations, callback=_StatusCallback(), cleanup=False,
                               metrics_dir=run_path,
                               min_iterations=min_iterations, patience=early_stop_patience)
 

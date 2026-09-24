@@ -43,7 +43,6 @@ def build_pypsa_network(grid_network: GridNetwork) -> pypsa.Network:
     )
 
     for line in grid_network.lines:
-        # TODO: consider storing s_nom directly in LineModel instead of max_i_ka
         v_nom = bus_voltage[line.from_bus]
         s_nom = line.max_i_ka * v_nom * math.sqrt(3)
         network.add("Line",

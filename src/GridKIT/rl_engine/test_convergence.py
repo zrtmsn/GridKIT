@@ -106,7 +106,7 @@ def test_scaled_batch_sizes_only_grow():
     assert minibatch == settings.ippo_minibatch_size * 2
 
 
-# ── Real pipeline trace (64-agent run, reward ~ constant) ──────
+# ── Examplary Real pipeline trace (64-agent run, reward ~ constant) ──────
 # Data exported from a real 64-agent pipeline run: episode_return_mean per
 # iteration. The reward is essentially flat but NOISY (amplitude ≈ ±20 around
 # ≈ −370, min −392.85 / max −351.09). These tests pin down *when* the early

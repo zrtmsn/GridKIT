@@ -46,7 +46,6 @@ from core.constants import (
     PIPELINE_EARLY_STOP_PATIENCE,
     PIPELINE_EARLY_STOP_SMOOTH_WINDOW,
     PIPELINE_MIN_TRAINING_ITERATIONS,
-    RLLIB_DEFAULT_NUM_EPISODES,
     RLLIB_ENV_REGISTRY_NAME,
 )
 
@@ -141,7 +140,6 @@ class Settings(BaseSettings):
 
     # ── RLlib / Ray ───────────────────────────────────────────
     rllib_env_registry_name: str = RLLIB_ENV_REGISTRY_NAME
-    rllib_default_num_episodes: int = RLLIB_DEFAULT_NUM_EPISODES
 
     # ── Convergence-based early stopping ─────────────────────
     # Defaults for Trainer.run(); the hard ceiling for UI-launched runs

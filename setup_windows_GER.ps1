@@ -1,4 +1,8 @@
 # setup_windows_GER.ps1 – Setup mit deutschem Console-Output / Dokumentation
+#
+# NOTE: For an English setup script
+# with English documentation see setup_windows_EN.ps1
+#
 # Ziele der deutschen Dokumentation:
 # - User beim Troubleshooting helfen;
 # - Konsistenz mit deutschem Console-Output, der wiederum
@@ -161,4 +165,7 @@ if ($SkipInputData) {
 }
 
 Write-Host ""
-Write-Host "Installation abgeschlossen."
+Write-Host "Installation abgeschlossen. Bitte eine neue Shell oeffnen und zur GridKIT-Root navigieren."
+Write-Host "Anschliessend folgende Befehle ausfuehren:"
+Write-Host ".venv\Scripts\activate"
+Write-Host "streamlit run src/GridKIT/scripts/app.py"

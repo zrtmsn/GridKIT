@@ -252,7 +252,6 @@ PV_GEN_NORM_MAX_KW: float = 10.0        # ≈ PV_PEAK_KWP_MAX
 
 # ── RLlib / Ray ──────────────────────────────────────────────
 RLLIB_ENV_REGISTRY_NAME: str = "GridEnv-v0"    # registered name for Gymnasium/RLlib — do not change without updating the registration hook
-RLLIB_DEFAULT_NUM_EPISODES: int = 3            # low default for fast iteration on consumer hardware; increase for real training runs
 
 # ── UI-launched training runs (scripts/train_run.py) ──────────
 # The map UI never exposes these — a user picks a network + device mix, not

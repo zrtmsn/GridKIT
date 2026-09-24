@@ -25,6 +25,8 @@ repo root (German console output, matching GridKIT's German UI):
 # after installing the VC++ Redistributable (step 0) once, in PowerShell:
 powershell -ExecutionPolicy ByPass -File setup_windows_GER.ps1
 ```
+An English alternative is also available: `setup_windows_EN.ps1`
+
 
 The script:
 
@@ -202,14 +204,29 @@ A quick overview of the two tabs found in the Streamlit app:
 
 Saved networks/runs live under the directories `runs/<run_id>/` (gitignored).
 
-### Batch experiment (no map)
+### For Testing via CLI: A Batch experiment (no map)
 
-To sweep the scenarios across several Ausstattungsgrade on a fixed network,
+For testing the training, GridKIT provides a sweep on scenarios across 
+three fixed percentages of EV-Households present on a fixed network,
 independent of the map UI:
 
 ```bash
-python -m GridKIT.scripts.run_experiment          # writes outputs/
+# From the repo root, with the venv activated, expose the source roots first
+# (GridKIT is not pip-installed, so `GridKIT` is not on sys.path by default):
+export PYTHONPATH="$(pwd)/src/GridKIT:$(pwd)/src"
+python -m GridKIT.scripts.run_experiment          # writes outputs/ 
 streamlit run src/GridKIT/dashboard/app.py        # same five tabs, on outputs/
+```
+**NOTE:** For a quick test run with max of 3 iterations, use param `--max-iterations 3`
+as in `python -m GridKIT.scripts.run_experiment --max-iterations 3`
+
+**NOTE:** `run_experiment` only **records** overload information (`overloaded_lines` /
+`line_overload_steps` in `summary.json` / `timelines.json`) — it does not check it.
+To verify that every curtailment step coincides with an overload, run the consistency
+check on the results directory (default `outputs`;
+
+```bash
+python src/GridKIT/scripts/test_overload_logging.py outputs
 ```
 
 `GRIDKIT_OUTPUT_DIR` points the dashboard at a different results directory.
