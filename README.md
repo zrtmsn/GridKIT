@@ -25,6 +25,8 @@ repo root (German console output, matching GridKIT's German UI):
 # after installing the VC++ Redistributable (step 0) once, in PowerShell:
 powershell -ExecutionPolicy ByPass -File setup_windows_GER.ps1
 ```
+An English alternative is also available: `setup_windows_EN.ps1`
+
 
 The script:
 
