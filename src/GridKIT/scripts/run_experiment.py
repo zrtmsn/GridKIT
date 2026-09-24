@@ -9,7 +9,7 @@
 #   timelines.json  — a representative 24 h episode per (penetration, scenario)
 #   checkpoints/    — trained policy per penetration
 #
-# Usage:  python -m GridKIT.scripts.run_experiment [--max-iterations N] [--seeds M]
+# Usage:  See README.md
 # ─────────────────────────────────────────────────────────────
 from __future__ import annotations
 

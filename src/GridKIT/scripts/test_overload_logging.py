@@ -12,6 +12,9 @@ Usage:
     
 Example:
     python test_overload_logging.py outputs_test_weak
+
+See README.md for information on how to use in combination with run_experiment.py.
+
 """
 
 import json
@@ -23,7 +26,7 @@ def analyze_overloads(timelines_path: Path) -> None:
     """Analyze overload data from timelines.json."""
     
     if not timelines_path.exists():
-        print(f"❌ ERROR: '{timelines_path}' does not exist!")
+        print(f"ERROR: '{timelines_path}' does not exist!")
         print()
         print("First run the training/test:")
         print("  python -m GridKIT.scripts.run_experiment \\")
@@ -149,11 +152,11 @@ def analyze_overloads(timelines_path: Path) -> None:
     print()
     
     if inconsistencies:
-        print(f"❌ INCONSISTENCIES FOUND: {len(inconsistencies)}")
+        print(f"INCONSISTENCIES FOUND: {len(inconsistencies)}")
         for inc in inconsistencies:
             print(f"  - {inc['scenario']} @ {inc['penetration']*100:.0f}%: {inc['issue']}")
     else:
-        print("✅ ALL CONSISTENT: Curtailment always paired with overloads!")
+        print("ALL CONSISTENT: Curtailment always paired with overloads!")
     
     print()
 
