@@ -86,12 +86,12 @@ export PYTHONPATH="$(pwd)/src/GridKIT:$(pwd)/src"
 python -m GridKIT.scripts.run_experiment \
     --network data/stub_network.json \
     --out outputs \
-    --max-iterations 40 \
+    --max-iterations 50 \
     --seeds 12
 ```
 
 **Parameter:**
-- `--max-iterations`: **Obergrenze (Ceiling)** der IPPO-Training-Iterationen pro Penetration-Level (default: 40). Das Training stoppt **vorher automatisch**, sobald der mittlere Episoden-Reward konvergiert ist (Reward-Plateau) — die Netzwerkgröße bestimmt damit die tatsächliche Trainingsdauer, nicht eine fixe Zahl.
+- `--max-iterations`: **Obergrenze (Ceiling)** der IPPO-Training-Iterationen pro Penetration-Level (default: 50, aus `PIPELINE_MAX_TRAINING_ITERATIONS`). Das Training stoppt **vorher automatisch**, sobald der mittlere Episoden-Reward konvergiert ist (Reward-Plateau) — die Netzwerkgröße bestimmt damit die tatsächliche Trainingsdauer, nicht eine fixe Zahl.
 - `--min-iterations`: Frühester möglicher Konvergenz-Stopp (default: 5) — schützt vor einem Abbruch auf einem zufälligen Anfangswert.
 - `--patience`: Abbruch nach N Iterationen ohne Verbesserung des Rewards (default: 6).
 - `smooth_window` (kein separater CLI-Flag; Setting `PIPELINE_EARLY_STOP_SMOOTH_WINDOW`, default: 4): gleitendes Fenster `k` für den **geglätteten** Reward. Der Plateau-Vergleich arbeitet auf dem Durchschnitt der *letzten k* Iterations-Reward-Mittelwerte (das Fenster verschiebt sich — es ist **kein** Durchschnitt aller Werte seit Trainingsbeginn und **kein** erneutes Mitteln bereits gemittelter Werte). So zählt ein einzelner Glücks-Rauschpeak nicht mehr als Fortschritt, und der Stopppunkt hängt nicht mehr von der Position des Rauschmaximums ab. `k=1` deaktiviert die Glättung (unglättet, wie früher).
@@ -111,9 +111,9 @@ python -m GridKIT.scripts.run_experiment \
    ```python
    for pen in [0.2, 0.4, 0.6]:
        # 1. IPPO Policy trainieren (Scenario 3: selfish RL)
-       #    num_episodes ist die OBERE Grenze: der Trainer stoppt früher,
+       #    max_iterations ist die OBERE Grenze: der Trainer stoppt früher,
        #    sobald der Reward auf einem Plateau ist (Early Stop, s. convergence.py).
-       trainer.run(num_episodes=args.max_iterations,
+       trainer.run(max_iterations=args.max_iterations,
                    min_iterations=args.min_iterations, patience=args.patience)
        
        # 2. Checkpoint speichern

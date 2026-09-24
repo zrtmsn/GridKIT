@@ -18,6 +18,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
+from GridKIT.core.constants import PIPELINE_MAX_TRAINING_ITERATIONS
 from GridKIT.core.config import settings
 
 
@@ -56,7 +57,7 @@ class ConvergenceTracker:
         patience: int = settings.pipeline_early_stop_patience,
         min_delta: float = settings.ippo_early_stop_min_delta,
         min_iterations: int = settings.pipeline_min_training_iterations,
-        max_iterations: int = settings.rllib_default_num_episodes,
+        max_iterations: int = PIPELINE_MAX_TRAINING_ITERATIONS,
         smooth_window: int = settings.pipeline_early_stop_smooth_window,
     ):
         # Never let patience/min_iterations degenerate into an immediate stop.

@@ -106,7 +106,7 @@ def _timeline(env, result, label: str, penetration: float) -> dict:
         "curtailment": [bool(pf.curtailment_applied) for pf in tr],
         
         # ════════════════════════════════════════════════════════════════
-        # NEW: IDs of the overloaded network elements (per timestep)
+        # IDs of the overloaded network elements (per timestep)
         # ════════════════════════════════════════════════════════════════
         # Only logged in steps with curtailment_applied=True (grid control active)
         # Format: list of lists [[], ["line_42"], ["trafo_1", "line_73"], ...]
@@ -148,29 +148,60 @@ def _timeline(env, result, label: str, penetration: float) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="GridKIT full scenario × penetration experiment")
-    parser.add_argument("--max-iterations", type=int, default=40,
-                        help="MAX IPPO training iterations per penetration (hard ceiling; "
-                             "training stops earlier once the reward has converged)")
-    parser.add_argument("--min-iterations", type=int, default=5,
-                        help="never early-stop before this many iterations (default 5)")
-    parser.add_argument("--patience", type=int, default=6,
-                        help="stop after this many iterations without reward improvement (default 6)")
-    parser.add_argument("--seeds", type=int, default=12, help="evaluation episodes per scenario")
-    parser.add_argument("--out", type=str, default="outputs", help="output directory")
-    parser.add_argument("--network", type=str, default="data/feeder_20.json",
-                        help="network JSON (default: 20-household feeder; use data/stub_network.json for the small stub)")
-    args = parser.parse_args()
-
     _setup_paths()
     warnings.filterwarnings("ignore")
 
     import core.constants as const
+    from core.config import settings
     from GridKIT.grid_model.builder import StubNetworkBuilder
     from GridKIT.grid_model.environment import GridEnv
     from GridKIT.rl_engine import GridEnvRLlibWrapper, Trainer, create_ippo_config, RLlibPolicyAdapter
     from GridKIT.scenarios.policies import NaiveImmediatePolicy, NaivePriceFollowPolicy
     from GridKIT.scenarios.runner import run_episode, run_scenario
+
+    # Training/experiment defaults come from core.constants / core.config.settings,
+    # not from hardcoded numbers here — so the batch experiment and the UI-launched
+    # train_run.py stay aligned. The f-strings in the help texts show the actual
+    # default, so they cannot go stale. (`_ = ` silences "unused expression" linters
+    # for the argparse.Action returned by each add_argument() call.)
+    parser = argparse.ArgumentParser(description="GridKIT full scenario × penetration experiment")
+    _ = parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=const.PIPELINE_MAX_TRAINING_ITERATIONS,
+        help=f"MAX IPPO training ITERATIONS per penetration (hard ceiling — early-stops once the reward has converged; default {const.PIPELINE_MAX_TRAINING_ITERATIONS})",
+    )
+    _ = parser.add_argument(
+        "--min-iterations",
+        type=int,
+        default=settings.pipeline_min_training_iterations,
+        help=f"never early-stop before this many iterations (default {settings.pipeline_min_training_iterations})",
+    )
+    _ = parser.add_argument(
+        "--patience",
+        type=int,
+        default=settings.pipeline_early_stop_patience,
+        help=f"stop after this many iterations without reward improvement (default {settings.pipeline_early_stop_patience})",
+    )
+    _ = parser.add_argument(
+        "--seeds",
+        type=int,
+        default=const.PIPELINE_EVALUATION_SEEDS,
+        help=f"evaluation episodes per scenario after training, one per seed (default {const.PIPELINE_EVALUATION_SEEDS})",
+    )
+    _ = parser.add_argument(
+        "--out",
+        type=str,
+        default=str(settings.output_dir),
+        help=f"output directory for summary.json/timelines.json/checkpoints (default {settings.output_dir})",
+    )
+    _ = parser.add_argument(
+        "--network",
+        type=str,
+        default="data/feeder_20.json",
+        help="network JSON (CLI-only default data/feeder_20.json — use data/stub_network.json for the small stub)",
+    )
+    args = parser.parse_args()
 
     network_path = args.network
 
@@ -196,7 +227,9 @@ def main() -> None:
         # It used to go to a temp file and be copied back from a hardcoded "/tmp/..."
         # path, which does not exist on Windows — so the copy silently did nothing and
         # the dashboard's training tab never found any metrics.
-        trainer.run(num_episodes=args.max_iterations, cleanup=False, metrics_dir=checkpoint_dir,
+        # Trainer.run()'s max_iterations is the ceiling for the number of
+        # training ITERATIONS; evaluation episodes come from `seeds` below.
+        trainer.run(max_iterations=args.max_iterations, cleanup=False, metrics_dir=checkpoint_dir,
                     min_iterations=args.min_iterations, patience=args.patience)
 
         trainer.save_checkpoint(str(checkpoint_dir.resolve()))
@@ -214,10 +247,11 @@ def main() -> None:
         }
         for label, policy in scenarios.items():
             # ════════════════════════════════════════════════════════════════
-            # LOGGING STAGE 1: evaluate over multiple seeds (default: 12)
+            # LOGGING STAGE 1: evaluate over the configured seeds
             # ════════════════════════════════════════════════════════════════
-            # run_scenario() runs 12 episodes and aggregates the metrics into
-            # mean±std (curtailment, SoC, peak loading, reward, bill, etc.)
+            # run_scenario() runs one episode per configured seed and aggregates
+            # the metrics into mean±std (curtailment, SoC, peak loading, reward,
+            # bill, etc.)
             stats = run_scenario(eval_env, policy, seeds, label=label, ev_penetration=pen)
             
             # ════════════════════════════════════════════════════════════════
@@ -230,8 +264,8 @@ def main() -> None:
             # ════════════════════════════════════════════════════════════════
             # LOGGING STAGE 3: store detailed time series for ONE episode
             # ════════════════════════════════════════════════════════════════
-            # run_episode() with seed[0] (the first of the 12 episodes) returns
-            # complete 96-step time series (transformer loading, device power, SoC, etc.)
+            # run_episode() with seeds[0] (the first seed) returns complete
+            # 96-step time series (transformer loading, device power, SoC, etc.)
             # These data later end up in timelines.json (for line charts)
             rep = run_episode(eval_env, policy, seeds[0], ev_penetration=pen)
             timelines.append(_timeline(eval_env, rep, label, pen))
