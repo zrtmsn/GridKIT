@@ -223,8 +223,7 @@ as in `python -m GridKIT.scripts.run_experiment --max-iterations 3`
 **NOTE:** `run_experiment` only **records** overload information (`overloaded_lines` /
 `line_overload_steps` in `summary.json` / `timelines.json`) — it does not check it.
 To verify that every curtailment step coincides with an overload, run the consistency
-check on the results directory you passed to `--out` (default `outputs`; the check
-script itself defaults to `outputs_test_weak`):
+check on the results directory (default `outputs`;
 
 ```bash
 python src/GridKIT/scripts/test_overload_logging.py outputs
